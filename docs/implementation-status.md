@@ -1,0 +1,65 @@
+# 实施状态
+
+更新日期：2026-07-22
+
+当前代码已经重组为 `pi_ai`、`pi_agent`、`pi_coding_agent` 三个包，并通过自动化测试
+约束单向依赖。
+
+## 已完成
+
+### 阶段 0：工程骨架
+
+- Python `src` 包结构和 pytest 配置。
+- 参考基线固定为 `pi@dd6bea41` 和 `Pi-Agent-Web@664f5a9c`。
+
+### 阶段 1：Session v3 数据层
+
+- JSONL 解析以及 v1→v2→v3 迁移。
+- append-only 消息、模型、thinking、compaction、custom、label 和 session info entry。
+- 活动分支、树结构、compaction-aware context 和 Web `entryIds`。
+- Session metadata 列表、最近会话筛选、同文件分支和跨项目 fork。
+- 使用本地 pi 仓库的 2.3 MB 真实旧版 fixture 进行兼容验证。
+
+### 阶段 2：工具运行时首版
+
+- Provider-neutral 工具协议、注册表和运行时启停。
+- read、bash、edit、write、grep、find、ls。
+- 工作区路径边界、输出截断、精确编辑、Windows PowerShell、超时和取消清理。
+
+## 正在进行
+
+### 阶段 3：Agent 主循环
+
+已经实现：
+
+- Provider streaming protocol、统一流事件和离线 FakeProvider。
+- Anthropic Messages Provider：消息/图片/工具映射、thinking budget、SSE delta 和 usage 归一化。
+- OpenAI-compatible Chat Completions Provider：多模态消息、工具调用、reasoning delta 和 usage 归一化。
+- 可注入的 HTTP SSE transport、Provider 注册表和显式配置工厂。
+- Agent/turn/message/tool 生命周期事件。
+- 顺序工具调用循环。
+- steer、follow-up、abort。
+- 消息与工具结果写入 Session v3。
+
+尚未实现：
+
+- 并行工具执行及单工具执行策略。
+- 自动重试、compaction 和 context usage。
+
+## 当前已知差异
+
+- read 首版仅支持 UTF-8 文本，尚未处理图片。
+- grep/find 会忽略 `.git`、`node_modules` 和 `__pycache__`，但尚未完整解析任意 `.gitignore` 规则。
+- bash 已处理直接子进程的超时和取消；完整跨平台进程树终止仍需专项验证。
+- Agent 目前只执行顺序 tool calls。
+- Provider 请求和 SSE 映射已有完全离线测试，但尚未进行需要 API Key 的受控真实服务 smoke test。
+
+## 验证结果
+
+```text
+44 passed
+```
+
+包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
+工具循环，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+注入的内存 transport，没有访问网络或消耗 API 额度。
