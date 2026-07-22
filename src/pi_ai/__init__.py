@@ -10,9 +10,11 @@ from pi_ai.providers import (
     create_provider,
 )
 from pi_ai.types import Message, Model, StopReason, ThinkingLevel, Tool
+from pi_ai.utils import ContextUsageEstimate, RetryPolicy, estimate_context_tokens
 
 __all__ = [
     "AnthropicProvider",
+    "ContextUsageEstimate",
     "FakeProvider",
     "LLMProvider",
     "Message",
@@ -20,8 +22,10 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderEvent",
     "ProviderRegistry",
+    "RetryPolicy",
     "StopReason",
     "ThinkingLevel",
     "Tool",
     "create_provider",
+    "estimate_context_tokens",
 ]
