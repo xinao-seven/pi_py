@@ -70,6 +70,8 @@ src/pi_coding_agent/
 ├── core/
 │   ├── session_manager.py   # pi Session v3 JSONL
 │   ├── compaction.py        # 回合安全裁剪、摘要协议和溢出判断
+│   ├── branch_summary.py    # 分支路径准备、摘要协议与 Provider 实现
+│   ├── usage.py             # Session 消息、token 和成本统计
 │   ├── resource_loader.py   # 项目指令、系统提示和资源聚合
 │   ├── skills.py            # Agent Skills 发现、校验和命令展开
 │   ├── prompt_templates.py  # Markdown prompt templates

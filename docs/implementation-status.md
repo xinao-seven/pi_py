@@ -42,8 +42,6 @@
 - steer、follow-up、abort。
 - 消息与工具结果写入 Session v3。
 
-## 正在进行
-
 ### 阶段 4：上下文管理与资源加载
 
 已经实现：
@@ -59,10 +57,14 @@
 - `.pi/skills`、`.agents/skills` 递归发现、frontmatter 校验、冲突诊断和 XML 技能清单。
 - `.pi/prompts` Markdown 模板、带引号参数、默认值、切片以及 `/skill:name` 命令展开。
 - AgentSession 支持资源重载，并在 prompt、steer、follow-up 中统一展开资源命令。
+- 分支跳转可计算公共祖先、收集废弃路径并生成可注入 Provider 的 branch summary。
+- 用户消息与 custom message 导航会恢复编辑文本；分支摘要支持生命周期事件和独立取消。
+- Session 统计遍历完整 append-only 历史，汇总消息、工具调用、token 与成本。
+- 成本明细按 `provider/model` 区分模型响应，并将工具、compaction 和 branch summary 归入
+  `Tools/summaries`。
 
-尚未实现：
+阶段 4 的计划功能已经完成。后续增强项：
 
-- branch summary 和 Session cost 汇总。
 - 超大单回合的 split-turn 双摘要策略；当前实现会保守地保留完整回合。
 
 ## 当前已知差异
@@ -75,9 +77,10 @@
 ## 验证结果
 
 ```text
-65 passed
+72 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
-工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复、Skills/模板/项目指令加载，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复、分支摘要/树导航、
+Session 用量与成本统计、Skills/模板/项目指令加载，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。
