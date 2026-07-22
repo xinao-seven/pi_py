@@ -24,6 +24,7 @@ from pi_coding_agent.core.session_manager import (
 )
 from pi_coding_agent.tools import create_builtin_tools, create_file_tools
 from pi_coding_agent.core.skills import Skill
+from pi_coding_agent.core.usage import get_session_stats, get_usage_cost_breakdown
 
 __all__ = [
     "AgentSession",
@@ -47,6 +48,8 @@ __all__ = [
     "create_builtin_tools",
     "create_file_tools",
     "find_most_recent_session",
+    "get_session_stats",
+    "get_usage_cost_breakdown",
     "migrate_session_entries",
     "parse_session_entries",
 ]

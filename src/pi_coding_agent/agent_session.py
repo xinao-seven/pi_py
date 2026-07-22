@@ -28,6 +28,7 @@ from pi_coding_agent.core.resource_loader import CodingResourceLoader, CodingRes
 from pi_coding_agent.core.session_manager import SessionManager
 from pi_coding_agent.core.skills import expand_skill_command
 from pi_coding_agent.core.system_prompt import build_system_prompt
+from pi_coding_agent.core.usage import get_session_stats, get_usage_cost_breakdown
 
 
 class AgentSession(Agent):
@@ -316,6 +317,17 @@ class AgentSession(Agent):
         task = self._branch_summary_task
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
+
+    def get_session_stats(self) -> dict[str, Any]:
+        return get_session_stats(
+            self.session_manager.get_entries(),
+            session_id=self.session_manager.session_id,
+            session_file=self.session_manager.session_file,
+            context_usage=self.get_context_usage(),
+        )
+
+    def get_usage_cost_breakdown(self) -> list[dict[str, Any]]:
+        return get_usage_cost_breakdown(self.session_manager.get_entries())
 
     async def _emit(self, event_type: str, **payload: Any) -> None:
         await super()._emit(event_type, **payload)

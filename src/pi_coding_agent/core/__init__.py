@@ -22,6 +22,7 @@ from pi_coding_agent.core.resource_loader import CodingResourceLoader, CodingRes
 from pi_coding_agent.core.session_manager import SessionInfo, SessionManager
 from pi_coding_agent.core.skills import Skill, SkillsResult, load_skills
 from pi_coding_agent.core.system_prompt import build_system_prompt
+from pi_coding_agent.core.usage import get_session_stats, get_usage_cost_breakdown
 
 __all__ = [
     "BranchPreparation",
@@ -42,6 +43,8 @@ __all__ = [
     "SkillsResult",
     "build_system_prompt",
     "expand_prompt_template",
+    "get_session_stats",
+    "get_usage_cost_breakdown",
     "is_context_overflow",
     "load_skills",
     "prepare_compaction",
