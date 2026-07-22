@@ -7,6 +7,7 @@ from typing import Literal
 from pi_agent.agent import Agent
 from pi_agent.tool_registry import ToolRegistry
 from pi_ai.providers.base import LLMProvider
+from pi_ai.utils import RetryPolicy
 from pi_coding_agent.core.session_manager import SessionManager
 
 
@@ -21,6 +22,8 @@ class AgentSession(Agent):
         system_prompt: str = "",
         thinking_level: str = "off",
         tool_execution: Literal["sequential", "parallel"] = "parallel",
+        retry_policy: RetryPolicy | None = RetryPolicy(),
+        context_window: int = 0,
     ) -> None:
         self.session_manager = session_manager
         super().__init__(
@@ -31,4 +34,6 @@ class AgentSession(Agent):
             system_prompt=system_prompt,
             thinking_level=thinking_level,
             tool_execution=tool_execution,
+            retry_policy=retry_policy,
+            context_window=context_window,
         )

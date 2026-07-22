@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from pi_agent import AgentTool, ToolRegistry, ToolResult
-from pi_ai import FakeProvider
+from pi_ai import FakeProvider, RetryPolicy
 from pi_coding_agent import AgentSession, SessionManager, create_builtin_tools
 
 
@@ -266,3 +266,128 @@ def test_global_sequential_mode_overrides_parallel_tools(tmp_path: Path) -> None
     run(runtime.prompt("run sequentially"))
 
     assert max_active == 1
+
+
+def test_retryable_provider_error_retries_without_polluting_live_context(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            [{"type": "done", "stop_reason": "error", "error": "503 service unavailable"}],
+            [
+                {"type": "text_delta", "text": "recovered"},
+                {"type": "done", "stop_reason": "stop", "usage": {"totalTokens": 25}},
+            ],
+        ]
+    )
+    session = SessionManager.in_memory(tmp_path)
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=session,
+        tool_registry=ToolRegistry(),
+        retry_policy=RetryPolicy(max_retries=2, base_delay_seconds=0),
+        context_window=100,
+    )
+    events: list[dict[str, object]] = []
+    runtime.subscribe(lambda event: events.append(event.to_dict()))
+
+    run(runtime.prompt("retry"))
+
+    assert len(provider.requests) == 2
+    assert [message["role"] for message in provider.requests[1]["messages"]] == ["user"]
+    assert [message["role"] for message in runtime.messages] == ["user", "assistant"]
+    assert runtime.messages[-1]["content"] == [{"type": "text", "text": "recovered"}]
+    assert [event["type"] for event in events if event["type"].startswith("auto_retry")] == [
+        "auto_retry_start",
+        "auto_retry_end",
+    ]
+    retry_end = next(event for event in events if event["type"] == "auto_retry_end")
+    assert retry_end["success"] is True
+    assert runtime.get_context_usage() == {"tokens": 25, "contextWindow": 100, "percent": 25.0}
+    turn_end = next(event for event in events if event["type"] == "turn_end")
+    assert turn_end["contextUsage"] == runtime.get_context_usage()
+    assert [message["stopReason"] for message in session.build_session_context()["messages"] if message["role"] == "assistant"] == [
+        "error",
+        "stop",
+    ]
+
+
+def test_non_retryable_billing_error_fails_immediately(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [[{"type": "done", "stop_reason": "error", "error": "429 insufficient_quota billing"}]]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry(),
+        retry_policy=RetryPolicy(max_retries=3, base_delay_seconds=0),
+    )
+    events: list[dict[str, object]] = []
+    runtime.subscribe(lambda event: events.append(event.to_dict()))
+
+    run(runtime.prompt("do not retry"))
+
+    assert len(provider.requests) == 1
+    assert not any(event["type"] == "auto_retry_start" for event in events)
+    assert events[-1]["error"] == "429 insufficient_quota billing"
+
+
+def test_abort_during_retry_backoff_emits_retry_end(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [[{"type": "done", "stop_reason": "error", "error": "overloaded"}]]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry(),
+        retry_policy=RetryPolicy(max_retries=3, base_delay_seconds=5),
+    )
+    events: list[dict[str, object]] = []
+    runtime.subscribe(lambda event: events.append(event.to_dict()))
+
+    async def scenario() -> None:
+        task = asyncio.create_task(runtime.prompt("retry then abort"))
+        while not runtime.is_retrying:
+            await asyncio.sleep(0)
+        await runtime.abort()
+        await task
+
+    run(scenario())
+
+    retry_end = next(event for event in events if event["type"] == "auto_retry_end")
+    assert retry_end["success"] is False
+    assert retry_end["finalError"] == "Retry cancelled"
+    assert events[-1]["aborted"] is True
+
+
+def test_retry_budget_is_bounded_and_reports_final_error(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            [{"type": "done", "stop_reason": "error", "error": "503 first"}],
+            [{"type": "done", "stop_reason": "error", "error": "503 second"}],
+            [{"type": "done", "stop_reason": "error", "error": "503 final"}],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry(),
+        retry_policy=RetryPolicy(max_retries=2, base_delay_seconds=0),
+    )
+    events: list[dict[str, object]] = []
+    runtime.subscribe(lambda event: events.append(event.to_dict()))
+
+    run(runtime.prompt("exhaust retries"))
+
+    starts = [event for event in events if event["type"] == "auto_retry_start"]
+    assert [event["attempt"] for event in starts] == [1, 2]
+    assert len(provider.requests) == 3
+    retry_end = next(event for event in events if event["type"] == "auto_retry_end")
+    assert retry_end == {
+        "type": "auto_retry_end",
+        "success": False,
+        "attempt": 2,
+        "finalError": "503 final",
+    }

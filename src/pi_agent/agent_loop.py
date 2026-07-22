@@ -15,7 +15,8 @@ import inspect
 import json
 from typing import Any, Literal, Protocol
 
-from pi_ai.providers.base import LLMProvider, ProviderEvent
+from pi_ai.providers.base import LLMProvider
+from pi_ai.utils import RetryPolicy, estimate_context_tokens, is_retryable_assistant_error
 from pi_agent.events import AgentEvent
 from pi_agent.tool_registry import ToolRegistry
 from pi_agent.types import ToolError
@@ -50,6 +51,8 @@ class AgentRuntime:
         system_prompt: str = "",
         thinking_level: str = "off",
         tool_execution: Literal["sequential", "parallel"] = "parallel",
+        retry_policy: RetryPolicy | None = None,
+        context_window: int = 0,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -58,6 +61,8 @@ class AgentRuntime:
         self.system_prompt = system_prompt
         self.thinking_level = thinking_level
         self.tool_execution = tool_execution
+        self.retry_policy = retry_policy
+        self.context_window = context_window
         self.messages: list[dict[str, Any]] = (
             session.build_session_context()["messages"] if session is not None else []
         )
@@ -67,6 +72,8 @@ class AgentRuntime:
         self._run_task: asyncio.Task[None] | None = None
         self._abort_requested = False
         self.is_streaming = False
+        self.is_retrying = False
+        self.retry_attempt = 0
 
     def subscribe(self, listener: EventListener) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -128,7 +135,7 @@ class AgentRuntime:
             user_message = self._user_message(text)
             await self._append_message(user_message, new_messages)
             while not self._abort_requested:
-                assistant, tool_calls = await self._provider_turn(new_messages)
+                assistant, tool_calls = await self._provider_turn_with_retry(new_messages)
                 if assistant.get("stopReason") == "error":
                     error = str(assistant.get("errorMessage") or "Provider error")
                     break
@@ -137,6 +144,7 @@ class AgentRuntime:
                     "turn_end",
                     message=deepcopy(assistant),
                     toolResults=deepcopy(tool_results),
+                    contextUsage=self.get_context_usage(),
                 )
                 steering = self._drain(self._steering)
                 if steering:
@@ -270,6 +278,79 @@ class AgentRuntime:
         new_messages.append(assistant)
         await self._emit("message_end", message=deepcopy(assistant), entryId=entry_id)
         return assistant, tool_calls
+
+    async def _provider_turn_with_retry(
+        self,
+        new_messages: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        attempt = 0
+        while True:
+            assistant, tool_calls = await self._provider_turn(new_messages)
+            if assistant.get("stopReason") != "error":
+                if attempt:
+                    await self._emit("auto_retry_end", success=True, attempt=attempt)
+                self.retry_attempt = 0
+                return assistant, tool_calls
+
+            policy = self.retry_policy
+            if (
+                policy is None
+                or not policy.enabled
+                or attempt >= policy.max_retries
+                or not is_retryable_assistant_error(assistant)
+            ):
+                if attempt:
+                    await self._emit(
+                        "auto_retry_end",
+                        success=False,
+                        attempt=attempt,
+                        finalError=str(assistant.get("errorMessage") or "Unknown error"),
+                    )
+                self.retry_attempt = 0
+                return assistant, tool_calls
+
+            attempt += 1
+            self.retry_attempt = attempt
+            delay = policy.delay_for_attempt(attempt)
+            await self._emit(
+                "auto_retry_start",
+                attempt=attempt,
+                maxAttempts=policy.max_retries,
+                delayMs=int(delay * 1000),
+                errorMessage=str(assistant.get("errorMessage") or "Unknown error"),
+            )
+            # Preserve the failed message in the append-only transcript while
+            # excluding it from the live provider context used for the retry.
+            if self.messages and self.messages[-1] is assistant:
+                self.messages.pop()
+            self.is_retrying = True
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                await self._emit(
+                    "auto_retry_end",
+                    success=False,
+                    attempt=attempt,
+                    finalError="Retry cancelled",
+                )
+                self.retry_attempt = 0
+                raise
+            finally:
+                self.is_retrying = False
+
+    def get_context_usage(self) -> dict[str, int | float] | None:
+        if self.context_window <= 0:
+            return None
+        estimate = estimate_context_tokens(
+            self.messages,
+            system_prompt=self.system_prompt,
+            tools=self.tools.definitions(),
+        )
+        return {
+            "tokens": estimate.tokens,
+            "contextWindow": self.context_window,
+            "percent": estimate.tokens / self.context_window * 100,
+        }
 
     @staticmethod
     def _append_delta(content: list[dict[str, Any]], block_type: str, field: str, delta: str) -> None:
