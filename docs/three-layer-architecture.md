@@ -29,6 +29,9 @@ pi_agent（中层：通用 Agent loop、状态、事件和可执行工具抽象�
 ```text
 src/pi_ai/
 ├── types.py                 # Message、Model、Tool 原子类型
+├── utils/
+│   ├── retry.py             # transient 错误分类和指数退避策略
+│   └── estimate.py          # usage-first 上下文 token 估算
 └── providers/
     ├── base.py              # LLMProvider streaming protocol
     ├── transport.py         # 可注入的 HTTP SSE 边界

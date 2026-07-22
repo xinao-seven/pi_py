@@ -39,12 +39,14 @@
 - Agent/turn/message/tool 生命周期事件。
 - 默认并行工具调用，以及全局/单工具 `sequential` 执行策略。
 - 并行执行时结束事件按完成顺序发出，ToolResult 按模型调用顺序写入 Session。
+- transient Provider 错误自动重试：默认最多 3 次、指数退避、取消和额度错误快速失败。
+- context usage：优先使用最近成功响应的 usage，并估算后续消息及无 usage 时的完整上下文。
 - steer、follow-up、abort。
 - 消息与工具结果写入 Session v3。
 
 尚未实现：
 
-- 自动重试、compaction 和 context usage。
+- compaction 和溢出恢复。
 
 ## 当前已知差异
 
@@ -56,9 +58,9 @@
 ## 验证结果
 
 ```text
-47 passed
+54 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
-工具循环、并行/顺序工具调度，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+工具循环、并行/顺序工具调度、自动重试、上下文估算，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。
