@@ -37,13 +37,13 @@
 - OpenAI-compatible Chat Completions Provider：多模态消息、工具调用、reasoning delta 和 usage 归一化。
 - 可注入的 HTTP SSE transport、Provider 注册表和显式配置工厂。
 - Agent/turn/message/tool 生命周期事件。
-- 顺序工具调用循环。
+- 默认并行工具调用，以及全局/单工具 `sequential` 执行策略。
+- 并行执行时结束事件按完成顺序发出，ToolResult 按模型调用顺序写入 Session。
 - steer、follow-up、abort。
 - 消息与工具结果写入 Session v3。
 
 尚未实现：
 
-- 并行工具执行及单工具执行策略。
 - 自动重试、compaction 和 context usage。
 
 ## 当前已知差异
@@ -51,15 +51,14 @@
 - read 首版仅支持 UTF-8 文本，尚未处理图片。
 - grep/find 会忽略 `.git`、`node_modules` 和 `__pycache__`，但尚未完整解析任意 `.gitignore` 规则。
 - bash 已处理直接子进程的超时和取消；完整跨平台进程树终止仍需专项验证。
-- Agent 目前只执行顺序 tool calls。
 - Provider 请求和 SSE 映射已有完全离线测试，但尚未进行需要 API Key 的受控真实服务 smoke test。
 
 ## 验证结果
 
 ```text
-44 passed
+47 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
-工具循环，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+工具循环、并行/顺序工具调度，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。
