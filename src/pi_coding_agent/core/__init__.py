@@ -1,5 +1,12 @@
 """Coding-agent session, resources, and application services."""
 
+from pi_coding_agent.core.branch_summary import (
+    BranchPreparation,
+    BranchSummarizer,
+    BranchSummary,
+    ProviderBranchSummarizer,
+    prepare_branch_summary,
+)
 from pi_coding_agent.core.compaction import (
     CompactionPreparation,
     CompactionSettings,
@@ -17,6 +24,9 @@ from pi_coding_agent.core.skills import Skill, SkillsResult, load_skills
 from pi_coding_agent.core.system_prompt import build_system_prompt
 
 __all__ = [
+    "BranchPreparation",
+    "BranchSummarizer",
+    "BranchSummary",
     "CompactionPreparation",
     "CompactionSettings",
     "CompactionSummarizer",
@@ -25,6 +35,7 @@ __all__ = [
     "CodingResources",
     "PromptTemplate",
     "ProviderCompactionSummarizer",
+    "ProviderBranchSummarizer",
     "SessionInfo",
     "SessionManager",
     "Skill",
@@ -34,5 +45,6 @@ __all__ = [
     "is_context_overflow",
     "load_skills",
     "prepare_compaction",
+    "prepare_branch_summary",
     "should_compact",
 ]

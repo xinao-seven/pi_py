@@ -2,6 +2,7 @@
 
 from pi_agent.tool_registry import ToolRegistry
 from pi_coding_agent.agent_session import AgentSession
+from pi_coding_agent.core.branch_summary import BranchSummary, ProviderBranchSummarizer
 from pi_coding_agent.core.compaction import (
     CompactionSettings,
     CompactionSummary,
@@ -26,6 +27,7 @@ from pi_coding_agent.core.skills import Skill
 
 __all__ = [
     "AgentSession",
+    "BranchSummary",
     "CompactionSettings",
     "CompactionSummary",
     "CodingResourceLoader",
@@ -34,6 +36,7 @@ __all__ = [
     "SessionInfo",
     "SessionManager",
     "ProviderCompactionSummarizer",
+    "ProviderBranchSummarizer",
     "PromptTemplate",
     "Skill",
     "ToolRegistry",

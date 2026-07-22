@@ -10,6 +10,11 @@ from pi_agent.agent import Agent
 from pi_agent.tool_registry import ToolRegistry
 from pi_ai.providers.base import LLMProvider
 from pi_ai.utils import RetryPolicy
+from pi_coding_agent.core.branch_summary import (
+    BranchSummarizer,
+    ProviderBranchSummarizer,
+    prepare_branch_summary,
+)
 from pi_coding_agent.core.compaction import (
     CompactionSettings,
     CompactionSummarizer,
@@ -40,6 +45,8 @@ class AgentSession(Agent):
         context_window: int = 0,
         compaction_settings: CompactionSettings | None = None,
         compaction_summarizer: CompactionSummarizer | None = None,
+        branch_summarizer: BranchSummarizer | None = None,
+        branch_summary_reserve_tokens: int = 16_384,
         resource_loader: CodingResourceLoader | None = None,
     ) -> None:
         self.session_manager = session_manager
@@ -48,6 +55,10 @@ class AgentSession(Agent):
         self.is_compacting = False
         self._compaction_task: asyncio.Task[Any] | None = None
         self._overflow_recovery_active = False
+        self.branch_summarizer = branch_summarizer
+        self.branch_summary_reserve_tokens = max(0, branch_summary_reserve_tokens)
+        self.is_summarizing_branch = False
+        self._branch_summary_task: asyncio.Task[Any] | None = None
         self.resource_loader = resource_loader or CodingResourceLoader(session_manager.cwd)
         self.resources = self.resource_loader.load()
         self._custom_system_prompt = system_prompt or None
@@ -175,6 +186,137 @@ class AgentSession(Agent):
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
+    async def navigate_tree(
+        self,
+        target_id: str,
+        *,
+        summarize: bool = False,
+        custom_instructions: str | None = None,
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        """Move to a session-tree entry, optionally preserving the abandoned branch."""
+        if self.is_summarizing_branch:
+            raise RuntimeError("Branch summarization is already running")
+        old_leaf_id = self.session_manager.leaf_id
+        if target_id == old_leaf_id:
+            return {"cancelled": False, "newLeafId": target_id, "summaryEntry": None}
+        target = self.session_manager.get_entry(target_id)
+        if target is None:
+            raise KeyError(f"Entry {target_id} not found")
+
+        token_budget = 0
+        if self.context_window > 0:
+            token_budget = max(0, self.context_window - self.branch_summary_reserve_tokens)
+        preparation = prepare_branch_summary(
+            self.session_manager,
+            old_leaf_id,
+            target_id,
+            token_budget=token_budget,
+        )
+        await super()._emit(
+            "branch_summary_start",
+            oldLeafId=old_leaf_id,
+            targetId=target_id,
+            commonAncestorId=preparation.common_ancestor_id,
+            summarize=summarize,
+        )
+
+        summary = None
+        if summarize and preparation.messages:
+            summarizer = self.branch_summarizer or ProviderBranchSummarizer(
+                self.provider,
+                self.model,
+                thinking_level=self.thinking_level,
+            )
+            self.is_summarizing_branch = True
+            self._branch_summary_task = asyncio.current_task()
+            try:
+                summary = await summarizer.summarize(
+                    deepcopy(list(preparation.messages)),
+                    custom_instructions=custom_instructions,
+                )
+            except asyncio.CancelledError:
+                await super()._emit(
+                    "branch_summary_end",
+                    oldLeafId=old_leaf_id,
+                    targetId=target_id,
+                    result=None,
+                    aborted=True,
+                )
+                return {"cancelled": True, "aborted": True, "summaryEntry": None}
+            except Exception as exception:
+                await super()._emit(
+                    "branch_summary_end",
+                    oldLeafId=old_leaf_id,
+                    targetId=target_id,
+                    result=None,
+                    aborted=False,
+                    error=str(exception),
+                )
+                raise
+            finally:
+                self.is_summarizing_branch = False
+                self._branch_summary_task = None
+
+        new_leaf_id = target_id
+        editor_text: str | None = None
+        if target.get("type") == "message" and isinstance(target.get("message"), dict):
+            if target["message"].get("role") == "user":
+                new_leaf_id = _parent_id(target)
+                editor_text = _content_text(target["message"].get("content"))
+        elif target.get("type") == "custom_message":
+            new_leaf_id = _parent_id(target)
+            editor_text = _content_text(target.get("content"))
+
+        summary_entry = None
+        if summary is not None:
+            summary_id = self.session_manager.branch_with_summary(
+                new_leaf_id,
+                summary.text,
+                details=summary.details,
+                usage=summary.usage,
+            )
+            summary_entry = self.session_manager.get_entry(summary_id)
+            new_leaf_id = summary_id
+            if label:
+                self.session_manager.append_label_change(summary_id, label)
+                new_leaf_id = self.session_manager.leaf_id
+        else:
+            if new_leaf_id is None:
+                self.session_manager.reset_leaf()
+            else:
+                self.session_manager.branch(new_leaf_id)
+            if label:
+                self.session_manager.append_label_change(target_id, label)
+                new_leaf_id = self.session_manager.leaf_id
+
+        self.messages = self.session_manager.build_session_context()["messages"]
+        result = {
+            "cancelled": False,
+            "newLeafId": new_leaf_id,
+            "editorText": editor_text,
+            "summaryEntry": summary_entry,
+        }
+        await super()._emit(
+            "session_tree",
+            oldLeafId=old_leaf_id,
+            newLeafId=new_leaf_id,
+            summaryEntry=deepcopy(summary_entry),
+        )
+        await super()._emit(
+            "branch_summary_end",
+            oldLeafId=old_leaf_id,
+            targetId=target_id,
+            result=deepcopy(result),
+            aborted=False,
+        )
+        return result
+
+    async def abort_branch_summary(self) -> None:
+        task = self._branch_summary_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
     async def _emit(self, event_type: str, **payload: Any) -> None:
         await super()._emit(event_type, **payload)
         if (
@@ -226,3 +368,20 @@ class AgentSession(Agent):
             return await super()._provider_turn_with_retry(new_messages)
         finally:
             self._overflow_recovery_active = False
+
+
+def _parent_id(entry: dict[str, Any]) -> str | None:
+    parent = entry.get("parentId")
+    return parent if isinstance(parent, str) else None
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        str(block.get("text", ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
