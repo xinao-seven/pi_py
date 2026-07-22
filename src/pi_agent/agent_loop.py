@@ -13,7 +13,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import inspect
 import json
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pi_ai.providers.base import LLMProvider, ProviderEvent
 from pi_agent.events import AgentEvent
@@ -49,6 +49,7 @@ class AgentRuntime:
         tools: ToolRegistry,
         system_prompt: str = "",
         thinking_level: str = "off",
+        tool_execution: Literal["sequential", "parallel"] = "parallel",
     ) -> None:
         self.provider = provider
         self.model = model
@@ -56,6 +57,7 @@ class AgentRuntime:
         self.tools = tools
         self.system_prompt = system_prompt
         self.thinking_level = thinking_level
+        self.tool_execution = tool_execution
         self.messages: list[dict[str, Any]] = (
             session.build_session_context()["messages"] if session is not None else []
         )
@@ -281,43 +283,75 @@ class AgentRuntime:
         tool_calls: list[dict[str, Any]],
         new_messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        run_parallel = self.tool_execution == "parallel" and not any(
+            self.tools.execution_mode(call["name"]) == "sequential" for call in tool_calls
+        )
+        if run_parallel:
+            return await self._execute_tools_parallel(tool_calls, new_messages)
+        return await self._execute_tools_sequential(tool_calls, new_messages)
+
+    async def _execute_tools_sequential(
+        self,
+        tool_calls: list[dict[str, Any]],
+        new_messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for call in tool_calls:
-            call_id = call["id"]
-            name = call["name"]
-            arguments = call["arguments"]
-            await self._emit(
-                "tool_execution_start",
-                toolCallId=call_id,
-                toolName=name,
-                args=deepcopy(arguments),
-            )
-            is_error = False
-            try:
-                result = await self.tools.execute(call_id, name, arguments)
-            except (ToolError, OSError, ValueError) as exception:
-                is_error = True
-                content = [{"type": "text", "text": str(exception)}]
-                details = None
-            else:
-                content = deepcopy(result.content)
-                details = deepcopy(result.details)
-                is_error = result.is_error
-            tool_message = {
-                "role": "toolResult",
-                "toolCallId": call_id,
-                "toolName": name,
-                "content": content,
-                "isError": is_error,
-                "timestamp": _timestamp_ms(),
-            }
-            await self._emit(
-                "tool_execution_end",
-                toolCallId=call_id,
-                toolName=name,
-                result={"content": content, "details": details},
-                isError=is_error,
-            )
+            await self._emit_tool_start(call)
+            tool_message = await self._run_tool(call)
             await self._append_message(tool_message, new_messages)
             results.append(tool_message)
         return results
+
+    async def _execute_tools_parallel(
+        self,
+        tool_calls: list[dict[str, Any]],
+        new_messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        # Match pi: start events are emitted in call order, executions overlap,
+        # end events follow completion order, and result messages retain call order.
+        for call in tool_calls:
+            await self._emit_tool_start(call)
+        results = list(await asyncio.gather(*(self._run_tool(call) for call in tool_calls)))
+        for tool_message in results:
+            await self._append_message(tool_message, new_messages)
+        return results
+
+    async def _emit_tool_start(self, call: dict[str, Any]) -> None:
+        await self._emit(
+            "tool_execution_start",
+            toolCallId=call["id"],
+            toolName=call["name"],
+            args=deepcopy(call["arguments"]),
+        )
+
+    async def _run_tool(self, call: dict[str, Any]) -> dict[str, Any]:
+        call_id = call["id"]
+        name = call["name"]
+        arguments = call["arguments"]
+        try:
+            result = await self.tools.execute(call_id, name, arguments)
+        except (ToolError, OSError, ValueError) as exception:
+            content = [{"type": "text", "text": str(exception)}]
+            details = None
+            is_error = True
+        else:
+            content = deepcopy(result.content)
+            details = deepcopy(result.details)
+            is_error = result.is_error
+        tool_message = {
+            "role": "toolResult",
+            "toolCallId": call_id,
+            "toolName": name,
+            "content": content,
+            "isError": is_error,
+            "timestamp": _timestamp_ms(),
+        }
+        await self._emit(
+            "tool_execution_end",
+            toolCallId=call_id,
+            toolName=name,
+            result={"content": content, "details": details},
+            isError=is_error,
+        )
+        return tool_message

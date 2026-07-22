@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from pi_agent import ToolRegistry
+from pi_agent import AgentTool, ToolRegistry, ToolResult
 from pi_ai import FakeProvider
 from pi_coding_agent import AgentSession, SessionManager, create_builtin_tools
 
@@ -124,3 +124,145 @@ def test_abort_cancels_provider_and_emits_terminal_event(tmp_path: Path) -> None
     assert runtime.is_streaming is False
     assert events[-1]["type"] == "agent_end"
     assert events[-1]["aborted"] is True
+
+
+def test_parallel_tools_overlap_but_result_messages_keep_call_order(tmp_path: Path) -> None:
+    both_started = asyncio.Event()
+    started: set[str] = set()
+
+    def make_tool(name: str, delay: float) -> AgentTool:
+        async def execute(_arguments) -> ToolResult:
+            started.add(name)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=0.5)
+            await asyncio.sleep(delay)
+            return ToolResult.text(name)
+
+        return AgentTool(
+            name=name,
+            label=name,
+            description=name,
+            input_schema={"type": "object"},
+            execute=execute,
+            execution_mode="parallel",
+        )
+
+    provider = FakeProvider(
+        [
+            [
+                {"type": "tool_call_start", "id": "call-a", "name": "a", "arguments": {}},
+                {"type": "tool_call_start", "id": "call-b", "name": "b", "arguments": {}},
+                {"type": "done", "stop_reason": "toolUse"},
+            ],
+            [{"type": "text_delta", "text": "done"}, {"type": "done", "stop_reason": "stop"}],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry([make_tool("a", 0.03), make_tool("b", 0.0)]),
+    )
+    events: list[dict[str, object]] = []
+    runtime.subscribe(lambda event: events.append(event.to_dict()))
+
+    run(asyncio.wait_for(runtime.prompt("run both"), timeout=1.0))
+
+    end_ids = [event["toolCallId"] for event in events if event["type"] == "tool_execution_end"]
+    result_ids = [message["toolCallId"] for message in runtime.messages if message["role"] == "toolResult"]
+    assert end_ids == ["call-b", "call-a"]
+    assert result_ids == ["call-a", "call-b"]
+
+
+def test_one_sequential_tool_makes_the_whole_batch_sequential(tmp_path: Path) -> None:
+    active = 0
+    max_active = 0
+    execution_order: list[str] = []
+
+    def make_tool(name: str, mode: str) -> AgentTool:
+        async def execute(_arguments) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            execution_order.append(f"start:{name}")
+            await asyncio.sleep(0.01)
+            execution_order.append(f"end:{name}")
+            active -= 1
+            return ToolResult.text(name)
+
+        return AgentTool(
+            name=name,
+            label=name,
+            description=name,
+            input_schema={"type": "object"},
+            execute=execute,
+            execution_mode=mode,
+        )
+
+    provider = FakeProvider(
+        [
+            [
+                {"type": "tool_call_start", "id": "call-a", "name": "a", "arguments": {}},
+                {"type": "tool_call_start", "id": "call-b", "name": "b", "arguments": {}},
+                {"type": "done", "stop_reason": "toolUse"},
+            ],
+            [{"type": "done", "stop_reason": "stop"}],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry([make_tool("a", "parallel"), make_tool("b", "sequential")]),
+    )
+
+    run(runtime.prompt("run in order"))
+
+    assert max_active == 1
+    assert execution_order == ["start:a", "end:a", "start:b", "end:b"]
+
+
+def test_global_sequential_mode_overrides_parallel_tools(tmp_path: Path) -> None:
+    active = 0
+    max_active = 0
+
+    def make_tool(name: str) -> AgentTool:
+        async def execute(_arguments) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return ToolResult.text(name)
+
+        return AgentTool(
+            name=name,
+            label=name,
+            description=name,
+            input_schema={"type": "object"},
+            execute=execute,
+            execution_mode="parallel",
+        )
+
+    provider = FakeProvider(
+        [
+            [
+                {"type": "tool_call_start", "id": "call-a", "name": "a", "arguments": {}},
+                {"type": "tool_call_start", "id": "call-b", "name": "b", "arguments": {}},
+                {"type": "done", "stop_reason": "toolUse"},
+            ],
+            [{"type": "done", "stop_reason": "stop"}],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry([make_tool("a"), make_tool("b")]),
+        tool_execution="sequential",
+    )
+
+    run(runtime.prompt("run sequentially"))
+
+    assert max_active == 1

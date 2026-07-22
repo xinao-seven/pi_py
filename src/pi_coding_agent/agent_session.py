@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pi_agent.agent import Agent
 from pi_agent.tool_registry import ToolRegistry
 from pi_ai.providers.base import LLMProvider
@@ -18,6 +20,7 @@ class AgentSession(Agent):
         tool_registry: ToolRegistry,
         system_prompt: str = "",
         thinking_level: str = "off",
+        tool_execution: Literal["sequential", "parallel"] = "parallel",
     ) -> None:
         self.session_manager = session_manager
         super().__init__(
@@ -27,5 +30,5 @@ class AgentSession(Agent):
             tools=tool_registry,
             system_prompt=system_prompt,
             thinking_level=thinking_level,
+            tool_execution=tool_execution,
         )
-

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from pi_agent.types import AgentTool, ToolError, ToolResult
 
@@ -34,6 +34,14 @@ class ToolRegistry:
 
     def definitions(self) -> list[dict[str, Any]]:
         return [self._tools[name].provider_definition() for name in self._active]
+
+    def execution_mode(self, name: str) -> Literal["sequential", "parallel"] | None:
+        """Return a tool's scheduling constraint without exposing its executor."""
+
+        tool = self._tools.get(name)
+        if tool is None or name not in self._active:
+            return None
+        return tool.execution_mode
 
     async def execute(self, tool_call_id: str, name: str, arguments: Mapping[str, Any]) -> ToolResult:
         del tool_call_id
