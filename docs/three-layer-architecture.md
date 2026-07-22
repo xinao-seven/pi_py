@@ -69,7 +69,11 @@ src/pi_coding_agent/
 ├── agent_session.py         # Agent + SessionManager + coding tools
 ├── core/
 │   ├── session_manager.py   # pi Session v3 JSONL
-│   └── compaction.py        # 回合安全裁剪、摘要协议和溢出判断
+│   ├── compaction.py        # 回合安全裁剪、摘要协议和溢出判断
+│   ├── resource_loader.py   # 项目指令、系统提示和资源聚合
+│   ├── skills.py            # Agent Skills 发现、校验和命令展开
+│   ├── prompt_templates.py  # Markdown prompt templates
+│   └── system_prompt.py     # Coding Agent system prompt 组装
 └── tools/
     ├── read/write/edit/ls（当前集中在 file_tools.py）
     ├── grep/find
