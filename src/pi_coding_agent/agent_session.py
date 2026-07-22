@@ -18,7 +18,11 @@ from pi_coding_agent.core.compaction import (
     prepare_compaction,
     should_compact,
 )
+from pi_coding_agent.core.prompt_templates import expand_prompt_template
+from pi_coding_agent.core.resource_loader import CodingResourceLoader, CodingResources
 from pi_coding_agent.core.session_manager import SessionManager
+from pi_coding_agent.core.skills import expand_skill_command
+from pi_coding_agent.core.system_prompt import build_system_prompt
 
 
 class AgentSession(Agent):
@@ -36,6 +40,7 @@ class AgentSession(Agent):
         context_window: int = 0,
         compaction_settings: CompactionSettings | None = None,
         compaction_summarizer: CompactionSummarizer | None = None,
+        resource_loader: CodingResourceLoader | None = None,
     ) -> None:
         self.session_manager = session_manager
         self.compaction_settings = compaction_settings
@@ -43,16 +48,62 @@ class AgentSession(Agent):
         self.is_compacting = False
         self._compaction_task: asyncio.Task[Any] | None = None
         self._overflow_recovery_active = False
+        self.resource_loader = resource_loader or CodingResourceLoader(session_manager.cwd)
+        self.resources = self.resource_loader.load()
+        self._custom_system_prompt = system_prompt or None
+        self._initial_tool_names = tool_registry.active_names()
+        assembled_system_prompt = self._build_system_prompt()
         super().__init__(
             provider=provider,
             model=model,
             session=session_manager,
             tools=tool_registry,
-            system_prompt=system_prompt,
+            system_prompt=assembled_system_prompt,
             thinking_level=thinking_level,
             tool_execution=tool_execution,
             retry_policy=retry_policy,
             context_window=context_window,
+        )
+
+    @property
+    def skills(self):
+        return self.resources.skills
+
+    @property
+    def prompt_templates(self):
+        return self.resources.prompt_templates
+
+    def reload_resources(self) -> CodingResources:
+        self.resources = self.resource_loader.reload()
+        self.system_prompt = self._build_system_prompt()
+        return self.resources
+
+    def set_active_tools(self, names: list[str]) -> None:
+        super().set_active_tools(names)
+        self.system_prompt = self._build_system_prompt()
+
+    async def prompt(self, text: str) -> None:
+        await super().prompt(self._expand_prompt(text))
+
+    async def steer(self, text: str) -> None:
+        await super().steer(self._expand_prompt(text))
+
+    async def follow_up(self, text: str) -> None:
+        await super().follow_up(self._expand_prompt(text))
+
+    def _expand_prompt(self, text: str) -> str:
+        expanded = expand_skill_command(text, self.resources.skills)
+        return expand_prompt_template(expanded, self.resources.prompt_templates)
+
+    def _build_system_prompt(self) -> str:
+        custom = self._custom_system_prompt or self.resources.system_prompt
+        return build_system_prompt(
+            cwd=self.session_manager.cwd,
+            selected_tools=self.tools.active_names() if hasattr(self, "tools") else self._initial_tool_names,
+            context_files=self.resources.context_files,
+            skills=self.resources.skills,
+            custom_prompt=custom,
+            append_prompt=self.resources.append_system_prompt,
         )
 
     async def compact(
