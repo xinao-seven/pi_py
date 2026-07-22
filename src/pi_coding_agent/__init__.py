@@ -2,6 +2,11 @@
 
 from pi_agent.tool_registry import ToolRegistry
 from pi_coding_agent.agent_session import AgentSession
+from pi_coding_agent.core.compaction import (
+    CompactionSettings,
+    CompactionSummary,
+    ProviderCompactionSummarizer,
+)
 from pi_coding_agent.core.session_manager import (
     CURRENT_SESSION_VERSION,
     SessionInfo,
@@ -18,9 +23,12 @@ from pi_coding_agent.tools import create_builtin_tools, create_file_tools
 
 __all__ = [
     "AgentSession",
+    "CompactionSettings",
+    "CompactionSummary",
     "CURRENT_SESSION_VERSION",
     "SessionInfo",
     "SessionManager",
+    "ProviderCompactionSummarizer",
     "ToolRegistry",
     "build_context_entries",
     "build_session_context",
