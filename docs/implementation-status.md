@@ -26,8 +26,6 @@
 - read、bash、edit、write、grep、find、ls。
 - 工作区路径边界、输出截断、精确编辑、Windows PowerShell、超时和取消清理。
 
-## 正在进行
-
 ### 阶段 3：Agent 主循环
 
 已经实现：
@@ -44,9 +42,23 @@
 - steer、follow-up、abort。
 - 消息与工具结果写入 Session v3。
 
+## 正在进行
+
+### 阶段 4：上下文管理与资源加载
+
+已经实现：
+
+- usage-first context token 估算与窗口占用百分比。
+- 手动 compaction，以及 `compaction_start` / `compaction_end` 生命周期事件和独立取消。
+- 超过阈值时自动 compaction。
+- 上下文溢出后最多执行一次 compaction 并自动重试原 Provider turn。
+- 裁剪点保持完整用户回合，避免拆散 assistant tool call 与对应 ToolResult。
+- 可注入 `CompactionSummarizer`，以及使用当前 Provider 的结构化摘要实现。
+
 尚未实现：
 
-- compaction 和溢出恢复。
+- branch summary、Skills/prompt templates 和 Session cost 汇总。
+- 超大单回合的 split-turn 双摘要策略；当前实现会保守地保留完整回合。
 
 ## 当前已知差异
 
@@ -58,9 +70,9 @@
 ## 验证结果
 
 ```text
-54 passed
+60 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
-工具循环、并行/顺序工具调度、自动重试、上下文估算，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。

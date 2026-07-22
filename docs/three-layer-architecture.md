@@ -68,7 +68,8 @@ src/pi_agent/
 src/pi_coding_agent/
 ├── agent_session.py         # Agent + SessionManager + coding tools
 ├── core/
-│   └── session_manager.py   # pi Session v3 JSONL
+│   ├── session_manager.py   # pi Session v3 JSONL
+│   └── compaction.py        # 回合安全裁剪、摘要协议和溢出判断
 └── tools/
     ├── read/write/edit/ls（当前集中在 file_tools.py）
     ├── grep/find
