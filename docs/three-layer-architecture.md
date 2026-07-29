@@ -86,6 +86,28 @@ src/pi_coding_agent/
 system prompt、Skills、compaction、重试、配置和 FastAPI bridge 等编程助手业务能力，
 后续都进入这一层，而不是放回通用 `pi_agent`。
 
+## FastAPI 应用层
+
+`server` 位于三层核心之上，只负责 HTTP DTO、生命周期和安全边界：
+
+```text
+server/
+├── main.py                    # application factory 与依赖装配
+├── config.py / errors.py      # 环境配置和统一错误 envelope
+├── routes/                    # sessions、agent、files、models、skills、workspaces
+└── services/
+    ├── agent_registry.py      # 活跃 Agent、事件回放和空闲回收
+    ├── agent_bridge.py        # 命令与 SSE 转换
+    ├── session_store.py       # Session 发现、删除和子节点重定向
+    ├── session_merge.py       # 有界会话合并摘要
+    ├── file_service.py        # 工作区路径与预览安全
+    ├── model_config.py        # 凭据安全的模型配置
+    ├── skill_service.py       # 本地 Skills 配置
+    └── workspace_service.py   # 受控工作区根目录
+```
+
+该层可以同时导入三个核心包，但核心包不得反向依赖 FastAPI、Pydantic 或 `server`。
+
 ## 类型递进
 
 ```text

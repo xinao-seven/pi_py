@@ -67,8 +67,6 @@
 
 - 超大单回合的 split-turn 双摘要策略；当前实现会保守地保留完整回合。
 
-## 正在进行
-
 ### 阶段 5：FastAPI 服务
 
 已经实现：
@@ -86,12 +84,19 @@
 - Files API 支持目录浏览、UTF-8 文本、图片/音频预览和轮询 SSE 文件变化监听。
 - 文件访问只允许已保存 Session 或活跃 Agent 的 cwd；真实路径解析后再次检查边界，并拦截
   `.env`、密钥、凭据和敏感配置目录。
+- Models Config 使用原子 JSON 写入；`apiKey` 只允许 `$ENV_VAR` 引用，解析后的密钥不会通过
+  API 返回。
+- Models API 汇总配置模型、默认模型和 thinking level 能力，配置后的 Provider 可直接供
+  AgentRegistry 创建实例。
+- Skills API 复用 Coding Agent 的本地发现逻辑，支持诊断展示和
+  `disable-model-invocation` 原子切换，并刷新活跃 Agent 的资源。
+- 工作区 API 可在受控父目录下创建默认 cwd、登记已有目录并列出允许根目录；Files 和 Skills
+  共用同一根目录集合。
 
-尚未实现：
+阶段 5 的计划后端能力已经完成。延后项：
 
-- Models、Models Config 和本地 Provider 配置 API。
-- Skills 配置 API 和本机目录选择的安全替代接口。
 - Vue 静态构建托管；该部分将在前端工程建立后接入。
+- 在线 Skills 搜索和安装；第一版范围只包含本地发现、启停和加载。
 
 ## 当前已知差异
 
@@ -99,16 +104,20 @@
 - grep/find 会忽略 `.git`、`node_modules` 和 `__pycache__`，但尚未完整解析任意 `.gitignore` 规则。
 - bash 已处理直接子进程的超时和取消；完整跨平台进程树终止仍需专项验证。
 - Provider 请求和 SSE 映射已有完全离线测试，但尚未进行需要 API Key 的受控真实服务 smoke test。
+- Models Config 不保存明文 API Key，只接受环境变量引用；与参考 Web 允许直接保存字符串的
+  行为不同。
+- 原生 Windows 文件夹选择器由 `PI_SERVER_WORKSPACE_PARENT` 下的受控选择接口替代。
 
 ## 验证结果
 
 ```text
-86 passed
+90 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
 工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复、分支摘要/树导航、
 Session 用量与成本统计、Skills/模板/项目指令加载、FastAPI Session/Agent API、AgentRegistry 与 SSE
-回放、Files 安全边界、Session 删除重定向与 merge，以及 Anthropic/OpenAI-compatible
+回放、Files 安全边界、Session 删除重定向与 merge、Models Config、Skills 与受控工作区，
+以及 Anthropic/OpenAI-compatible
 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。

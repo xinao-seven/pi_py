@@ -41,10 +41,28 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --reload
 - `http://127.0.0.1:8000/api/docs`
 
 可通过 `PI_SERVER_SESSIONS_DIR`、`PI_SERVER_CORS_ORIGINS`、
-`PI_SERVER_IDLE_TIMEOUT` 和 `PI_SERVER_SSE_HEARTBEAT` 调整服务配置。
+`PI_SERVER_AGENT_DIR`、`PI_SERVER_WORKSPACE_PARENT`、`PI_SERVER_IDLE_TIMEOUT`
+和 `PI_SERVER_SSE_HEARTBEAT` 调整服务配置。
 
 当前后端已经提供：
 
 - `/api/sessions`：会话列表、详情、上下文、重命名、删除和 merge
 - `/api/agent`：Agent 创建、状态、命令和 SSE 事件流
 - `/api/files`：限定在 Session 工作区内的目录浏览、文件预览和变化监听
+- `/api/models`、`/api/models-config`：模型目录与 Provider 配置
+- `/api/skills`：本地 Skills 列表与启停
+- `/api/workspaces`、`/api/default-cwd`：受控工作目录登记与创建
+
+`models.json` 中的 `apiKey` 必须写成环境变量引用，例如：
+
+```json
+{
+  "providers": {
+    "openai": {
+      "api": "openai-completions",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": [{"id": "your-model-id"}]
+    }
+  }
+}
+```
