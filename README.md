@@ -42,3 +42,9 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --reload
 
 可通过 `PI_SERVER_SESSIONS_DIR`、`PI_SERVER_CORS_ORIGINS`、
 `PI_SERVER_IDLE_TIMEOUT` 和 `PI_SERVER_SSE_HEARTBEAT` 调整服务配置。
+
+当前后端已经提供：
+
+- `/api/sessions`：会话列表、详情、上下文、重命名、删除和 merge
+- `/api/agent`：Agent 创建、状态、命令和 SSE 事件流
+- `/api/files`：限定在 Session 工作区内的目录浏览、文件预览和变化监听

@@ -80,11 +80,15 @@
 - prompt、steer、follow-up、abort、模型、thinking、工具、compaction 和树导航命令。
 - SSE 事件流、心跳、多订阅者独立队列、有限事件回放和 `Last-Event-ID` 续传。
 - Provider resolver 可注入，ASGI 集成测试完全使用 `FakeProvider`。
+- Session 删除会将直接子会话重定向到被删除会话的父节点，再原子更新子会话 header。
+- Session merge 对来源独有 entry 生成有界摘要，并作为 `session_merge_summary` custom message
+  追加到目标会话；活跃 Agent 会同步刷新上下文。
+- Files API 支持目录浏览、UTF-8 文本、图片/音频预览和轮询 SSE 文件变化监听。
+- 文件访问只允许已保存 Session 或活跃 Agent 的 cwd；真实路径解析后再次检查边界，并拦截
+  `.env`、密钥、凭据和敏感配置目录。
 
 尚未实现：
 
-- Session 删除、子会话重定向和 merge API。
-- Files API 及工作区文件读取边界。
 - Models、Models Config 和本地 Provider 配置 API。
 - Skills 配置 API 和本机目录选择的安全替代接口。
 - Vue 静态构建托管；该部分将在前端工程建立后接入。
@@ -99,11 +103,12 @@
 ## 验证结果
 
 ```text
-80 passed
+86 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
 工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复、分支摘要/树导航、
 Session 用量与成本统计、Skills/模板/项目指令加载、FastAPI Session/Agent API、AgentRegistry 与 SSE
-回放，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+回放、Files 安全边界、Session 删除重定向与 merge，以及 Anthropic/OpenAI-compatible
+请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。
