@@ -184,6 +184,9 @@ class AgentRegistry:
     def workspace_roots(self) -> tuple[Path, ...]:
         return tuple(entry.agent.session_manager.cwd for entry in self._entries.values() if entry.alive)
 
+    def entries(self) -> tuple[RegistryEntry, ...]:
+        return tuple(entry for entry in self._entries.values() if entry.alive)
+
     async def create(
         self,
         *,

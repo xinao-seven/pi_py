@@ -10,10 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import ServerSettings
 from server.errors import install_error_handlers
-from server.routes import agent, files, health, models, sessions
+from server.routes import agent, files, health, models, sessions, skills, workspaces
 from server.services.agent_registry import AgentRegistry, ProviderResolver
 from server.services.file_service import FileService
 from server.services.model_config import ModelConfigService
+from server.services.skill_service import SkillService
+from server.services.workspace_service import WorkspaceService
 from server.services.session_store import SessionStore
 
 
@@ -33,6 +35,14 @@ def create_app(
         idle_timeout=resolved.idle_timeout_seconds,
         **registry_kwargs,
     )
+    workspace_service = WorkspaceService(
+        resolved.workspace_parent,
+        lambda: [
+            *(info.cwd for info in store.list() if info.cwd),
+            *registry.workspace_roots(),
+        ],
+    )
+    skill_service = SkillService(resolved.agent_dir, workspace_service.roots)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -51,11 +61,10 @@ def create_app(
     app.state.session_store = store
     app.state.agent_registry = registry
     app.state.model_config = model_config
+    app.state.workspace_service = workspace_service
+    app.state.skill_service = skill_service
     app.state.file_service = FileService(
-        lambda: [
-            *(info.cwd for info in store.list() if info.cwd),
-            *registry.workspace_roots(),
-        ]
+        workspace_service.roots
     )
     if resolved.cors_origins:
         app.add_middleware(
@@ -71,6 +80,8 @@ def create_app(
     app.include_router(agent.router)
     app.include_router(files.router)
     app.include_router(models.router)
+    app.include_router(workspaces.router)
+    app.include_router(skills.router)
     return app
 
 
