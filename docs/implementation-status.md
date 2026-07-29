@@ -1,6 +1,6 @@
 # 实施状态
 
-更新日期：2026-07-22
+更新日期：2026-07-29
 
 当前代码已经重组为 `pi_ai`、`pi_agent`、`pi_coding_agent` 三个包，并通过自动化测试
 约束单向依赖。
@@ -67,6 +67,28 @@
 
 - 超大单回合的 split-turn 双摘要策略；当前实现会保守地保留完整回合。
 
+## 正在进行
+
+### 阶段 5：FastAPI 服务
+
+已经实现：
+
+- FastAPI application factory、环境配置、CORS、OpenAPI 和统一错误响应。
+- `GET /api/sessions`、Session 详情、指定 leaf 上下文和会话重命名。
+- AgentRegistry：同一 Session 单活跃实例、并发激活锁、空闲超时回收和应用关闭清理。
+- `POST /api/agent/new`、Agent 状态和统一命令入口。
+- prompt、steer、follow-up、abort、模型、thinking、工具、compaction 和树导航命令。
+- SSE 事件流、心跳、多订阅者独立队列、有限事件回放和 `Last-Event-ID` 续传。
+- Provider resolver 可注入，ASGI 集成测试完全使用 `FakeProvider`。
+
+尚未实现：
+
+- Session 删除、子会话重定向和 merge API。
+- Files API 及工作区文件读取边界。
+- Models、Models Config 和本地 Provider 配置 API。
+- Skills 配置 API 和本机目录选择的安全替代接口。
+- Vue 静态构建托管；该部分将在前端工程建立后接入。
+
 ## 当前已知差异
 
 - read 首版仅支持 UTF-8 文本，尚未处理图片。
@@ -77,10 +99,11 @@
 ## 验证结果
 
 ```text
-72 passed
+80 passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent
 工具循环、并行/顺序工具调度、自动重试、上下文估算、compaction/溢出恢复、分支摘要/树导航、
-Session 用量与成本统计、Skills/模板/项目指令加载，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
+Session 用量与成本统计、Skills/模板/项目指令加载、FastAPI Session/Agent API、AgentRegistry 与 SSE
+回放，以及 Anthropic/OpenAI-compatible 请求与流事件映射测试。全部 Provider 测试均使用
 注入的内存 transport，没有访问网络或消耗 API 额度。
