@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 from pathlib import Path
+import re
 from typing import Any
 
 from pi_coding_agent.core.session_manager import (
@@ -38,9 +40,9 @@ class SessionStore:
     def session_directory(self, cwd: str | Path) -> Path:
         """Use one deterministic directory per workspace without exposing its path."""
         resolved = Path(cwd).resolve()
-        safe_name = resolved.drive.replace(":", "") + resolved.as_posix().replace("/", "-")
-        safe_name = safe_name.strip("-") or "root"
-        return self.sessions_dir / safe_name
+        label = re.sub(r"[^A-Za-z0-9._-]+", "-", resolved.name).strip("-") or "workspace"
+        digest = hashlib.sha256(str(resolved).casefold().encode("utf-8")).hexdigest()[:12]
+        return self.sessions_dir / f"{label[:40]}-{digest}"
 
 
 def session_info_to_dict(info: SessionInfo) -> dict[str, Any]:

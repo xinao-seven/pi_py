@@ -32,6 +32,9 @@ class ToolRegistry:
     def active_names(self) -> list[str]:
         return list(self._active)
 
+    def names(self) -> list[str]:
+        return list(self._tools)
+
     def definitions(self) -> list[dict[str, Any]]:
         return [self._tools[name].provider_definition() for name in self._active]
 
