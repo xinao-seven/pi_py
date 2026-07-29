@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
+import json
 from pathlib import Path
 import re
 from typing import Any
+from uuid import uuid4
 
 from pi_coding_agent.core.session_manager import (
     SessionInfo,
@@ -43,6 +45,26 @@ class SessionStore:
         label = re.sub(r"[^A-Za-z0-9._-]+", "-", resolved.name).strip("-") or "workspace"
         digest = hashlib.sha256(str(resolved).casefold().encode("utf-8")).hexdigest()[:12]
         return self.sessions_dir / f"{label[:40]}-{digest}"
+
+    def delete_with_reparent(self, session_id: str) -> int | None:
+        target_info = self.find(session_id)
+        if target_info is None:
+            return None
+        target_path = target_info.path.resolve()
+        target_manager = SessionManager.open(target_path)
+        parent_path = target_manager.get_header().get("parentSession")
+        parent = parent_path if isinstance(parent_path, str) and parent_path else None
+        children = [
+            info
+            for info in self.list()
+            if info.path.resolve() != target_path
+            and info.parent_session_path
+            and _path_key(Path(info.parent_session_path).resolve()) == _path_key(target_path)
+        ]
+        for child in children:
+            _rewrite_parent_session(child.path, parent)
+        target_path.unlink()
+        return len(children)
 
 
 def session_info_to_dict(info: SessionInfo) -> dict[str, Any]:
@@ -87,3 +109,26 @@ def session_detail(manager: SessionManager, info: SessionInfo | None = None) -> 
         "leafId": manager.leaf_id,
         "context": context,
     }
+
+
+def _path_key(path: Path) -> str:
+    return str(path).casefold()
+
+
+def _rewrite_parent_session(path: Path, parent_path: str | None) -> None:
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    if not lines:
+        raise ValueError(f"Session file is empty: {path}")
+    header = json.loads(lines[0])
+    if not isinstance(header, dict) or header.get("type") != "session":
+        raise ValueError(f"Session file has no valid header: {path}")
+    if parent_path:
+        header["parentSession"] = parent_path
+    else:
+        header.pop("parentSession", None)
+    lines[0] = json.dumps(header, ensure_ascii=False, separators=(",", ":"))
+    rewritten = "\n".join(lines) + ("\n" if content.endswith(("\n", "\r")) else "")
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    temporary.write_text(rewritten, encoding="utf-8", newline="\n")
+    temporary.replace(path)

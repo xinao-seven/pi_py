@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
 from server.errors import APIError
+from server.services.agent_registry import AgentRegistry
+from server.services.session_merge import append_merge_summary, create_session_merge_summary
 from server.services.session_store import SessionStore, session_detail, session_info_to_dict
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -25,8 +27,16 @@ class RenameSessionRequest(BaseModel):
         return normalized
 
 
+class MergeSessionRequest(BaseModel):
+    sourceSessionId: str
+
+
 def get_session_store(request: Request) -> SessionStore:
     return request.app.state.session_store
+
+
+def get_agent_registry(request: Request) -> AgentRegistry:
+    return request.app.state.agent_registry
 
 
 @router.get("")
@@ -77,3 +87,58 @@ async def rename_session(
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
     manager.append_session_info(body.name)
     return {"ok": True}
+
+
+@router.delete("/{session_id}")
+async def delete_session(
+    session_id: str,
+    store: SessionStore = Depends(get_session_store),
+    registry: AgentRegistry = Depends(get_agent_registry),
+) -> dict:
+    if store.find(session_id) is None:
+        raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
+    await registry.remove(session_id)
+    try:
+        reparented = store.delete_with_reparent(session_id)
+    except OSError as exception:
+        raise APIError(500, "session_delete_failed", str(exception)) from exception
+    if reparented is None:
+        raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
+    return {"ok": True, "reparentedCount": reparented}
+
+
+@router.post("/{session_id}/merge")
+async def merge_session(
+    session_id: str,
+    body: MergeSessionRequest,
+    store: SessionStore = Depends(get_session_store),
+    registry: AgentRegistry = Depends(get_agent_registry),
+) -> dict:
+    if body.sourceSessionId == session_id:
+        raise APIError(400, "invalid_merge", "A Session cannot be merged into itself")
+    target_info = store.find(session_id)
+    source = store.open(body.sourceSessionId)
+    if target_info is None:
+        raise APIError(404, "session_not_found", f"Target Session {session_id!r} was not found")
+    if source is None:
+        raise APIError(
+            404,
+            "session_not_found",
+            f"Source Session {body.sourceSessionId!r} was not found",
+        )
+    live_target = registry.get(session_id)
+    target = live_target.agent.session_manager if live_target is not None else store.open(session_id)
+    if target is None:
+        raise APIError(404, "session_not_found", f"Target Session {session_id!r} was not found")
+    summary = create_session_merge_summary(source, target)
+    if summary is None:
+        raise APIError(409, "nothing_to_merge", "Source Session has no new mergeable content")
+    entry_id = append_merge_summary(target, body.sourceSessionId, summary)
+    if live_target is not None:
+        live_target.agent.messages = target.build_session_context()["messages"]
+    return {
+        "ok": True,
+        "entryId": entry_id,
+        "sourceUniqueEntryCount": summary.source_unique_entry_count,
+        "summarizedItemCount": summary.summarized_item_count,
+    }
