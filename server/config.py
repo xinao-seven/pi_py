@@ -9,9 +9,11 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
+    agent_dir: Path = field(default_factory=lambda: Path.home() / ".pi" / "agent")
     sessions_dir: Path = field(
         default_factory=lambda: Path.home() / ".pi" / "agent" / "sessions"
     )
+    workspace_parent: Path = field(default_factory=Path.home)
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
     idle_timeout_seconds: float = 600
     sse_heartbeat_seconds: float = 30
@@ -29,11 +31,17 @@ class ServerSettings:
             if origin.strip()
         )
         return cls(
+            agent_dir=Path(
+                os.getenv("PI_SERVER_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
+            ).expanduser(),
             sessions_dir=Path(
                 os.getenv(
                     "PI_SERVER_SESSIONS_DIR",
                     str(Path.home() / ".pi" / "agent" / "sessions"),
                 )
+            ).expanduser(),
+            workspace_parent=Path(
+                os.getenv("PI_SERVER_WORKSPACE_PARENT", str(Path.home()))
             ).expanduser(),
             cors_origins=origins,
             idle_timeout_seconds=float(os.getenv("PI_SERVER_IDLE_TIMEOUT", "600")),

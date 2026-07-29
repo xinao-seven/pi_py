@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import ServerSettings
 from server.errors import install_error_handlers
-from server.routes import agent, files, health, sessions
+from server.routes import agent, files, health, models, sessions
 from server.services.agent_registry import AgentRegistry, ProviderResolver
 from server.services.file_service import FileService
+from server.services.model_config import ModelConfigService
 from server.services.session_store import SessionStore
 
 
@@ -23,7 +24,10 @@ def create_app(
 ) -> FastAPI:
     resolved = settings or ServerSettings.from_env()
     store = SessionStore(resolved.sessions_dir)
-    registry_kwargs = {"provider_resolver": provider_resolver} if provider_resolver else {}
+    model_config = ModelConfigService(resolved.agent_dir)
+    registry_kwargs = {
+        "provider_resolver": provider_resolver or model_config.resolve_provider
+    }
     registry = AgentRegistry(
         store,
         idle_timeout=resolved.idle_timeout_seconds,
@@ -46,6 +50,7 @@ def create_app(
     app.state.settings = resolved
     app.state.session_store = store
     app.state.agent_registry = registry
+    app.state.model_config = model_config
     app.state.file_service = FileService(
         lambda: [
             *(info.cwd for info in store.list() if info.cwd),
@@ -65,6 +70,7 @@ def create_app(
     app.include_router(sessions.router)
     app.include_router(agent.router)
     app.include_router(files.router)
+    app.include_router(models.router)
     return app
 
 
