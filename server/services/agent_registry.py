@@ -181,6 +181,9 @@ class AgentRegistry:
         entry = self._entries.get(session_id)
         return entry if entry is not None and entry.alive else None
 
+    def workspace_roots(self) -> tuple[Path, ...]:
+        return tuple(entry.agent.session_manager.cwd for entry in self._entries.values() if entry.alive)
+
     async def create(
         self,
         *,

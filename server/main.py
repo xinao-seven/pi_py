@@ -10,8 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import ServerSettings
 from server.errors import install_error_handlers
-from server.routes import agent, health, sessions
+from server.routes import agent, files, health, sessions
 from server.services.agent_registry import AgentRegistry, ProviderResolver
+from server.services.file_service import FileService
 from server.services.session_store import SessionStore
 
 
@@ -45,6 +46,12 @@ def create_app(
     app.state.settings = resolved
     app.state.session_store = store
     app.state.agent_registry = registry
+    app.state.file_service = FileService(
+        lambda: [
+            *(info.cwd for info in store.list() if info.cwd),
+            *registry.workspace_roots(),
+        ]
+    )
     if resolved.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -57,6 +64,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(sessions.router)
     app.include_router(agent.router)
+    app.include_router(files.router)
     return app
 
 
