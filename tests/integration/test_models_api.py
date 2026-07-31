@@ -24,7 +24,14 @@ async def test_models_config_round_trip_and_catalog(tmp_path: Path) -> None:
                 "api": "openai-completions",
                 "baseUrl": "https://example.invalid/v1",
                 "apiKey": "$CUSTOM_API_KEY",
-                "models": [{"id": "custom-model", "name": "Custom Model"}],
+                "models": [
+                    {
+                        "id": "custom-model",
+                        "name": "Custom Model",
+                        "contextWindow": 200000,
+                        "reasoning": False,
+                    }
+                ],
             }
         }
     }
@@ -41,6 +48,13 @@ async def test_models_config_round_trip_and_catalog(tmp_path: Path) -> None:
         "provider": "custom",
         "modelId": "fallback-model",
     }
+    custom_model = next(
+        model
+        for model in catalog.json()["modelList"]
+        if model["id"] == "custom-model"
+    )
+    assert custom_model["contextWindow"] == 200000
+    assert catalog.json()["thinkingLevels"]["custom:custom-model"] == ["off"]
 
 
 @pytest.mark.asyncio

@@ -160,6 +160,42 @@ def test_threshold_compaction_runs_after_successful_turn(tmp_path: Path) -> None
     assert runtime.messages[0]["role"] == "compactionSummary"
 
 
+def test_threshold_compaction_uses_current_provider_without_injected_summarizer(
+    tmp_path: Path,
+) -> None:
+    manager = SessionManager.in_memory(tmp_path)
+    manager.append_message({"role": "user", "content": "old request"})
+    manager.append_message(_assistant("old answer"))
+    provider = FakeProvider(
+        [
+            [
+                {"type": "text_delta", "text": "new answer"},
+                {"type": "done", "stop_reason": "stop", "usage": {"totalTokens": 18}},
+            ],
+            [
+                {"type": "text_delta", "text": "dynamic checkpoint"},
+                {"type": "done", "stop_reason": "stop"},
+            ],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=manager,
+        tool_registry=ToolRegistry(),
+        context_window=20,
+        compaction_settings=CompactionSettings(reserve_tokens=5, keep_recent_tokens=1),
+    )
+
+    run(runtime.prompt("new request"))
+
+    assert len(provider.requests) == 2
+    assert provider.requests[1]["tools"] == []
+    assert provider.requests[1]["model"] == "fake"
+    assert runtime.messages[0]["role"] == "compactionSummary"
+    assert runtime.messages[0]["summary"] == "dynamic checkpoint"
+
+
 def test_context_overflow_compacts_once_and_retries_provider(tmp_path: Path) -> None:
     manager = SessionManager.in_memory(tmp_path)
     manager.append_message({"role": "user", "content": "old request"})

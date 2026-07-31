@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
@@ -67,12 +68,16 @@ class SessionStore:
         return len(children)
 
 
-def session_info_to_dict(info: SessionInfo) -> dict[str, Any]:
+def session_info_to_dict(
+    info: SessionInfo,
+    *,
+    parent_session_id: str | None = None,
+) -> dict[str, Any]:
     values = asdict(info)
     values["path"] = str(info.path)
     values["created"] = info.created.isoformat()
     values["modified"] = info.modified.isoformat()
-    values["parentSessionId"] = None
+    values["parentSessionId"] = parent_session_id
     values["parentSessionPath"] = values.pop("parent_session_path")
     values["messageCount"] = values.pop("message_count")
     values["firstMessage"] = values.pop("first_message")
@@ -80,7 +85,28 @@ def session_info_to_dict(info: SessionInfo) -> dict[str, Any]:
     return values
 
 
-def session_detail(manager: SessionManager, info: SessionInfo | None = None) -> dict[str, Any]:
+def session_info_list_to_dict(infos: Iterable[SessionInfo]) -> list[dict[str, Any]]:
+    items = list(infos)
+    ids_by_path = {_path_key(info.path.resolve()): info.id for info in items}
+    return [
+        session_info_to_dict(
+            info,
+            parent_session_id=(
+                ids_by_path.get(_path_key(Path(info.parent_session_path).resolve()))
+                if info.parent_session_path
+                else None
+            ),
+        )
+        for info in items
+    ]
+
+
+def session_detail(
+    manager: SessionManager,
+    info: SessionInfo | None = None,
+    *,
+    parent_session_id: str | None = None,
+) -> dict[str, Any]:
     header = manager.get_header()
     context = manager.build_web_session_context()
     resolved_info = info or (
@@ -90,7 +116,7 @@ def session_detail(manager: SessionManager, info: SessionInfo | None = None) -> 
         "sessionId": manager.session_id,
         "filePath": str(manager.session_file) if manager.session_file is not None else None,
         "info": (
-            session_info_to_dict(resolved_info)
+            session_info_to_dict(resolved_info, parent_session_id=parent_session_id)
             if resolved_info is not None
             else {
                 "path": None,

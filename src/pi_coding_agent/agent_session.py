@@ -334,7 +334,6 @@ class AgentSession(Agent):
         if (
             event_type == "turn_end"
             and self.compaction_settings is not None
-            and self.compaction_summarizer is not None
             and not self.is_compacting
         ):
             usage = self.get_context_usage()

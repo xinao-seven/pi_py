@@ -48,8 +48,15 @@ async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[st
         await agent.abort()
         return {"aborted": True}
     if command_type == "set_model":
-        agent.set_model(_required_text(command, "modelId"))
-        return {"model": agent.model}
+        provider_name = _optional_text(command.get("provider")) or agent.provider.name
+        resolved = entry.set_model(provider_name, _required_text(command, "modelId"))
+        return {
+            "model": {
+                "provider": resolved.provider,
+                "modelId": resolved.model,
+                "contextWindow": resolved.context_window,
+            }
+        }
     if command_type == "set_thinking_level":
         agent.set_thinking_level(_required_text(command, "thinkingLevel"))
         return {"thinkingLevel": agent.thinking_level}

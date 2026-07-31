@@ -40,6 +40,32 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --reload
 - `http://127.0.0.1:8000/api/openapi.json`
 - `http://127.0.0.1:8000/api/docs`
 
+## 启动 Vue 前端
+
+首次安装依赖：
+
+```powershell
+cd web
+npm install
+```
+
+后端运行在 `127.0.0.1:8000` 时，启动 Vite 开发服务器：
+
+```powershell
+npm run dev
+```
+
+浏览器访问 `http://127.0.0.1:5173`。Vite 会将 `/api` 请求和 SSE 连接代理到 FastAPI。
+
+前端检查：
+
+```powershell
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+```
+
 可通过 `PI_SERVER_SESSIONS_DIR`、`PI_SERVER_CORS_ORIGINS`、
 `PI_SERVER_AGENT_DIR`、`PI_SERVER_WORKSPACE_PARENT`、`PI_SERVER_IDLE_TIMEOUT`
 和 `PI_SERVER_SSE_HEARTBEAT` 调整服务配置。

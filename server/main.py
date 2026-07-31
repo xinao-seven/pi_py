@@ -28,7 +28,9 @@ def create_app(
     store = SessionStore(resolved.sessions_dir)
     model_config = ModelConfigService(resolved.agent_dir)
     registry_kwargs = {
-        "provider_resolver": provider_resolver or model_config.resolve_provider
+        "provider_resolver": provider_resolver or model_config.resolve_provider,
+        "model_resolver": model_config.resolve_model,
+        "agent_dir": resolved.agent_dir,
     }
     registry = AgentRegistry(
         store,

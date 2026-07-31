@@ -31,6 +31,7 @@ class NewAgentRequest(BaseModel):
 class AgentCommandRequest(BaseModel):
     type: str
     message: str | None = None
+    provider: str | None = None
     modelId: str | None = None
     thinkingLevel: str | None = None
     toolNames: list[str] | None = None
@@ -94,14 +95,17 @@ async def command_agent(
             entry = await registry.activate(
                 session_id,
                 provider_name=settings.default_provider,
-                model=body.modelId or settings.default_model,
+                model=settings.default_model,
                 tool_names=body.toolNames if body.type == "set_tools" else None,
             )
         except ProviderConfigurationError as exception:
             raise APIError(400, "provider_not_configured", str(exception)) from exception
     if entry is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
-    result = await send_command(entry, body.model_dump(exclude_none=True))
+    try:
+        result = await send_command(entry, body.model_dump(exclude_none=True))
+    except ProviderConfigurationError as exception:
+        raise APIError(400, "provider_not_configured", str(exception)) from exception
     return {"success": True, "data": result}
 
 

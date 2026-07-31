@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field, field_validator
 from server.errors import APIError
 from server.services.agent_registry import AgentRegistry
 from server.services.session_merge import append_merge_summary, create_session_merge_summary
-from server.services.session_store import SessionStore, session_detail, session_info_to_dict
+from server.services.session_store import (
+    SessionStore,
+    session_detail,
+    session_info_list_to_dict,
+)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -31,6 +35,10 @@ class MergeSessionRequest(BaseModel):
     sourceSessionId: str
 
 
+class ForkSessionRequest(BaseModel):
+    leafId: Annotated[str, Field(min_length=1)]
+
+
 def get_session_store(request: Request) -> SessionStore:
     return request.app.state.session_store
 
@@ -41,7 +49,7 @@ def get_agent_registry(request: Request) -> AgentRegistry:
 
 @router.get("")
 async def list_sessions(store: SessionStore = Depends(get_session_store)) -> dict:
-    return {"sessions": [session_info_to_dict(info) for info in store.list()]}
+    return {"sessions": session_info_list_to_dict(store.list())}
 
 
 @router.get("/{session_id}")
@@ -52,7 +60,12 @@ async def get_session(session_id: str, store: SessionStore = Depends(get_session
     manager = store.open(session_id)
     if manager is None:  # The file may have disappeared between discovery and opening.
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
-    return session_detail(manager, info)
+    serialized = session_info_list_to_dict(store.list())
+    parent_session_id = next(
+        (item["parentSessionId"] for item in serialized if item["id"] == session_id),
+        None,
+    )
+    return session_detail(manager, info, parent_session_id=parent_session_id)
 
 
 @router.get("/{session_id}/context")
@@ -105,6 +118,37 @@ async def delete_session(
     if reparented is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
     return {"ok": True, "reparentedCount": reparented}
+
+
+@router.post("/{session_id}/fork")
+async def fork_session(
+    session_id: str,
+    body: ForkSessionRequest,
+    store: SessionStore = Depends(get_session_store),
+) -> dict:
+    source = store.open(session_id)
+    if source is None:
+        raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
+    try:
+        new_path = source.create_branched_session(body.leafId)
+    except KeyError as exception:
+        raise APIError(
+            404,
+            "entry_not_found",
+            f"Entry {body.leafId!r} was not found in Session {session_id!r}",
+        ) from exception
+    if new_path is None or not new_path.exists():
+        raise APIError(
+            409,
+            "fork_not_persisted",
+            "The selected branch has no assistant response and cannot be persisted",
+        )
+    info = store.find(source.session_id)
+    if info is None:
+        raise APIError(500, "session_fork_failed", "The forked Session could not be discovered")
+    serialized = session_info_list_to_dict(store.list())
+    forked_info = next(item for item in serialized if item["id"] == source.session_id)
+    return {"ok": True, "sessionId": source.session_id, "info": forked_info}
 
 
 @router.post("/{session_id}/merge")

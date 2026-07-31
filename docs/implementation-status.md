@@ -1,6 +1,6 @@
 # 实施状态
 
-更新日期：2026-07-29
+更新日期：2026-07-31
 
 当前代码已经重组为 `pi_ai`、`pi_agent`、`pi_coding_agent` 三个包，并通过自动化测试
 约束单向依赖。
@@ -39,6 +39,8 @@
 - 并行执行时结束事件按完成顺序发出，ToolResult 按模型调用顺序写入 Session。
 - transient Provider 错误自动重试：默认最多 3 次、指数退避、取消和额度错误快速失败。
 - context usage：优先使用最近成功响应的 usage，并估算后续消息及无 usage 时的完整上下文。
+- 工具调用参数会按当前工具使用的 JSON Schema 子集统一校验；未预期工具异常会归一化为
+  `isError=true` 的 ToolResult，同时保留取消传播。
 - steer、follow-up、abort。
 - 消息与工具结果写入 Session v3。
 
@@ -49,6 +51,8 @@
 - usage-first context token 估算与窗口占用百分比。
 - 手动 compaction，以及 `compaction_start` / `compaction_end` 生命周期事件和独立取消。
 - 超过阈值时自动 compaction。
+- `models.json` 的 `contextWindow` 会进入 AgentRuntime；模型切换时同步更新，并由当前 Provider
+  动态执行自动 compaction 摘要。
 - 上下文溢出后最多执行一次 compaction 并自动重试原 Provider turn。
 - 裁剪点保持完整用户回合，避免拆散 assistant tool call 与对应 ToolResult。
 - 可注入 `CompactionSummarizer`，以及使用当前 Provider 的结构化摘要实现。
@@ -92,11 +96,56 @@
   `disable-model-invocation` 原子切换，并刷新活跃 Agent 的资源。
 - 工作区 API 可在受控父目录下创建默认 cwd、登记已有目录并列出允许根目录；Files 和 Skills
   共用同一根目录集合。
+- 新会话会持久化初始模型与 thinking level；重新激活会恢复历史 Provider/模型，`set_model`
+  支持跨 Provider 原子切换。
+- Server 的全局 `agent_dir` 已注入每个 AgentSession，用户级 AGENTS、system prompt、prompts
+  与 skills 会进入实际运行链路。
 
 阶段 5 的计划后端能力已经完成。延后项：
 
-- Vue 静态构建托管；该部分将在前端工程建立后接入。
+- Vue 静态构建托管；按原计划留到阶段 8 接入。
 - 在线 Skills 搜索和安装；第一版范围只包含本地发现、启停和加载。
+
+### 阶段 6：Vue 最小纵向界面
+
+已经实现：
+
+- Vue 3、Vite、TypeScript、Pinia 与 Tailwind CSS 4 前端工程，开发服务器将 `/api` 代理到
+  本机 FastAPI。
+- AppShell、响应式 SessionSidebar、ChatWindow、MessageView 与 ChatInput。
+- REST client、统一 API 错误解析、原生 EventSource SSE client 与可测试事件状态机。
+- 新建默认工作区、发送首条消息并创建 Session、历史 Session 列表和会话上下文恢复。
+- assistant 文本 delta 流式展示、Agent 阶段提示、错误显示、自动滚动和 abort。
+- SSE entry ID 去重：刷新或重连后的事件回放不会重复插入已持久化消息。
+- 前端单元/组件测试、TypeScript、ESLint 与 Vite 生产构建。
+
+阶段 6 的最小纵向闭环已经完成。Markdown、thinking/tool 详情、模型/工具切换、分支、文件浏览
+与配置界面仍按计划属于阶段 7。
+
+### 阶段 7：Web 完整功能（进行中）
+
+7A 消息语义与运行控制已经实现：
+
+- Markdown/GFM 渲染、代码语法高亮，并在 `v-html` 前使用 DOMPurify 清理模型输出。
+- thinking 折叠块、tool call 参数与对应 ToolResult 状态/输出展示。
+- 运行中的 steer 和 follow-up；输入框可明确选择插入当前回合或排队到下一回合。
+- Provider-aware 模型选择、模型能力对应的 thinking level、none/default/full 工具预设。
+- 手动 compaction、上下文占用条、自动重试状态和压缩错误反馈。
+
+7B 会话结构与工作区文件已经实现：
+
+- Session 列表解析 `parentSessionId` 并按 Fork 父子层级展示；删除父 Session 后仍沿用后端的
+  子 Session 重定向语义。
+- BranchNavigator 展示 Session 内的树节点，可定位任意历史节点，并从 assistant 叶节点创建
+  持久化 Fork Session。
+- Session merge 可从其他 Session 选择来源，把有界摘要追加到当前 Session，并刷新当前上下文。
+- 新增 `POST /api/sessions/{id}/fork`，对未知节点和不可持久化分支返回稳定错误码。
+- FileExplorer 懒加载工作区目录，过滤与路径边界继续复用后端 FileService；文件面板在较窄视口
+  下自动改为覆盖式布局。
+- FileViewer 支持 UTF-8 文本与代码高亮、图片和音频预览；TabBar 支持多文件打开、切换、关闭，
+  切换工作区时清空旧标签，避免跨根目录误读。
+
+阶段 7 尚未完成。下一组是 ModelsConfig、SkillsConfig、图片输入和 orphan Session 处理。
 
 ## 当前已知差异
 
@@ -111,7 +160,8 @@
 ## 验证结果
 
 ```text
-90 passed
+Backend: 97 passed
+Frontend: 10 passed; typecheck/lint/build passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent

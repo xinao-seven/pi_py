@@ -12,10 +12,10 @@ from uuid import uuid4
 
 from pi_ai.providers.base import LLMProvider
 from pi_ai.providers.registry import create_provider
-from server.services.agent_registry import ProviderConfigurationError
+from server.services.agent_registry import ProviderConfigurationError, ResolvedModel
 
 ENV_REFERENCE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
-THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"]
+THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class ProviderAlias:
@@ -78,6 +78,30 @@ class ModelConfigService:
                 or not all(isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"].strip() for model in models)
             ):
                 raise ValueError(f"provider {provider_name!r} models must contain non-empty ids")
+            for model in models or []:
+                context_window = model.get("contextWindow")
+                if context_window is not None and (
+                    not isinstance(context_window, int)
+                    or isinstance(context_window, bool)
+                    or context_window <= 0
+                ):
+                    raise ValueError(
+                        f"model {provider_name}:{model['id']} contextWindow must be a positive integer"
+                    )
+                reasoning = model.get("reasoning")
+                if reasoning is not None and not isinstance(reasoning, bool):
+                    raise ValueError(
+                        f"model {provider_name}:{model['id']} reasoning must be a boolean"
+                    )
+                levels = model.get("thinkingLevels")
+                if levels is not None and (
+                    not isinstance(levels, list)
+                    or not levels
+                    or not all(level in THINKING_LEVELS for level in levels)
+                ):
+                    raise ValueError(
+                        f"model {provider_name}:{model['id']} thinkingLevels contains an unsupported level"
+                    )
         return result
 
     def resolve_provider(self, name: str) -> LLMProvider:
@@ -98,6 +122,29 @@ class ModelConfigService:
         )
         return provider if provider.name == name else ProviderAlias(name, provider)
 
+    def resolve_model(self, provider_name: str, model_id: str) -> ResolvedModel:
+        provider = self.read().get("providers", {}).get(provider_name)
+        if not isinstance(provider, dict):
+            return ResolvedModel(provider_name, model_id)
+        model = next(
+            (
+                item
+                for item in provider.get("models", []) or []
+                if isinstance(item, dict) and item.get("id") == model_id
+            ),
+            None,
+        )
+        context_window = model.get("contextWindow", 0) if isinstance(model, dict) else 0
+        return ResolvedModel(
+            provider_name,
+            model_id,
+            context_window
+            if isinstance(context_window, int)
+            and not isinstance(context_window, bool)
+            and context_window > 0
+            else 0,
+        )
+
     def catalog(
         self,
         *,
@@ -105,16 +152,39 @@ class ModelConfigService:
         default_model: str,
     ) -> dict[str, Any]:
         config = self.read()
-        model_list: list[dict[str, str]] = []
+        model_list: list[dict[str, Any]] = []
         thinking_levels: dict[str, list[str]] = {}
+        thinking_level_maps: dict[str, dict[str, Any]] = {}
         for provider_name, provider in config.get("providers", {}).items():
             if not isinstance(provider, dict):
                 continue
             for model in provider.get("models", []) or []:
                 model_id = str(model["id"])
                 name = str(model.get("name") or model_id)
-                model_list.append({"id": model_id, "name": name, "provider": provider_name})
-                thinking_levels[f"{provider_name}:{model_id}"] = list(THINKING_LEVELS)
+                model_item: dict[str, Any] = {
+                    "id": model_id,
+                    "name": name,
+                    "provider": provider_name,
+                }
+                context_window = model.get("contextWindow")
+                if (
+                    isinstance(context_window, int)
+                    and not isinstance(context_window, bool)
+                    and context_window > 0
+                ):
+                    model_item["contextWindow"] = context_window
+                model_list.append(model_item)
+                key = f"{provider_name}:{model_id}"
+                configured_levels = model.get("thinkingLevels")
+                if isinstance(configured_levels, list):
+                    thinking_levels[key] = list(configured_levels)
+                elif model.get("reasoning") is False:
+                    thinking_levels[key] = ["off"]
+                else:
+                    thinking_levels[key] = list(THINKING_LEVELS)
+                level_map = model.get("thinkingLevelMap")
+                if isinstance(level_map, dict):
+                    thinking_level_maps[key] = deepcopy(level_map)
         if not any(item["provider"] == default_provider and item["id"] == default_model for item in model_list):
             model_list.insert(0, {"id": default_model, "name": default_model, "provider": default_provider})
             thinking_levels[f"{default_provider}:{default_model}"] = list(THINKING_LEVELS)
@@ -123,7 +193,7 @@ class ModelConfigService:
             "modelList": model_list,
             "defaultModel": {"provider": default_provider, "modelId": default_model},
             "thinkingLevels": thinking_levels,
-            "thinkingLevelMaps": {},
+            "thinkingLevelMaps": thinking_level_maps,
         }
 
 

@@ -133,3 +133,135 @@ async def test_invalid_workspace_and_unknown_command_return_api_errors(tmp_path:
     assert unknown.status_code == 422
     assert unknown.json()["error"]["code"] == "unsupported_command"
     await app.state.agent_registry.close()
+
+
+@pytest.mark.asyncio
+async def test_model_switch_restores_provider_and_context_window(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "agent"
+    providers = {
+        "alpha": FakeProvider(
+            [[{"type": "text_delta", "text": "alpha"}, {"type": "done", "stop_reason": "stop"}]]
+        ),
+        "beta": FakeProvider(
+            [[{"type": "text_delta", "text": "beta"}, {"type": "done", "stop_reason": "stop"}]]
+        ),
+    }
+    providers["alpha"].name = "alpha"
+    providers["beta"].name = "beta"
+    app = create_app(
+        ServerSettings(
+            agent_dir=agent_dir,
+            sessions_dir=tmp_path / "sessions",
+            default_provider="alpha",
+            default_model="alpha-model",
+            idle_timeout_seconds=60,
+        ),
+        provider_resolver=lambda name: providers[name],
+    )
+    app.state.model_config.write(
+        {
+            "providers": {
+                "alpha": {
+                    "models": [{"id": "alpha-model", "contextWindow": 100000}]
+                },
+                "beta": {
+                    "models": [{"id": "beta-model", "contextWindow": 200000}]
+                },
+            }
+        }
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/agent/new",
+            json={
+                "cwd": str(tmp_path),
+                "message": "first",
+                "provider": "alpha",
+                "modelId": "alpha-model",
+                "toolNames": [],
+            },
+        )
+        session_id = created.json()["sessionId"]
+        await _wait_until_idle(client, session_id)
+        switched = await client.post(
+            f"/api/agent/{session_id}",
+            json={"type": "set_model", "provider": "beta", "modelId": "beta-model"},
+        )
+        active_state = await client.get(f"/api/agent/{session_id}")
+        await app.state.agent_registry.remove(session_id)
+        resumed = await client.post(
+            f"/api/agent/{session_id}",
+            json={"type": "prompt", "message": "after restart"},
+        )
+        restored_state = await _wait_until_idle(client, session_id)
+        detail = await client.get(f"/api/sessions/{session_id}")
+
+    assert switched.json()["data"]["model"] == {
+        "provider": "beta",
+        "modelId": "beta-model",
+        "contextWindow": 200000,
+    }
+    assert active_state.json()["state"]["contextUsage"]["contextWindow"] == 200000
+    assert resumed.status_code == 200
+    assert restored_state["state"]["model"] == {
+        "provider": "beta",
+        "modelId": "beta-model",
+    }
+    assert restored_state["state"]["contextUsage"]["contextWindow"] == 200000
+    assert providers["beta"].requests[0]["model"] == "beta-model"
+    assert detail.json()["context"]["model"] == {
+        "provider": "beta",
+        "modelId": "beta-model",
+    }
+    await app.state.agent_registry.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_registry_injects_global_resources(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "agent"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (agent_dir / "prompts").mkdir(parents=True)
+    (agent_dir / "skills" / "global-skill").mkdir(parents=True)
+    (agent_dir / "AGENTS.md").write_text("global agent instruction", encoding="utf-8")
+    (agent_dir / "prompts" / "global.md").write_text(
+        "expanded global prompt: $1",
+        encoding="utf-8",
+    )
+    (agent_dir / "skills" / "global-skill" / "SKILL.md").write_text(
+        "---\nname: global-skill\ndescription: A global test skill\n---\nUse global behavior.\n",
+        encoding="utf-8",
+    )
+    provider = FakeProvider(
+        [[{"type": "text_delta", "text": "ok"}, {"type": "done", "stop_reason": "stop"}]]
+    )
+    app = create_app(
+        ServerSettings(
+            agent_dir=agent_dir,
+            sessions_dir=tmp_path / "sessions",
+            idle_timeout_seconds=60,
+        ),
+        provider_resolver=lambda name: provider,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/agent/new",
+            json={
+                "cwd": str(workspace),
+                "message": "/global selected",
+                "provider": "fake",
+                "modelId": "fake-model",
+                "toolNames": ["read"],
+            },
+        )
+        await _wait_until_idle(client, created.json()["sessionId"])
+
+    request = provider.requests[0]
+    assert request["messages"][-1]["content"] == "expanded global prompt: selected"
+    assert "global agent instruction" in request["systemPrompt"]
+    assert "global-skill" in request["systemPrompt"]
+    await app.state.agent_registry.close()

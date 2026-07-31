@@ -391,3 +391,39 @@ def test_retry_budget_is_bounded_and_reports_final_error(tmp_path: Path) -> None
         "attempt": 2,
         "finalError": "503 final",
     }
+
+
+def test_unexpected_tool_exception_becomes_tool_result_error(tmp_path: Path) -> None:
+    async def explode(_arguments) -> ToolResult:
+        raise RuntimeError("unexpected tool failure")
+
+    tool = AgentTool(
+        name="explode",
+        label="explode",
+        description="explode",
+        input_schema={"type": "object", "additionalProperties": False},
+        execute=explode,
+    )
+    provider = FakeProvider(
+        [
+            [
+                {"type": "tool_call_start", "id": "call-1", "name": "explode", "arguments": {}},
+                {"type": "done", "stop_reason": "toolUse"},
+            ],
+            [{"type": "text_delta", "text": "recovered"}, {"type": "done", "stop_reason": "stop"}],
+        ]
+    )
+    runtime = AgentSession(
+        provider=provider,
+        model="fake",
+        session_manager=SessionManager.in_memory(tmp_path),
+        tool_registry=ToolRegistry([tool]),
+    )
+
+    run(runtime.prompt("run it"))
+
+    result = next(message for message in runtime.messages if message["role"] == "toolResult")
+    assert result["isError"] is True
+    assert result["content"] == [{"type": "text", "text": "unexpected tool failure"}]
+    assert provider.requests[1]["messages"][-1] == result
+    assert runtime.messages[-1]["content"] == [{"type": "text", "text": "recovered"}]

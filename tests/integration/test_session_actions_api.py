@@ -60,6 +60,58 @@ async def test_delete_reparents_direct_child_to_deleted_sessions_parent(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_list_resolves_parent_session_id_and_fork_copies_selected_path(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    directory = root / "project"
+    source = SessionManager.create(tmp_path, directory, session_id="source")
+    first = source.append_message({"role": "user", "content": "shared request"})
+    source.append_message(_assistant("first answer"))
+    source.branch(first)
+    source.append_message({"role": "user", "content": "branch request"})
+    branch_leaf = source.append_message(_assistant("branch answer"))
+    app = create_app(ServerSettings(sessions_dir=root))
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        forked = await client.post(
+            "/api/sessions/source/fork",
+            json={"leafId": branch_leaf},
+        )
+        sessions = await client.get("/api/sessions")
+        detail = await client.get(f"/api/sessions/{forked.json()['sessionId']}")
+
+    assert forked.status_code == 200
+    forked_id = forked.json()["sessionId"]
+    assert forked.json()["info"]["parentSessionId"] == "source"
+    listed = {item["id"]: item for item in sessions.json()["sessions"]}
+    assert listed[forked_id]["parentSessionId"] == "source"
+    assert detail.json()["info"]["parentSessionId"] == "source"
+    assert [message["content"] for message in detail.json()["context"]["messages"] if message["role"] == "user"] == [
+        "shared request",
+        "branch request",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fork_rejects_unknown_entry(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    directory = root / "project"
+    source = SessionManager.create(tmp_path, directory, session_id="source")
+    _persist(source, "request", "answer")
+    app = create_app(ServerSettings(sessions_dir=root))
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/sessions/source/fork",
+            json={"leafId": "missing"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "entry_not_found"
+
+
+@pytest.mark.asyncio
 async def test_merge_appends_bounded_custom_summary_to_target(tmp_path: Path) -> None:
     root = tmp_path / "sessions"
     directory = root / "project"

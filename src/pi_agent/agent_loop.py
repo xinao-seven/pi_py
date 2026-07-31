@@ -91,8 +91,18 @@ class AgentRuntime:
             if inspect.isawaitable(result):
                 await result
 
-    def set_model(self, model: str) -> None:
+    def set_model(
+        self,
+        model: str,
+        *,
+        provider: LLMProvider | None = None,
+        context_window: int | None = None,
+    ) -> None:
+        if provider is not None:
+            self.provider = provider
         self.model = model
+        if context_window is not None:
+            self.context_window = max(0, context_window)
         if self.session is not None:
             self.session.append_model_change(self.provider.name, model)
 
@@ -412,7 +422,9 @@ class AgentRuntime:
         arguments = call["arguments"]
         try:
             result = await self.tools.execute(call_id, name, arguments)
-        except (ToolError, OSError, ValueError) as exception:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
             content = [{"type": "text", "text": str(exception)}]
             details = None
             is_error = True

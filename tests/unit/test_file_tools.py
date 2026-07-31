@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pi_agent import ToolError, ToolRegistry
+from pi_agent import AgentTool, ToolError, ToolRegistry, ToolResult
 from pi_coding_agent.tools import create_builtin_tools, create_file_tools
 
 
@@ -185,3 +185,50 @@ def test_registry_rejects_non_object_arguments(tmp_path: Path) -> None:
 
     with pytest.raises(ToolError, match="must be an object"):
         asyncio.run(tools.execute("1", "ls", []))
+
+
+def test_registry_validates_tool_schema_before_execution() -> None:
+    calls = 0
+
+    async def execute(_arguments) -> ToolResult:
+        nonlocal calls
+        calls += 1
+        return ToolResult.text("ok")
+
+    tools = ToolRegistry(
+        [
+            AgentTool(
+                name="typed",
+                label="typed",
+                description="typed",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "integer", "minimum": 1},
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                        },
+                    },
+                    "required": ["count", "items"],
+                    "additionalProperties": False,
+                },
+                execute=execute,
+            )
+        ]
+    )
+
+    with pytest.raises(ToolError, match=r"Tool arguments\.count is required"):
+        call(tools, "1", "typed", {"items": ["a"]})
+    with pytest.raises(ToolError, match="unexpected argument"):
+        call(tools, "2", "typed", {"count": 1, "items": ["a"], "extra": True})
+    with pytest.raises(ToolError, match=r"Tool arguments\.items\[0\] must be a string"):
+        call(tools, "3", "typed", {"count": 1, "items": [3]})
+    with pytest.raises(ToolError, match="must be an integer"):
+        call(tools, "4", "typed", {"count": True, "items": ["a"]})
+
+    result = call(tools, "5", "typed", {"count": 1, "items": ["a"]})
+
+    assert text(result) == "ok"
+    assert calls == 1
