@@ -33,16 +33,16 @@ async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[st
     command_type = command.get("type")
     entry.touch()
     if command_type == "prompt":
-        message = _required_text(command, "message")
+        content = _message_content(command)
         if agent.is_streaming:
             raise APIError(409, "agent_busy", "The Agent is already running")
-        entry.start(agent.prompt(message))
+        entry.start(agent.prompt(content))
         return {"accepted": True}
     if command_type == "steer":
-        await agent.steer(_required_text(command, "message"))
+        await agent.steer(_message_content(command))
         return {"accepted": True}
     if command_type == "follow_up":
-        await agent.follow_up(_required_text(command, "message"))
+        await agent.follow_up(_message_content(command))
         return {"accepted": True}
     if command_type == "abort":
         await agent.abort()
@@ -145,6 +145,35 @@ def _required_text(command: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise APIError(422, "invalid_command", f"{key} must be a non-empty string")
     return value.strip()
+
+
+def _message_content(command: dict[str, Any]) -> str | list[dict[str, Any]]:
+    raw_message = command.get("message")
+    message = raw_message.strip() if isinstance(raw_message, str) else ""
+    raw_images = command.get("images", [])
+    if not isinstance(raw_images, list):
+        raise APIError(422, "invalid_command", "images must be a list")
+    images = [
+        {
+            "type": "image",
+            "data": image.get("data"),
+            "mimeType": image.get("mimeType"),
+        }
+        for image in raw_images
+        if isinstance(image, dict)
+        and image.get("type") == "image"
+        and isinstance(image.get("data"), str)
+        and image.get("data")
+        and isinstance(image.get("mimeType"), str)
+        and image.get("mimeType", "").startswith("image/")
+    ]
+    if len(images) != len(raw_images):
+        raise APIError(422, "invalid_command", "images contain an invalid content block")
+    if not message and not images:
+        raise APIError(422, "invalid_command", "message or images must be provided")
+    if not images:
+        return message
+    return [*([{"type": "text", "text": message}] if message else []), *images]
 
 
 def _optional_text(value: Any) -> str | None:

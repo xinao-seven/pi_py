@@ -73,6 +73,59 @@ async def test_create_agent_runs_prompt_and_persists_session(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_create_agent_accepts_image_only_content_and_persists_blocks(tmp_path: Path) -> None:
+    provider = _provider()
+    app = create_app(
+        ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60),
+        provider_resolver=lambda name: provider,
+    )
+    transport = httpx.ASGITransport(app=app)
+    image = {"type": "image", "data": "aGVsbG8=", "mimeType": "image/png"}
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/agent/new",
+            json={
+                "cwd": str(tmp_path),
+                "message": "",
+                "images": [image],
+                "provider": "fake",
+                "modelId": "fake-model",
+                "toolNames": [],
+            },
+        )
+        session_id = created.json()["sessionId"]
+        await _wait_until_idle(client, session_id)
+        detail = await client.get(f"/api/sessions/{session_id}")
+
+    assert created.status_code == 202
+    assert provider.requests[0]["messages"][0]["content"] == [image]
+    assert detail.json()["context"]["messages"][0]["content"] == [image]
+    await app.state.agent_registry.close()
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rejects_invalid_image_content(tmp_path: Path) -> None:
+    app = create_app(
+        ServerSettings(sessions_dir=tmp_path / "sessions"),
+        provider_resolver=lambda name: _provider(),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/agent/new",
+            json={
+                "cwd": str(tmp_path),
+                "images": [{"type": "image", "data": "not-base64", "mimeType": "image/png"}],
+            },
+        )
+
+    assert response.status_code == 422
+    await app.state.agent_registry.close()
+
+
+@pytest.mark.asyncio
 async def test_event_stream_replays_events_and_honors_event_cursor(tmp_path: Path) -> None:
     app = create_app(
         ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60),

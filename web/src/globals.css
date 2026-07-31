@@ -216,6 +216,21 @@ select:focus-visible {
   border-left-color: rgba(231, 255, 111, 0.12);
 }
 
+.session-item--orphan {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.orphan-badge {
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 129, 120, 0.25);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 8px;
+  font-weight: 650;
+}
+
 .session-fork-mark {
   margin-right: 4px;
   color: var(--accent);
@@ -252,14 +267,39 @@ select:focus-visible {
 }
 
 .sidebar-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  gap: 10px;
   padding: 13px 9px 2px;
   border-top: 1px solid var(--line);
   color: var(--faint);
   font-size: 10px;
   letter-spacing: 0.04em;
+}
+
+.sidebar-config-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.sidebar-config-actions button {
+  min-height: 31px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+}
+
+.sidebar-config-actions button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.sidebar-service {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .status-dot {
@@ -721,6 +761,22 @@ select:focus-visible {
   justify-content: flex-end;
 }
 
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-images img {
+  max-width: min(280px, 55vw);
+  max-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.2);
+}
+
 .assistant-avatar {
   flex: 0 0 auto;
   width: 28px;
@@ -956,6 +1012,335 @@ select:focus-visible {
   width: min(100%, 880px);
   margin: 0 auto;
   padding: 0 32px 17px;
+}
+
+.image-attachments {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 0;
+  overflow-x: auto;
+}
+
+.image-attachment {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.image-attachment img {
+  width: 62px;
+  height: 62px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  object-fit: cover;
+}
+
+.image-attachment button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #252932;
+  cursor: pointer;
+}
+
+.image-error {
+  padding: 7px 12px 0;
+  color: var(--danger);
+  font-size: 10px;
+}
+
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.attach-button {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(4, 5, 7, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.config-dialog {
+  display: flex;
+  width: min(680px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  min-height: 340px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: #121419;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.54);
+}
+
+.config-dialog--wide {
+  width: min(920px, 100%);
+}
+
+.config-header,
+.config-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.config-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.config-header h2 {
+  margin: 4px 0 0;
+  font-size: 19px;
+}
+
+.config-header p {
+  margin: 5px 0 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.config-header > button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.config-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 20px;
+  overflow: auto;
+}
+
+.config-help,
+.config-empty,
+.config-state {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.config-help {
+  margin: 0 0 14px;
+}
+
+.config-state {
+  display: grid;
+  flex: 1;
+  place-items: center;
+}
+
+.provider-card,
+.skill-card {
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.provider-grid label,
+.model-list-heading,
+.checkbox-field {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.provider-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.provider-grid input,
+.provider-grid select,
+.model-row > input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #0e1014;
+}
+
+.model-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 8px;
+}
+
+.model-list-heading button,
+.config-add,
+.danger-link {
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 90px auto 28px;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.model-row > button {
+  border: 0;
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+}
+
+.danger-link {
+  margin-top: 8px;
+  color: var(--danger);
+}
+
+.config-add {
+  width: 100%;
+  min-height: 38px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+}
+
+.config-error {
+  margin: 0 20px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: var(--danger);
+  background: rgba(255, 129, 120, 0.07);
+  font-size: 10px;
+}
+
+.config-footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+}
+
+.config-footer button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.config-footer .primary-action {
+  border-color: rgba(231, 255, 111, 0.35);
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.skills-list {
+  display: grid;
+  gap: 10px;
+}
+
+.skill-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+}
+
+.skill-card > div {
+  min-width: 0;
+}
+
+.skill-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.skill-title-row span {
+  padding: 2px 5px;
+  border-radius: 6px;
+  color: var(--faint);
+  background: var(--panel-soft);
+  font-size: 8px;
+}
+
+.skill-card p {
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.skill-card code {
+  display: block;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-toggle {
+  flex: 0 0 auto;
+  min-width: 60px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.skill-toggle--on {
+  border-color: rgba(231, 255, 111, 0.34);
+  color: var(--accent);
+  background: rgba(231, 255, 111, 0.06);
+}
+
+.skill-diagnostics {
+  color: var(--faint);
+  font-size: 10px;
 }
 
 .agent-controls {
@@ -1338,6 +1723,28 @@ select:focus-visible {
 
   .file-workspace-panel {
     grid-template-columns: minmax(125px, 38vw) minmax(0, 1fr);
+  }
+
+  .modal-backdrop {
+    padding: 0;
+  }
+
+  .config-dialog,
+  .config-dialog--wide {
+    width: 100%;
+    max-height: 100vh;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .provider-grid,
+  .model-row {
+    grid-template-columns: 1fr;
+  }
+
+  .model-row > button {
+    justify-self: end;
   }
 
   .message-list {

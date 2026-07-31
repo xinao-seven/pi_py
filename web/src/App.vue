@@ -5,6 +5,8 @@ import { storeToRefs } from "pinia";
 import AppShell from "@/components/AppShell.vue";
 import ChatWindow from "@/components/ChatWindow.vue";
 import FileWorkspacePanel from "@/components/FileWorkspacePanel.vue";
+import ModelsConfig from "@/components/ModelsConfig.vue";
+import SkillsConfig from "@/components/SkillsConfig.vue";
 import SessionSidebar from "@/components/SessionSidebar.vue";
 import { createDefaultWorkspace, listSessions } from "@/lib/api";
 import { useAppStore } from "@/stores/app";
@@ -18,10 +20,13 @@ const {
   filePanelOpen,
   fileTabs,
   activeFilePath,
+  modelsConfigOpen,
+  skillsConfigOpen,
 } = storeToRefs(store);
 const sessions = ref<SessionInfo[]>([]);
 const sessionsLoading = ref(true);
 const appError = ref<string | null>(null);
+const modelsRevision = ref(0);
 const selectedWorkspace = computed(
   () => sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd ?? null,
 );
@@ -72,8 +77,11 @@ onMounted(() => {
         :loading="sessionsLoading"
         :selected-session-id="selectedSessionId"
         :new-session-active="newSessionCwd !== null"
+        :skills-available="!!selectedWorkspace"
         @new-session="startNewSession"
         @select-session="store.selectSession"
+        @open-models="modelsConfigOpen = true"
+        @open-skills="skillsConfigOpen = true"
       />
     </template>
 
@@ -99,6 +107,7 @@ onMounted(() => {
       :session-id="selectedSessionId"
       :new-session-cwd="newSessionCwd"
       :sessions="sessions"
+      :models-revision="modelsRevision"
       @session-created="sessionCreated"
       @session-forked="sessionForked"
       @agent-end="refreshSessions"
@@ -106,4 +115,15 @@ onMounted(() => {
       @toggle-files="store.toggleFilePanel"
     />
   </AppShell>
+
+  <ModelsConfig
+    v-if="modelsConfigOpen"
+    @close="modelsConfigOpen = false"
+    @saved="modelsRevision += 1"
+  />
+  <SkillsConfig
+    v-if="skillsConfigOpen && selectedWorkspace"
+    :cwd="selectedWorkspace"
+    @close="skillsConfigOpen = false"
+  />
 </template>

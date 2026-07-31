@@ -57,6 +57,12 @@ npm run dev
 
 浏览器访问 `http://127.0.0.1:5173`。Vite 会将 `/api` 请求和 SSE 连接代理到 FastAPI。
 
+Windows 下也可以从项目根目录运行一键开发入口：
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
 前端检查：
 
 ```powershell
@@ -66,9 +72,27 @@ npm run test
 npm run build
 ```
 
+## 本地生产模式
+
+生产入口会先构建 Vue，再由 FastAPI 同源托管静态文件和 `/api`，只需要访问一个端口：
+
+```powershell
+.\scripts\start-production.ps1
+```
+
+随后打开 `http://127.0.0.1:8000`。已经构建过前端时可使用：
+
+```powershell
+.\scripts\start-production.ps1 -SkipBuild
+```
+
+也可以双击 `scripts/start-dev.bat` 或 `scripts/start-production.bat`。服务默认只监听
+`127.0.0.1`，不会直接暴露到局域网。
+
 可通过 `PI_SERVER_SESSIONS_DIR`、`PI_SERVER_CORS_ORIGINS`、
 `PI_SERVER_AGENT_DIR`、`PI_SERVER_WORKSPACE_PARENT`、`PI_SERVER_IDLE_TIMEOUT`
 和 `PI_SERVER_SSE_HEARTBEAT` 调整服务配置。
+设置 `PI_SERVER_WEB_DIST` 可指定静态前端目录；显式设为空字符串可禁用静态托管。
 
 当前后端已经提供：
 
@@ -92,3 +116,6 @@ npm run build
   }
 }
 ```
+
+不要把 `.env`、API Key 或凭据文件放入 Session 工作区供 Agent 读取。Files API 会阻止常见
+敏感文件、密钥后缀和工作区外路径；模型配置界面同样只保存 `$ENV_VAR` 引用。

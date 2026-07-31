@@ -122,7 +122,7 @@
 阶段 6 的最小纵向闭环已经完成。Markdown、thinking/tool 详情、模型/工具切换、分支、文件浏览
 与配置界面仍按计划属于阶段 7。
 
-### 阶段 7：Web 完整功能（进行中）
+### 阶段 7：Web 完整功能（已完成）
 
 7A 消息语义与运行控制已经实现：
 
@@ -145,7 +145,35 @@
 - FileViewer 支持 UTF-8 文本与代码高亮、图片和音频预览；TabBar 支持多文件打开、切换、关闭，
   切换工作区时清空旧标签，避免跨根目录误读。
 
-阶段 7 尚未完成。下一组是 ModelsConfig、SkillsConfig、图片输入和 orphan Session 处理。
+7C 配置、多模态输入与异常 Session 已经实现：
+
+- ModelsConfig 以结构化表单管理 Provider、API 协议、Base URL、环境变量 Key 引用和模型列表；
+  保存时保留界面尚未显式编辑的兼容扩展字段。
+- SkillsConfig 展示项目级和用户级 Skills、加载诊断和模型可见状态，可安全切换
+  `disable-model-invocation` 并刷新活跃 Agent 的资源。
+- ChatInput 支持选择或粘贴最多 4 张图片、发送前预览和移除；前后端限制单图 5 MB，校验 MIME
+  与 base64，并把图片作为原生 content block 传给 Provider、Session 和消息视图。
+- 无有效 Session header 的 JSONL 文件作为 orphan 返回，在侧栏显示“不完整”标记、损坏原因且
+  不允许继续运行，不再被静默忽略。
+- Pydantic 自定义校验上下文统一转换为 JSON 安全的 422 错误信封。
+
+阶段 7 的参考 Web 核心功能清单已经闭环。下一步进入阶段 8 的本地发布、启动脚本、主题/声音、
+进一步可访问性和文档收口。
+
+### 阶段 8：本地发布与收口（进行中）
+
+8A 本地生产运行链路已经实现：
+
+- `web/dist` 存在时，FastAPI 在所有 `/api` 路由之后挂载 Vue 静态文件，同源提供页面、资源、
+  REST 和 SSE；开发模式仍保留独立 Vite 代理。
+- `PI_SERVER_WEB_DIST` 可覆盖静态目录，显式空值可关闭托管，便于纯 API 部署。
+- 新增 Windows 开发与生产 PowerShell 入口以及可双击的 `.bat` 包装；默认仅监听
+  `127.0.0.1`，生产入口可构建前端后启动单端口服务。
+- README 补充开发/生产启动、静态托管和凭据安全说明。
+- ASGI 集成测试确认首页与静态资源可访问，同时不会遮蔽 `/api/health`。
+
+阶段 8 尚未完成。剩余主题、声音、进一步交互打磨，以及需要用户提供真实 API Key 的受控
+Provider smoke test。
 
 ## 当前已知差异
 
@@ -160,8 +188,8 @@
 ## 验证结果
 
 ```text
-Backend: 97 passed
-Frontend: 10 passed; typecheck/lint/build passed
+Backend: 101 passed
+Frontend: 13 passed; typecheck/lint/build passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent

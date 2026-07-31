@@ -82,3 +82,24 @@ async def test_rename_persists_and_missing_session_uses_error_envelope(tmp_path:
     assert detail.json()["info"]["name"] == "新的会话名"
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_list_marks_malformed_session_as_orphan_without_opening_it(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    project_dir = sessions_dir / "project"
+    project_dir.mkdir(parents=True)
+    broken = project_dir / "broken.jsonl"
+    broken.write_text("not-json\n", encoding="utf-8")
+    app = create_app(ServerSettings(sessions_dir=sessions_dir))
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        listing = await client.get("/api/sessions")
+        orphan = listing.json()["sessions"][0]
+        detail = await client.get(f"/api/sessions/{orphan['id']}")
+
+    assert orphan["orphaned"] is True
+    assert orphan["path"] == str(broken.resolve())
+    assert orphan["orphanReason"]
+    assert detail.status_code == 404

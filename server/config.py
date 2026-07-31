@@ -19,6 +19,9 @@ class ServerSettings:
     sse_heartbeat_seconds: float = 30
     default_provider: str = "anthropic"
     default_model: str = "claude-sonnet-4-6"
+    web_dist_dir: Path | None = field(
+        default_factory=lambda: Path(__file__).resolve().parents[1] / "web" / "dist"
+    )
 
     @classmethod
     def from_env(cls) -> ServerSettings:
@@ -30,6 +33,7 @@ class ServerSettings:
             ).split(",")
             if origin.strip()
         )
+        web_dist_value = os.getenv("PI_SERVER_WEB_DIST")
         return cls(
             agent_dir=Path(
                 os.getenv("PI_SERVER_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
@@ -48,4 +52,13 @@ class ServerSettings:
             sse_heartbeat_seconds=float(os.getenv("PI_SERVER_SSE_HEARTBEAT", "30")),
             default_provider=os.getenv("PI_SERVER_DEFAULT_PROVIDER", "anthropic"),
             default_model=os.getenv("PI_SERVER_DEFAULT_MODEL", "claude-sonnet-4-6"),
+            web_dist_dir=(
+                Path(web_dist_value).expanduser()
+                if web_dist_value
+                else (
+                    None
+                    if web_dist_value == ""
+                    else Path(__file__).resolve().parents[1] / "web" / "dist"
+                )
+            ),
         )

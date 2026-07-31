@@ -114,15 +114,15 @@ class AgentRuntime:
     def set_active_tools(self, names: list[str]) -> None:
         self.tools.set_active(names)
 
-    async def steer(self, text: str) -> None:
+    async def steer(self, content: str | list[dict[str, Any]]) -> None:
         if not self.is_streaming:
             raise RuntimeError("Cannot steer while the Agent is idle")
-        self._steering.append(self._user_message(text))
+        self._steering.append(self._user_message(content))
 
-    async def follow_up(self, text: str) -> None:
+    async def follow_up(self, content: str | list[dict[str, Any]]) -> None:
         if not self.is_streaming:
             raise RuntimeError("Cannot queue a follow-up while the Agent is idle")
-        self._follow_ups.append(self._user_message(text))
+        self._follow_ups.append(self._user_message(content))
 
     async def abort(self) -> None:
         self._abort_requested = True
@@ -130,11 +130,10 @@ class AgentRuntime:
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
-    async def prompt(self, text: str) -> None:
+    async def prompt(self, content: str | list[dict[str, Any]]) -> None:
         if self.is_streaming:
             raise RuntimeError("Agent is already running")
-        if not text.strip():
-            raise ValueError("Prompt must not be empty")
+        normalized_content = self._normalize_user_content(content)
         self.is_streaming = True
         self._abort_requested = False
         self._run_task = asyncio.current_task()
@@ -142,7 +141,7 @@ class AgentRuntime:
         error: str | None = None
         await self._emit("agent_start")
         try:
-            user_message = self._user_message(text)
+            user_message = self._user_message(normalized_content)
             await self._append_message(user_message, new_messages)
             while not self._abort_requested:
                 assistant, tool_calls = await self._provider_turn_with_retry(new_messages)
@@ -184,8 +183,26 @@ class AgentRuntime:
             self._run_task = None
 
     @staticmethod
-    def _user_message(text: str) -> dict[str, Any]:
-        return {"role": "user", "content": text, "timestamp": _timestamp_ms()}
+    def _user_message(content: str | list[dict[str, Any]]) -> dict[str, Any]:
+        return {"role": "user", "content": deepcopy(content), "timestamp": _timestamp_ms()}
+
+    @staticmethod
+    def _normalize_user_content(content: str | list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+        if isinstance(content, str):
+            normalized = content.strip()
+            if not normalized:
+                raise ValueError("Prompt must not be empty")
+            return normalized
+        if not isinstance(content, list):
+            raise ValueError("Prompt content must be text or content blocks")
+        blocks = [deepcopy(block) for block in content if isinstance(block, dict)]
+        if not blocks or not any(
+            (block.get("type") == "text" and str(block.get("text", "")).strip())
+            or (block.get("type") == "image" and block.get("data") and block.get("mimeType"))
+            for block in blocks
+        ):
+            raise ValueError("Prompt must contain text or an image")
+        return blocks
 
     @staticmethod
     def _drain(queue: list[dict[str, Any]], *, one: bool = False) -> list[dict[str, Any]]:

@@ -13,6 +13,7 @@ const props = defineProps<{
   sessionId: string | null;
   newSessionCwd: string | null;
   sessions: SessionInfo[];
+  modelsRevision: number;
 }>();
 
 const emit = defineEmits<{
@@ -58,6 +59,7 @@ const {
   newSessionCwd: toRef(props, "newSessionCwd"),
   onSessionCreated: (sessionId) => emit("sessionCreated", sessionId),
   onAgentEnd: () => emit("agentEnd"),
+  modelsRevision: toRef(props, "modelsRevision"),
 });
 
 const visibleMessages = computed(() =>

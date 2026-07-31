@@ -38,3 +38,26 @@ async def test_cors_preflight_uses_configured_origin(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://ui.test"
+
+
+@pytest.mark.asyncio
+async def test_built_vue_frontend_is_served_without_shadowing_api(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<main>pi.py web</main>", encoding="utf-8")
+    (assets / "app.js").write_text("console.log('pi')", encoding="utf-8")
+    app = create_app(
+        ServerSettings(sessions_dir=tmp_path / "sessions", web_dist_dir=dist)
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        page = await client.get("/")
+        asset = await client.get("/assets/app.js")
+        health = await client.get("/api/health")
+
+    assert page.status_code == 200
+    assert "pi.py web" in page.text
+    assert asset.text == "console.log('pi')"
+    assert health.json() == {"status": "ok"}

@@ -11,6 +11,8 @@ export const useAppStore = defineStore("app", () => {
   const fileWorkspaceRoot = ref<string | null>(null);
   const fileTabs = ref<FileTab[]>([]);
   const activeFilePath = ref<string | null>(null);
+  const modelsConfigOpen = ref(false);
+  const skillsConfigOpen = ref(false);
 
   function selectSession(sessionId: string): void {
     selectedSessionId.value = sessionId;
@@ -63,6 +65,8 @@ export const useAppStore = defineStore("app", () => {
     fileWorkspaceRoot,
     fileTabs,
     activeFilePath,
+    modelsConfigOpen,
+    skillsConfigOpen,
     selectSession,
     startSession,
     setFileWorkspace,

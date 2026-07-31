@@ -27,6 +27,12 @@ const thinking = computed(() =>
 const toolCalls = computed(() =>
   blocks.value.filter((block): block is ContentBlock => block.type === "toolCall"),
 );
+const images = computed(() =>
+  blocks.value.filter(
+    (block): block is ContentBlock & { data: string; mimeType: string } =>
+      block.type === "image" && !!block.data && !!block.mimeType,
+  ),
+);
 </script>
 
 <template>
@@ -39,6 +45,14 @@ const toolCalls = computed(() =>
     <div class="message-body" :class="{ 'message-body--user': isUser }">
       <div v-if="!isUser" class="message-author">pi</div>
       <div v-if="isUser" class="message-text">{{ text }}</div>
+      <div v-if="images.length" class="message-images">
+        <img
+          v-for="(image, index) in images"
+          :key="`${image.mimeType}:${index}`"
+          :src="`data:${image.mimeType};base64,${image.data}`"
+          :alt="`消息图片 ${index + 1}`"
+        />
+      </div>
       <template v-else>
         <ThinkingBlock v-if="thinking" :content="thinking" :streaming="streaming" />
         <MarkdownContent v-if="text" :content="text" />

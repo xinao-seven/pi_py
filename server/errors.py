@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -52,6 +53,6 @@ def install_error_handlers(app: FastAPI) -> None:
             content=error_payload(
                 "validation_error",
                 "Request validation failed",
-                exception.errors(),
+                json.loads(json.dumps(exception.errors(), default=str)),
             ),
         )

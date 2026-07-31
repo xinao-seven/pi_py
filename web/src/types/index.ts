@@ -13,6 +13,8 @@ export interface ContentBlock {
   id?: string;
   name?: string;
   arguments?: Record<string, unknown>;
+  data?: string;
+  mimeType?: string;
 }
 
 export interface AgentMessage {
@@ -52,6 +54,8 @@ export interface SessionInfo {
   firstMessage: string;
   parentSessionId: string | null;
   parentSessionPath: string | null;
+  orphaned?: boolean;
+  orphanReason?: string;
 }
 
 export interface SessionEntry {
@@ -119,6 +123,60 @@ export interface ModelCatalog {
   defaultModel: ModelRef;
   thinkingLevels: Record<string, string[]>;
   thinkingLevelMaps: Record<string, Record<string, unknown>>;
+}
+
+export interface ModelDefinition {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  reasoning?: boolean;
+  thinkingLevels?: string[];
+  [key: string]: unknown;
+}
+
+export interface ModelProviderConfig {
+  api?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  models?: ModelDefinition[];
+  [key: string]: unknown;
+}
+
+export interface ModelsConfigValue {
+  providers: Record<string, ModelProviderConfig>;
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  filePath: string;
+  baseDir: string;
+  source: string;
+  sourceInfo: {
+    source: string;
+    scope: "project" | "user";
+    path: string;
+    baseDir: string;
+  };
+  disableModelInvocation: boolean;
+}
+
+export interface SkillDiagnostic {
+  type: string;
+  message: string;
+  path: string;
+}
+
+export interface SkillsResponse {
+  skills: SkillInfo[];
+  diagnostics: SkillDiagnostic[];
+}
+
+export interface AttachedImage {
+  data: string;
+  mimeType: string;
+  previewUrl: string;
+  name: string;
 }
 
 export interface AgentEvent {

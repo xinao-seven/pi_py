@@ -5,8 +5,10 @@ import type {
   ForkSessionResponse,
   MergeSessionResponse,
   ModelCatalog,
+  ModelsConfigValue,
   SessionDetail,
   SessionInfo,
+  SkillsResponse,
 } from "@/types";
 
 interface ErrorEnvelope {
@@ -92,6 +94,7 @@ export async function createAgent(input: {
   modelId?: string;
   thinkingLevel?: string;
   toolNames?: string[];
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
 }): Promise<string> {
   const result = await request<{ success: true; sessionId: string }>("/api/agent/new", {
     method: "POST",
@@ -116,6 +119,32 @@ export async function sendAgentCommand(
 
 export function getModels(): Promise<ModelCatalog> {
   return request("/api/models");
+}
+
+export function getModelsConfig(): Promise<ModelsConfigValue> {
+  return request("/api/models-config");
+}
+
+export async function saveModelsConfig(value: ModelsConfigValue): Promise<void> {
+  await request("/api/models-config", {
+    method: "PUT",
+    body: JSON.stringify(value),
+  });
+}
+
+export function getSkills(cwd: string): Promise<SkillsResponse> {
+  const query = new URLSearchParams({ cwd });
+  return request(`/api/skills?${query.toString()}`);
+}
+
+export async function setSkillDisabled(
+  filePath: string,
+  disableModelInvocation: boolean,
+): Promise<void> {
+  await request("/api/skills", {
+    method: "PATCH",
+    body: JSON.stringify({ filePath, disableModelInvocation }),
+  });
 }
 
 export function agentEventsUrl(sessionId: string): string {

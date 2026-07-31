@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Annotated
+import base64
+import binascii
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.config import ServerSettings
 from server.errors import APIError
@@ -19,18 +21,50 @@ from server.services.agent_registry import (
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
+class ImageInput(BaseModel):
+    type: Literal["image"] = "image"
+    data: Annotated[str, Field(min_length=1, max_length=7_000_000)]
+    mimeType: Annotated[str, Field(min_length=1, max_length=100)]
+
+    @field_validator("data")
+    @classmethod
+    def validate_data(cls, value: str) -> str:
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exception:
+            raise ValueError("data must be valid base64") from exception
+        if len(decoded) > 5 * 1024 * 1024:
+            raise ValueError("image exceeds 5 MB")
+        return value
+
+    @field_validator("mimeType")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        if not value.startswith("image/"):
+            raise ValueError("mimeType must be an image type")
+        return value
+
+
 class NewAgentRequest(BaseModel):
     cwd: str
-    message: Annotated[str, Field(min_length=1)]
+    message: str = ""
+    images: list[ImageInput] = Field(default_factory=list, max_length=4)
     provider: str | None = None
     modelId: str | None = None
     thinkingLevel: str = "off"
     toolNames: list[str] | None = None
 
+    @model_validator(mode="after")
+    def validate_content(self):
+        if not self.message.strip() and not self.images:
+            raise ValueError("message or images must be provided")
+        return self
+
 
 class AgentCommandRequest(BaseModel):
     type: str
     message: str | None = None
+    images: list[ImageInput] = Field(default_factory=list, max_length=4)
     provider: str | None = None
     modelId: str | None = None
     thinkingLevel: str | None = None
@@ -75,7 +109,14 @@ async def create_agent(
     except ProviderConfigurationError as exception:
         raise APIError(400, "provider_not_configured", str(exception)) from exception
     try:
-        await send_command(entry, {"type": "prompt", "message": body.message})
+        await send_command(
+            entry,
+            {
+                "type": "prompt",
+                "message": body.message,
+                "images": [image.model_dump() for image in body.images],
+            },
+        )
     except Exception:
         await registry.remove(entry.session_id)
         raise

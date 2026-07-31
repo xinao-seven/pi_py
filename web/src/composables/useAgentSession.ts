@@ -14,6 +14,7 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentStreamState,
+  AttachedImage,
   ContextUsage,
   ModelCatalog,
   ModelRef,
@@ -28,6 +29,7 @@ interface AgentSessionOptions {
   newSessionCwd: Ref<string | null>;
   onSessionCreated?: (sessionId: string) => void;
   onAgentEnd?: () => void;
+  modelsRevision?: Ref<number>;
 }
 
 export function useAgentSession(options: AgentSessionOptions) {
@@ -168,9 +170,10 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
-  async function send(message: string): Promise<void> {
+  async function send(message: string, images: AttachedImage[] = []): Promise<void> {
     const text = message.trim();
-    if (!text || stream.running) return;
+    if ((!text && images.length === 0) || stream.running) return;
+    const imageBlocks = images.map(toImageBlock);
     error.value = null;
     assignStream({ running: true, phase: "waiting", streamingMessage: null, error: null });
     try {
@@ -184,6 +187,7 @@ export function useAgentSession(options: AgentSessionOptions) {
           modelId: displayModel.value?.modelId,
           thinkingLevel: thinkingLevel.value,
           toolNames: activeTools.value,
+          images: imageBlocks,
         });
         activeSessionId.value = sessionId;
         options.onSessionCreated?.(sessionId);
@@ -191,7 +195,11 @@ export function useAgentSession(options: AgentSessionOptions) {
         connectEvents(sessionId);
       } else {
         const sessionId = activeSessionId.value;
-        await sendAgentCommand(sessionId, { type: "prompt", message: text });
+        await sendAgentCommand(sessionId, {
+          type: "prompt",
+          message: text,
+          images: imageBlocks,
+        });
         connectEvents(sessionId);
       }
     } catch (cause) {
@@ -213,18 +221,26 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
-  async function steer(message: string): Promise<void> {
-    await liveTextCommand("steer", message);
+  async function steer(message: string, images: AttachedImage[] = []): Promise<void> {
+    await liveTextCommand("steer", message, images);
   }
 
-  async function followUp(message: string): Promise<void> {
-    await liveTextCommand("follow_up", message);
+  async function followUp(message: string, images: AttachedImage[] = []): Promise<void> {
+    await liveTextCommand("follow_up", message, images);
   }
 
-  async function liveTextCommand(type: "steer" | "follow_up", message: string): Promise<void> {
-    if (!activeSessionId.value || !stream.running || !message.trim()) return;
+  async function liveTextCommand(
+    type: "steer" | "follow_up",
+    message: string,
+    images: AttachedImage[],
+  ): Promise<void> {
+    if (!activeSessionId.value || !stream.running || (!message.trim() && images.length === 0)) return;
     try {
-      await sendAgentCommand(activeSessionId.value, { type, message: message.trim() });
+      await sendAgentCommand(activeSessionId.value, {
+        type,
+        message: message.trim(),
+        images: images.map(toImageBlock),
+      });
     } catch (cause) {
       error.value = errorMessage(cause);
     }
@@ -334,13 +350,19 @@ export function useAgentSession(options: AgentSessionOptions) {
   });
 
   onMounted(async () => {
+    await loadCatalog();
+  });
+
+  async function loadCatalog(): Promise<void> {
     try {
       catalog.value = await getModels();
       newSessionModel.value ??= catalog.value.defaultModel;
     } catch (cause) {
       error.value = errorMessage(cause);
     }
-  });
+  }
+
+  if (options.modelsRevision) watch(options.modelsRevision, loadCatalog);
 
   onBeforeUnmount(closeEvents);
 
@@ -377,4 +399,8 @@ export function useAgentSession(options: AgentSessionOptions) {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "发生未知错误";
+}
+
+function toImageBlock(image: AttachedImage): { type: "image"; data: string; mimeType: string } {
+  return { type: "image", data: image.data, mimeType: image.mimeType };
 }

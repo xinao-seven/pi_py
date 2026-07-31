@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
-from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
@@ -32,6 +33,16 @@ class SessionStore:
         ]
         sessions.sort(key=lambda item: item.modified, reverse=True)
         return sessions
+
+    def list_orphans(self) -> list[dict[str, Any]]:
+        if not self.sessions_dir.is_dir():
+            return []
+        known = {_path_key(info.path.resolve()) for info in self.list()}
+        return [
+            orphan_session_to_dict(path)
+            for path in self.sessions_dir.rglob("*.jsonl")
+            if _path_key(path.resolve()) not in known
+        ]
 
     def find(self, session_id: str) -> SessionInfo | None:
         return next((info for info in self.list() if info.id == session_id), None)
@@ -99,6 +110,30 @@ def session_info_list_to_dict(infos: Iterable[SessionInfo]) -> list[dict[str, An
         )
         for info in items
     ]
+
+
+def orphan_session_to_dict(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        stat = resolved.stat()
+        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
+    except OSError:
+        modified = datetime.now(timezone.utc).isoformat()
+    digest = hashlib.sha256(str(resolved).casefold().encode("utf-8")).hexdigest()[:16]
+    return {
+        "id": f"orphan-{digest}",
+        "path": str(resolved),
+        "cwd": "",
+        "name": resolved.stem,
+        "created": modified,
+        "modified": modified,
+        "messageCount": 0,
+        "firstMessage": "无法读取 Session 文件",
+        "parentSessionId": None,
+        "parentSessionPath": None,
+        "orphaned": True,
+        "orphanReason": "Session 文件缺少有效的 v3 header 或内容已损坏",
+    }
 
 
 def session_detail(

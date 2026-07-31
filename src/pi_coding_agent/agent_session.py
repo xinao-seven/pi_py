@@ -94,14 +94,23 @@ class AgentSession(Agent):
         super().set_active_tools(names)
         self.system_prompt = self._build_system_prompt()
 
-    async def prompt(self, text: str) -> None:
-        await super().prompt(self._expand_prompt(text))
+    async def prompt(self, content: str | list[dict[str, Any]]) -> None:
+        await super().prompt(self._expand_content(content))
 
-    async def steer(self, text: str) -> None:
-        await super().steer(self._expand_prompt(text))
+    async def steer(self, content: str | list[dict[str, Any]]) -> None:
+        await super().steer(self._expand_content(content))
 
-    async def follow_up(self, text: str) -> None:
-        await super().follow_up(self._expand_prompt(text))
+    async def follow_up(self, content: str | list[dict[str, Any]]) -> None:
+        await super().follow_up(self._expand_content(content))
+
+    def _expand_content(self, content: str | list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+        if isinstance(content, str):
+            return self._expand_prompt(content)
+        expanded = deepcopy(content)
+        for block in expanded:
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                block["text"] = self._expand_prompt(block["text"])
+        return expanded
 
     def _expand_prompt(self, text: str) -> str:
         expanded = expand_skill_command(text, self.resources.skills)

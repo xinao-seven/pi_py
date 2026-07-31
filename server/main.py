@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from server.config import ServerSettings
 from server.errors import install_error_handlers
@@ -84,6 +85,12 @@ def create_app(
     app.include_router(models.router)
     app.include_router(workspaces.router)
     app.include_router(skills.router)
+    if resolved.web_dist_dir is not None and resolved.web_dist_dir.is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=resolved.web_dist_dir, html=True),
+            name="web",
+        )
     return app
 
 

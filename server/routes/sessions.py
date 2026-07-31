@@ -49,7 +49,9 @@ def get_agent_registry(request: Request) -> AgentRegistry:
 
 @router.get("")
 async def list_sessions(store: SessionStore = Depends(get_session_store)) -> dict:
-    return {"sessions": session_info_list_to_dict(store.list())}
+    sessions = [*session_info_list_to_dict(store.list()), *store.list_orphans()]
+    sessions.sort(key=lambda item: str(item.get("modified", "")), reverse=True)
+    return {"sessions": sessions}
 
 
 @router.get("/{session_id}")

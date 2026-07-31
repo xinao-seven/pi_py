@@ -8,6 +8,7 @@ const props = defineProps<{
   loading: boolean;
   selectedSessionId: string | null;
   newSessionActive: boolean;
+  skillsAvailable: boolean;
 }>();
 
 interface SessionListItem {
@@ -42,6 +43,8 @@ const visibleSessions = computed<SessionListItem[]>(() => {
 const emit = defineEmits<{
   newSession: [];
   selectSession: [sessionId: string];
+  openModels: [];
+  openSkills: [];
 }>();
 
 function sessionTitle(session: SessionInfo): string {
@@ -103,13 +106,17 @@ function relativeDate(value: string): string {
         :class="{
           'session-item--active': selectedSessionId === item.session.id,
           'session-item--fork': item.depth > 0,
+          'session-item--orphan': item.session.orphaned,
         }"
+        :disabled="item.session.orphaned"
+        :title="item.session.orphanReason"
         :style="{ marginLeft: `${Math.min(item.depth, 3) * 12}px`, width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)` }"
         @click="emit('selectSession', item.session.id)"
       >
         <span class="session-title">
           <span v-if="item.depth" class="session-fork-mark" aria-label="Fork Session">↳</span>
           {{ sessionTitle(item.session) }}
+          <span v-if="item.session.orphaned" class="orphan-badge">不完整</span>
         </span>
         <span class="session-meta">
           <span class="session-cwd">{{ item.session.cwd }}</span>
@@ -119,8 +126,11 @@ function relativeDate(value: string): string {
     </div>
 
     <div class="sidebar-footer">
-      <span class="status-dot" aria-hidden="true" />
-      本地 FastAPI 服务
+      <div class="sidebar-config-actions">
+        <button type="button" @click="emit('openModels')">模型</button>
+        <button type="button" :disabled="!skillsAvailable" @click="emit('openSkills')">Skills</button>
+      </div>
+      <div class="sidebar-service"><span class="status-dot" aria-hidden="true" />本地 FastAPI 服务</div>
     </div>
   </div>
 </template>
