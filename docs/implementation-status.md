@@ -88,23 +88,24 @@
 - Files API 支持目录浏览、UTF-8 文本、图片/音频预览和轮询 SSE 文件变化监听。
 - 文件访问只允许已保存 Session 或活跃 Agent 的 cwd；真实路径解析后再次检查边界，并拦截
   `.env`、密钥、凭据和敏感配置目录。
-- Models Config 使用原子 JSON 写入；`apiKey` 只允许 `$ENV_VAR` 引用，解析后的密钥不会通过
-  API 返回。
+- Models Config 使用原子 JSON 写入；`apiKey` 只允许 `$ENV_VAR` 引用，真实值可从进程环境或
+  用户级 `secrets.env` 读取，解析后的密钥不会通过 API 返回。
 - Models API 汇总配置模型、默认模型和 thinking level 能力，配置后的 Provider 可直接供
   AgentRegistry 创建实例。
+- DeepSeek V4 使用独立 Provider 适配器，支持官方 Chat Completions 流、工具调用、思考开关和
+  reasoning effort；Models Config 可一键写入 V4 Flash/Pro、1M 上下文及安全密钥引用。
 - Skills API 复用 Coding Agent 的本地发现逻辑，支持诊断展示和
   `disable-model-invocation` 原子切换，并刷新活跃 Agent 的资源。
 - 工作区 API 可在受控父目录下创建默认 cwd、登记已有目录并列出允许根目录；Files 和 Skills
-  共用同一根目录集合。
+  共用同一根目录集合。Web 端提供项目切换弹窗，可复用历史目录、输入受控范围内的新路径或创建
+  默认工作区；切换时创建新会话上下文，不会原地修改历史 Session 的 cwd。
 - 新会话会持久化初始模型与 thinking level；重新激活会恢复历史 Provider/模型，`set_model`
   支持跨 Provider 原子切换。
 - Server 的全局 `agent_dir` 已注入每个 AgentSession，用户级 AGENTS、system prompt、prompts
   与 skills 会进入实际运行链路。
 
-阶段 5 的计划后端能力已经完成。延后项：
-
-- Vue 静态构建托管；按原计划留到阶段 8 接入。
-- 在线 Skills 搜索和安装；第一版范围只包含本地发现、启停和加载。
+阶段 5 的计划后端能力已经完成。Vue 静态构建托管已在阶段 8 接入；在线 Skills 搜索和安装
+仍不属于第一版范围，当前只包含本地发现、启停和加载。
 
 ### 阶段 6：Vue 最小纵向界面
 
@@ -160,7 +161,7 @@
 阶段 7 的参考 Web 核心功能清单已经闭环。下一步进入阶段 8 的本地发布、启动脚本、主题/声音、
 进一步可访问性和文档收口。
 
-### 阶段 8：本地发布与收口（进行中）
+### 阶段 8：本地发布与收口（实现完成，真实 Provider 验收待执行）
 
 8A 本地生产运行链路已经实现：
 
@@ -172,8 +173,19 @@
 - README 补充开发/生产启动、静态托管和凭据安全说明。
 - ASGI 集成测试确认首页与静态资源可访问，同时不会遮蔽 `/api/health`。
 
-阶段 8 尚未完成。剩余主题、声音、进一步交互打磨，以及需要用户提供真实 API Key 的受控
-Provider smoke test。
+8B 交互与验收入口已经实现：
+
+- 深色/浅色主题和完成提示音保存在浏览器本机；声音仅在用户主动启用后播放，不影响 Agent。
+- 图片除选择和粘贴外支持拖放，拖入时显示明确的投放区域，仍复用数量、大小和类型校验。
+- ModelsConfig 与 SkillsConfig 支持 Escape 关闭、打开后自动聚焦关闭按钮；全站保留键盘焦点样式、
+  reduced-motion 和移动端覆盖式布局。消息正文、Markdown 与工具状态使用主题变量，亮色模式保持
+  深色文字；用户消息只走单一渲染路径，输入框移除多余的黄色焦点框。
+- 新增真实 Provider smoke 脚本，从环境变量或用户级 `secrets.env` 读取密钥，显示 Provider/模型
+  但不回显 Key；调用
+  必须由用户显式执行，因为会访问真实服务并可能产生费用。
+
+阶段 8 的代码和离线验收已经完成。唯一未执行项是需要用户在本机配置 API Key 后运行的
+受控真实 Provider smoke test。
 
 ## 当前已知差异
 
@@ -181,15 +193,15 @@ Provider smoke test。
 - grep/find 会忽略 `.git`、`node_modules` 和 `__pycache__`，但尚未完整解析任意 `.gitignore` 规则。
 - bash 已处理直接子进程的超时和取消；完整跨平台进程树终止仍需专项验证。
 - Provider 请求和 SSE 映射已有完全离线测试，但尚未进行需要 API Key 的受控真实服务 smoke test。
-- Models Config 不保存明文 API Key，只接受环境变量引用；与参考 Web 允许直接保存字符串的
-  行为不同。
+- Models Config 不保存明文 API Key，只接受变量引用；真实值由仓库外的用户级 `secrets.env` 或
+  环境变量提供，与参考 Web 允许直接保存字符串的行为不同。
 - 原生 Windows 文件夹选择器由 `PI_SERVER_WORKSPACE_PARENT` 下的受控选择接口替代。
 
 ## 验证结果
 
 ```text
-Backend: 101 passed
-Frontend: 13 passed; typecheck/lint/build passed
+Backend: 110 passed
+Frontend: 19 passed; typecheck/lint/build passed
 ```
 
 包含三层依赖约束、Session、真实 pi fixture、7 个工具、bash 超时/取消、离线 Agent

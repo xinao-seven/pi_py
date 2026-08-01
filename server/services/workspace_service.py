@@ -31,9 +31,13 @@ class WorkspaceService:
         resolved = Path(path).expanduser().resolve()
         if not resolved.is_dir():
             raise ValueError(f"Workspace does not exist: {path}")
-        if not _is_within(resolved, self.workspace_parent) and not self.is_allowed(resolved):
+        known_roots = self.roots()
+        if not _is_within(resolved, self.workspace_parent) and not any(
+            _is_within(resolved, root) for root in known_roots
+        ):
             raise PermissionError(
-                f"Workspace must be inside configured parent: {self.workspace_parent}"
+                "Workspace must be inside the configured parent or a registered workspace: "
+                f"{self.workspace_parent}"
             )
         self._selected[_key(resolved)] = resolved
         return resolved

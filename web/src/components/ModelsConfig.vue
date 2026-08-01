@@ -22,6 +22,7 @@ const providers = ref<ProviderForm[]>([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
+const presetNotice = ref<string | null>(null);
 
 onMounted(async () => {
   try {
@@ -50,6 +51,39 @@ function addProvider(): void {
     models: [],
     raw: {},
   });
+}
+
+function configureDeepSeek(): void {
+  const preset: ProviderForm = {
+    name: "deepseek",
+    api: "deepseek-chat-completions",
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "$DEEPSEEK_API_KEY",
+    models: [
+      {
+        id: "deepseek-v4-flash",
+        name: "DeepSeek V4 Flash",
+        contextWindow: 1_000_000,
+        reasoning: true,
+        thinkingLevels: ["off", "low", "high", "max"],
+      },
+      {
+        id: "deepseek-v4-pro",
+        name: "DeepSeek V4 Pro",
+        contextWindow: 1_000_000,
+        reasoning: true,
+        thinkingLevels: ["off", "high", "max"],
+      },
+    ],
+    raw: {},
+  };
+  const existingIndex = providers.value.findIndex(
+    (provider) => provider.name.trim().toLowerCase() === "deepseek",
+  );
+  if (existingIndex === -1) providers.value.push(preset);
+  else providers.value.splice(existingIndex, 1, preset);
+  error.value = null;
+  presetNotice.value = "DeepSeek V4 预设已就绪；保存后请在 secrets.env 中填写 DEEPSEEK_API_KEY。";
 }
 
 function addModel(provider: ProviderForm): void {
@@ -110,19 +144,24 @@ function messageOf(cause: unknown): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')">
+  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
     <section class="config-dialog config-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="models-title">
       <header class="config-header">
         <div>
           <div class="welcome-kicker">LOCAL MODEL CATALOG</div>
           <h2 id="models-title">模型配置</h2>
         </div>
-        <button type="button" aria-label="关闭模型配置" @click="emit('close')">×</button>
+        <button type="button" aria-label="关闭模型配置" autofocus @click="emit('close')">×</button>
       </header>
 
       <div v-if="loading" class="config-state">正在读取 models.json…</div>
       <div v-else class="config-body">
-        <p class="config-help">API Key 只接受环境变量引用，例如 <code>$OPENAI_API_KEY</code>，不会保存明文密钥。</p>
+        <p class="config-help">API Key 只保存变量引用，例如 <code>$OPENAI_API_KEY</code>；真实值可放在当前环境或 <code>%USERPROFILE%\.pi\agent\secrets.env</code>，不会写入 models.json。</p>
+        <div class="config-presets">
+          <button type="button" class="config-add" @click="configureDeepSeek">一键配置 DeepSeek V4</button>
+          <button type="button" class="config-add" @click="addProvider">＋ 添加自定义 Provider</button>
+        </div>
+        <p v-if="presetNotice" class="config-notice" role="status">{{ presetNotice }}</p>
         <article v-for="(provider, providerIndex) in providers" :key="providerIndex" class="provider-card">
           <div class="provider-grid">
             <label>名称<input v-model="provider.name" /></label>
@@ -130,6 +169,7 @@ function messageOf(cause: unknown): string {
               <select v-model="provider.api">
                 <option value="openai-completions">OpenAI Compatible</option>
                 <option value="anthropic-messages">Anthropic Messages</option>
+                <option value="deepseek-chat-completions">DeepSeek Chat Completions</option>
               </select>
             </label>
             <label>Base URL<input v-model="provider.baseUrl" placeholder="https://…/v1" /></label>
@@ -149,7 +189,6 @@ function messageOf(cause: unknown): string {
           </div>
           <button type="button" class="danger-link" @click="providers.splice(providerIndex, 1)">删除 Provider</button>
         </article>
-        <button type="button" class="config-add" @click="addProvider">＋ 添加 Provider</button>
       </div>
 
       <div v-if="error" class="config-error" role="alert">{{ error }}</div>

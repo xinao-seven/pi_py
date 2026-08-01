@@ -61,3 +61,19 @@ async def test_built_vue_frontend_is_served_without_shadowing_api(tmp_path: Path
     assert "pi.py web" in page.text
     assert asset.text == "console.log('pi')"
     assert health.json() == {"status": "ok"}
+
+
+def test_settings_use_agent_local_or_explicit_secrets_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_dir = tmp_path / "agent"
+    monkeypatch.setenv("PI_SERVER_AGENT_DIR", str(agent_dir))
+    monkeypatch.delenv("PI_SERVER_SECRETS_FILE", raising=False)
+
+    default_settings = ServerSettings.from_env()
+    assert default_settings.secrets_file == agent_dir / "secrets.env"
+
+    explicit = tmp_path / "private" / "provider.env"
+    monkeypatch.setenv("PI_SERVER_SECRETS_FILE", str(explicit))
+    assert ServerSettings.from_env().secrets_file == explicit

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-import os
 from pathlib import Path
 import re
 from typing import Any
@@ -13,6 +12,7 @@ from uuid import uuid4
 from pi_ai.providers.base import LLMProvider
 from pi_ai.providers.registry import create_provider
 from server.services.agent_registry import ProviderConfigurationError, ResolvedModel
+from server.services.secret_store import SecretConfigError, SecretStore
 
 ENV_REFERENCE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
 THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -31,9 +31,17 @@ class ProviderAlias:
 
 
 class ModelConfigService:
-    def __init__(self, agent_dir: str | Path) -> None:
+    def __init__(
+        self,
+        agent_dir: str | Path,
+        *,
+        secrets_file: str | Path | None = None,
+    ) -> None:
         self.agent_dir = Path(agent_dir).expanduser().resolve()
         self.path = self.agent_dir / "models.json"
+        self.secret_store = SecretStore(
+            secrets_file or self.agent_dir / "secrets.env"
+        )
 
     def read(self) -> dict[str, Any]:
         if not self.path.is_file():
@@ -70,7 +78,7 @@ class ModelConfigService:
                 not isinstance(api_key, str) or ENV_REFERENCE.fullmatch(api_key) is None
             ):
                 raise ValueError(
-                    f"provider {provider_name!r} apiKey must reference an environment variable like $OPENAI_API_KEY"
+                    f"provider {provider_name!r} apiKey must reference a secret variable like $OPENAI_API_KEY"
                 )
             models = provider.get("models", [])
             if models is not None and (
@@ -107,14 +115,24 @@ class ModelConfigService:
     def resolve_provider(self, name: str) -> LLMProvider:
         provider_config = self.read().get("providers", {}).get(name)
         if not isinstance(provider_config, dict):
-            return _environment_provider(name)
+            return _environment_provider(name, self.secret_store)
         backend = str(provider_config.get("api") or "openai-completions")
-        built_in = "anthropic" if backend == "anthropic-messages" else "openai-compatible"
+        if backend == "anthropic-messages":
+            built_in = "anthropic"
+        elif backend == "deepseek-chat-completions":
+            built_in = "deepseek"
+        else:
+            built_in = "openai-compatible"
         reference = provider_config.get("apiKey")
         env_name = ENV_REFERENCE.fullmatch(reference).group(1) if isinstance(reference, str) and ENV_REFERENCE.fullmatch(reference) else _default_key_env(built_in)
-        api_key = os.getenv(env_name)
+        try:
+            api_key = self.secret_store.resolve(env_name)
+        except SecretConfigError as exception:
+            raise ProviderConfigurationError(str(exception)) from exception
         if not api_key:
-            raise ProviderConfigurationError(f"Environment variable {env_name} is not set")
+            raise ProviderConfigurationError(
+                f"Secret {env_name} was not found in the environment or secrets file"
+            )
         provider = create_provider(
             built_in,
             api_key=api_key,
@@ -198,13 +216,22 @@ class ModelConfigService:
 
 
 def _default_key_env(provider: str) -> str:
-    return "ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"
+    if provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if provider == "deepseek":
+        return "DEEPSEEK_API_KEY"
+    return "OPENAI_API_KEY"
 
 
-def _environment_provider(name: str) -> LLMProvider:
+def _environment_provider(name: str, secret_store: SecretStore) -> LLMProvider:
     built_in = "openai-compatible" if name in {"openai", "openai-compatible"} else name
     env_name = _default_key_env(built_in)
-    api_key = os.getenv(env_name)
+    try:
+        api_key = secret_store.resolve(env_name)
+    except SecretConfigError as exception:
+        raise ProviderConfigurationError(str(exception)) from exception
     if not api_key:
-        raise ProviderConfigurationError(f"Environment variable {env_name} is not set")
+        raise ProviderConfigurationError(
+            f"Secret {env_name} was not found in the environment or secrets file"
+        )
     return create_provider(built_in, api_key=api_key)

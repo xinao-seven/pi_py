@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 from pi_ai.providers.anthropic import AnthropicProvider
 from pi_ai.providers.base import LLMProvider
+from pi_ai.providers.deepseek import DeepSeekProvider
 from pi_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 
@@ -46,4 +47,7 @@ def create_provider(
     if provider in {"openai", "openai-compatible"}:
         kwargs = {"base_url": base_url} if base_url else {}
         return OpenAICompatibleProvider(api_key, **kwargs)
+    if provider == "deepseek":
+        kwargs = {"base_url": base_url} if base_url else {}
+        return DeepSeekProvider(api_key, **kwargs)
     raise ValueError(f"Unsupported provider: {provider}")

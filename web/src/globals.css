@@ -22,6 +22,63 @@
   --danger: #ff8178;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: #20231d;
+  background: #f2f3ed;
+  --panel: #ffffff;
+  --panel-raised: #f5f6f0;
+  --panel-soft: #e9ebe3;
+  --line: rgba(28, 34, 22, 0.1);
+  --line-strong: rgba(28, 34, 22, 0.17);
+  --text: #20231d;
+  --muted: #646a5f;
+  --faint: #858b80;
+  --accent: #718600;
+  --accent-ink: #ffffff;
+  --danger: #c43e38;
+}
+
+:root[data-theme="light"] .app-shell {
+  background:
+    radial-gradient(circle at 82% 0%, rgba(113, 134, 0, 0.1), transparent 27%),
+    #f2f3ed;
+}
+
+:root[data-theme="light"] .sidebar,
+:root[data-theme="light"] .chat-header,
+:root[data-theme="light"] .branch-strip {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="light"] .file-panel-shell,
+:root[data-theme="light"] .file-explorer-heading,
+:root[data-theme="light"] .file-tab-bar,
+:root[data-theme="light"] .config-dialog,
+:root[data-theme="light"] .merge-popover {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .branch-field select,
+:root[data-theme="light"] .merge-popover select,
+:root[data-theme="light"] .provider-grid input,
+:root[data-theme="light"] .provider-grid select,
+:root[data-theme="light"] .model-row > input,
+:root[data-theme="light"] .workspace-path-form input {
+  color: var(--text);
+  background: #f7f8f3;
+}
+
+:root[data-theme="light"] .composer {
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 15px 45px rgba(37, 45, 26, 0.1);
+}
+
+:root[data-theme="light"] .source-preview {
+  color: #30342d;
+  background: #f8f9f5;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -138,6 +195,11 @@ select:focus-visible {
   border-radius: 12px;
   font-size: 13px;
   font-weight: 650;
+}
+
+.new-session-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .new-session-button:hover,
@@ -379,6 +441,7 @@ select:focus-visible {
 }
 
 .files-toggle-button,
+.workspace-switch-button,
 .branch-action,
 .merge-menu summary,
 .merge-popover button {
@@ -393,6 +456,7 @@ select:focus-visible {
 }
 
 .files-toggle-button:disabled,
+.workspace-switch-button:disabled,
 .branch-action:disabled,
 .merge-popover button:disabled {
   opacity: 0.4;
@@ -807,7 +871,7 @@ select:focus-visible {
 }
 
 .message-text {
-  color: #dfe1e6;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.75;
   white-space: pre-wrap;
@@ -815,7 +879,7 @@ select:focus-visible {
 }
 
 .markdown-content {
-  color: #dfe1e6;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -834,18 +898,18 @@ select:focus-visible {
 .markdown-content h2,
 .markdown-content h3 {
   margin: 22px 0 9px;
-  color: #f1f2f4;
+  color: var(--text);
   font-weight: 680;
   line-height: 1.3;
 }
 .markdown-content h1 { font-size: 21px; }
 .markdown-content h2 { font-size: 18px; }
 .markdown-content h3 { font-size: 15px; }
-.markdown-content a { color: #dffb76; text-underline-offset: 3px; }
+.markdown-content a { color: var(--accent); text-underline-offset: 3px; }
 .markdown-content blockquote {
   padding: 2px 0 2px 14px;
   border-left: 2px solid #596136;
-  color: #aeb3bc;
+  color: var(--muted);
 }
 .markdown-content code:not(pre code) {
   padding: 2px 5px;
@@ -864,11 +928,20 @@ select:focus-visible {
   background: #0d0f13;
   scrollbar-width: thin;
 }
-.markdown-content pre { margin: 13px 0; padding: 13px 14px; }
+.markdown-content pre {
+  margin: 13px 0;
+  padding: 13px 14px;
+  color: #eef0f3;
+}
 .markdown-content pre code {
+  color: inherit;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12px;
   line-height: 1.65;
+}
+.markdown-content pre .hljs {
+  color: #eef0f3;
+  background: transparent;
 }
 .hljs-keyword,
 .hljs-selector-tag,
@@ -896,7 +969,7 @@ select:focus-visible {
   align-items: center;
   gap: 8px;
   padding: 9px 11px;
-  color: #a6abb5;
+  color: var(--muted);
   font-size: 11px;
   cursor: pointer;
   list-style: none;
@@ -924,7 +997,7 @@ select:focus-visible {
 
 .thinking-content {
   padding: 0 12px 11px 28px;
-  color: #8f96a2;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -936,13 +1009,13 @@ select:focus-visible {
   font-weight: 700;
 }
 
-.tool-name { color: #d7d9df; font-family: "Cascadia Code", Consolas, monospace; }
-.tool-status { margin-left: auto; color: #78808c; }
+.tool-name { color: var(--text); font-family: "Cascadia Code", Consolas, monospace; }
+.tool-status { margin-left: auto; color: var(--faint); }
 .tool-call--error .tool-status { color: var(--danger); }
 .tool-section { padding: 0 11px 11px; }
 .tool-label {
   margin: 2px 0 6px;
-  color: #686f7a;
+  color: var(--faint);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -1148,6 +1221,115 @@ select:focus-visible {
 
 .config-help {
   margin: 0 0 14px;
+}
+
+.config-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.config-notice {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.workspace-dialog {
+  width: min(720px, 100%);
+}
+
+.workspace-path-form {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 20px;
+}
+
+.workspace-path-form > label,
+.workspace-list-heading {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-path-form > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.workspace-path-form input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  color: var(--text);
+  background: #0e1014;
+}
+
+.workspace-path-form small {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.workspace-list-heading {
+  margin-bottom: 8px;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 7px;
+}
+
+.workspace-option {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--panel-raised);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-option:hover,
+.workspace-option--current {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.workspace-option:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.workspace-option > span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-option code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-option small {
+  color: var(--accent);
+  font-size: 9px;
 }
 
 .config-state {
@@ -1376,14 +1558,18 @@ select:focus-visible {
   padding: 6px 8px 6px 5px;
   border: 0;
   outline: 0;
-  color: #b8bdc6;
+  color: #f2f3f5;
+  color-scheme: dark;
   background: transparent;
   font-size: 10px;
   cursor: pointer;
 }
 
 .control-field select:disabled { opacity: 0.5; cursor: default; }
-.control-field option { color: #e4e6e9; background: #171a20; }
+.control-field option {
+  color: #f2f3f5;
+  background: #171a20;
+}
 
 .compact-button,
 .queue-button {
@@ -1418,6 +1604,7 @@ select:focus-visible {
 .context-meter span { display: block; height: 100%; background: var(--accent); }
 
 .composer {
+  position: relative;
   padding: 13px 14px 11px;
   border: 1px solid var(--line-strong);
   border-radius: 17px;
@@ -1426,9 +1613,30 @@ select:focus-visible {
   transition: border-color 150ms ease;
 }
 
-.composer:focus-within {
-  border-color: rgba(231, 255, 111, 0.32);
+.composer--dragging {
+  border-color: var(--accent);
 }
+
+.drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 13px;
+  color: var(--accent);
+  background: rgba(12, 14, 18, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+:root[data-theme="light"] .drop-overlay {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.composer:focus-within { border-color: var(--line-strong); }
 
 .composer-input {
   display: block;
@@ -1443,6 +1651,11 @@ select:focus-visible {
   background: transparent;
   font-size: 14px;
   line-height: 1.55;
+}
+
+textarea.composer-input:focus-visible {
+  outline: 0;
+  box-shadow: none;
 }
 
 .composer-input::placeholder {
@@ -1741,6 +1954,19 @@ select:focus-visible {
   .provider-grid,
   .model-row {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-path-form > div {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-option {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workspace-option code {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .model-row > button {

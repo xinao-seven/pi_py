@@ -21,4 +21,20 @@ describe("app store file tabs", () => {
     expect(store.fileTabs).toEqual([]);
     expect(store.activeFilePath).toBeNull();
   });
+
+  it("persists theme and sound preferences", () => {
+    window.localStorage.clear();
+    setActivePinia(createPinia());
+    const store = useAppStore();
+    store.initializePreferences();
+    const initialTheme = store.theme;
+
+    store.toggleTheme();
+    store.toggleSound();
+
+    expect(store.theme).not.toBe(initialTheme);
+    expect(document.documentElement.dataset.theme).toBe(store.theme);
+    expect(window.localStorage.getItem("pi.theme")).toBe(store.theme);
+    expect(window.localStorage.getItem("pi.sound")).toBe("true");
+  });
 });

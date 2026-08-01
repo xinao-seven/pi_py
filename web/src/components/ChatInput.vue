@@ -23,6 +23,7 @@ const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const images = ref<AttachedImage[]>([]);
 const imageError = ref<string | null>(null);
+const dragging = ref(false);
 const canSend = computed(
   () => (message.value.trim().length > 0 || images.value.length > 0) && !props.disabled,
 );
@@ -107,6 +108,12 @@ function onPaste(event: ClipboardEvent): void {
   void addFiles(files);
 }
 
+function onDrop(event: DragEvent): void {
+  dragging.value = false;
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length) void addFiles(files);
+}
+
 function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -120,7 +127,16 @@ onBeforeUnmount(clearImages);
 </script>
 
 <template>
-  <form class="composer" @submit.prevent="submit()">
+  <form
+    class="composer"
+    :class="{ 'composer--dragging': dragging }"
+    @submit.prevent="submit()"
+    @dragenter.prevent="dragging = true"
+    @dragover.prevent="dragging = true"
+    @dragleave.self="dragging = false"
+    @drop.prevent="onDrop"
+  >
+    <div v-if="dragging" class="drop-overlay" aria-hidden="true">松开以添加图片</div>
     <div v-if="images.length" class="image-attachments" aria-label="待发送图片">
       <div v-for="(image, index) in images" :key="image.previewUrl" class="image-attachment">
         <img :src="image.previewUrl" :alt="image.name" />

@@ -9,6 +9,9 @@ const props = defineProps<{
   selectedSessionId: string | null;
   newSessionActive: boolean;
   skillsAvailable: boolean;
+  theme: "dark" | "light";
+  soundEnabled: boolean;
+  agentRunning: boolean;
 }>();
 
 interface SessionListItem {
@@ -45,6 +48,8 @@ const emit = defineEmits<{
   selectSession: [sessionId: string];
   openModels: [];
   openSkills: [];
+  toggleTheme: [];
+  toggleSound: [];
 }>();
 
 function sessionTitle(session: SessionInfo): string {
@@ -72,7 +77,7 @@ function relativeDate(value: string): string {
       </div>
     </div>
 
-    <button class="new-session-button" type="button" @click="emit('newSession')">
+    <button class="new-session-button" type="button" :disabled="agentRunning" @click="emit('newSession')">
       <span aria-hidden="true">＋</span>
       新建会话
     </button>
@@ -108,7 +113,7 @@ function relativeDate(value: string): string {
           'session-item--fork': item.depth > 0,
           'session-item--orphan': item.session.orphaned,
         }"
-        :disabled="item.session.orphaned"
+        :disabled="item.session.orphaned || agentRunning"
         :title="item.session.orphanReason"
         :style="{ marginLeft: `${Math.min(item.depth, 3) * 12}px`, width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)` }"
         @click="emit('selectSession', item.session.id)"
@@ -129,6 +134,12 @@ function relativeDate(value: string): string {
       <div class="sidebar-config-actions">
         <button type="button" @click="emit('openModels')">模型</button>
         <button type="button" :disabled="!skillsAvailable" @click="emit('openSkills')">Skills</button>
+        <button type="button" :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="emit('toggleTheme')">
+          {{ theme === "dark" ? "浅色" : "深色" }}
+        </button>
+        <button type="button" :aria-pressed="soundEnabled" @click="emit('toggleSound')">
+          {{ soundEnabled ? "声音开" : "声音关" }}
+        </button>
       </div>
       <div class="sidebar-service"><span class="status-dot" aria-hidden="true" />本地 FastAPI 服务</div>
     </div>

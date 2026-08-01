@@ -2,6 +2,7 @@
 
 from pi_ai.providers import (
     AnthropicProvider,
+    DeepSeekProvider,
     FakeProvider,
     LLMProvider,
     OpenAICompatibleProvider,
@@ -15,6 +16,7 @@ from pi_ai.utils import ContextUsageEstimate, RetryPolicy, estimate_context_toke
 __all__ = [
     "AnthropicProvider",
     "ContextUsageEstimate",
+    "DeepSeekProvider",
     "FakeProvider",
     "LLMProvider",
     "Message",

@@ -7,8 +7,9 @@ import ChatWindow from "@/components/ChatWindow.vue";
 import FileWorkspacePanel from "@/components/FileWorkspacePanel.vue";
 import ModelsConfig from "@/components/ModelsConfig.vue";
 import SkillsConfig from "@/components/SkillsConfig.vue";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher.vue";
 import SessionSidebar from "@/components/SessionSidebar.vue";
-import { createDefaultWorkspace, listSessions } from "@/lib/api";
+import { listSessions } from "@/lib/api";
 import { useAppStore } from "@/stores/app";
 import type { SessionInfo } from "@/types";
 
@@ -22,13 +23,20 @@ const {
   activeFilePath,
   modelsConfigOpen,
   skillsConfigOpen,
+  theme,
+  soundEnabled,
 } = storeToRefs(store);
 const sessions = ref<SessionInfo[]>([]);
 const sessionsLoading = ref(true);
 const appError = ref<string | null>(null);
 const modelsRevision = ref(0);
+const workspaceSwitcherOpen = ref(false);
+const agentRunning = ref(false);
 const selectedWorkspace = computed(
-  () => sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd ?? null,
+  () =>
+    sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd
+    ?? newSessionCwd.value
+    ?? null,
 );
 
 async function refreshSessions(): Promise<void> {
@@ -42,14 +50,19 @@ async function refreshSessions(): Promise<void> {
   }
 }
 
-async function startNewSession(): Promise<void> {
-  try {
-    const cwd = await createDefaultWorkspace();
-    store.startSession(cwd);
-    appError.value = null;
-  } catch (cause) {
-    appError.value = cause instanceof Error ? cause.message : "无法创建工作区";
-  }
+function startNewSession(): void {
+  if (agentRunning.value) return;
+  workspaceSwitcherOpen.value = true;
+}
+
+function openWorkspaceSwitcher(): void {
+  if (!agentRunning.value) workspaceSwitcherOpen.value = true;
+}
+
+function switchWorkspace(cwd: string): void {
+  store.startSession(cwd);
+  workspaceSwitcherOpen.value = false;
+  appError.value = null;
 }
 
 function sessionCreated(sessionId: string): void {
@@ -62,9 +75,39 @@ function sessionForked(sessionId: string): void {
   void refreshSessions();
 }
 
+let audioContext: AudioContext | null = null;
+
+function toggleSound(): void {
+  store.toggleSound();
+  if (soundEnabled.value) playCompletionTone(0.035);
+}
+
+function handleAgentEnd(): void {
+  void refreshSessions();
+  if (soundEnabled.value) playCompletionTone(0.08);
+}
+
+function playCompletionTone(volume: number): void {
+  try {
+    audioContext ??= new AudioContext();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.12);
+    gain.gain.setValueAtTime(volume, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.18);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.18);
+  } catch {
+    // Sound is optional; unsupported or blocked audio must not affect the Agent.
+  }
+}
+
 watch(selectedWorkspace, (root) => store.setFileWorkspace(root));
 
 onMounted(() => {
+  store.initializePreferences();
   void refreshSessions();
 });
 </script>
@@ -78,10 +121,15 @@ onMounted(() => {
         :selected-session-id="selectedSessionId"
         :new-session-active="newSessionCwd !== null"
         :skills-available="!!selectedWorkspace"
+        :theme="theme"
+        :sound-enabled="soundEnabled"
+        :agent-running="agentRunning"
         @new-session="startNewSession"
         @select-session="store.selectSession"
         @open-models="modelsConfigOpen = true"
         @open-skills="skillsConfigOpen = true"
+        @toggle-theme="store.toggleTheme"
+        @toggle-sound="toggleSound"
       />
     </template>
 
@@ -110,9 +158,11 @@ onMounted(() => {
       :models-revision="modelsRevision"
       @session-created="sessionCreated"
       @session-forked="sessionForked"
-      @agent-end="refreshSessions"
+      @agent-end="handleAgentEnd"
       @open-sidebar="sidebarOpen = true"
       @toggle-files="store.toggleFilePanel"
+      @switch-workspace="openWorkspaceSwitcher"
+      @running-change="agentRunning = $event"
     />
   </AppShell>
 
@@ -125,5 +175,11 @@ onMounted(() => {
     v-if="skillsConfigOpen && selectedWorkspace"
     :cwd="selectedWorkspace"
     @close="skillsConfigOpen = false"
+  />
+  <WorkspaceSwitcher
+    v-if="workspaceSwitcherOpen"
+    :current-cwd="selectedWorkspace"
+    @close="workspaceSwitcherOpen = false"
+    @selected="switchWorkspace"
   />
 </template>

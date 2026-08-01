@@ -22,9 +22,14 @@ class ServerSettings:
     web_dist_dir: Path | None = field(
         default_factory=lambda: Path(__file__).resolve().parents[1] / "web" / "dist"
     )
+    secrets_file: Path | None = None
 
     @classmethod
     def from_env(cls) -> ServerSettings:
+        agent_dir = Path(
+            os.getenv("PI_SERVER_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
+        ).expanduser()
+        secrets_file_value = os.getenv("PI_SERVER_SECRETS_FILE")
         origins = tuple(
             origin.strip()
             for origin in os.getenv(
@@ -35,9 +40,12 @@ class ServerSettings:
         )
         web_dist_value = os.getenv("PI_SERVER_WEB_DIST")
         return cls(
-            agent_dir=Path(
-                os.getenv("PI_SERVER_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
-            ).expanduser(),
+            agent_dir=agent_dir,
+            secrets_file=(
+                Path(secrets_file_value).expanduser()
+                if secrets_file_value
+                else agent_dir / "secrets.env"
+            ),
             sessions_dir=Path(
                 os.getenv(
                     "PI_SERVER_SESSIONS_DIR",

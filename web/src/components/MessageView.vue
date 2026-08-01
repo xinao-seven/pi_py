@@ -53,7 +53,7 @@ const images = computed(() =>
           :alt="`消息图片 ${index + 1}`"
         />
       </div>
-      <template v-else>
+      <template v-if="!isUser">
         <ThinkingBlock v-if="thinking" :content="thinking" :streaming="streaming" />
         <MarkdownContent v-if="text" :content="text" />
         <ToolCallBlock

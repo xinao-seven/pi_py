@@ -27,7 +27,10 @@ def create_app(
 ) -> FastAPI:
     resolved = settings or ServerSettings.from_env()
     store = SessionStore(resolved.sessions_dir)
-    model_config = ModelConfigService(resolved.agent_dir)
+    model_config = ModelConfigService(
+        resolved.agent_dir,
+        secrets_file=resolved.secrets_file or resolved.agent_dir / "secrets.env",
+    )
     registry_kwargs = {
         "provider_resolver": provider_resolver or model_config.resolve_provider,
         "model_resolver": model_config.resolve_model,

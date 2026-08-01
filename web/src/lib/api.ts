@@ -87,6 +87,24 @@ export async function createDefaultWorkspace(): Promise<string> {
   return result.cwd;
 }
 
+export async function getWorkspaceHome(): Promise<string> {
+  const result = await request<{ home: string }>("/api/home");
+  return result.home;
+}
+
+export async function listWorkspaces(): Promise<string[]> {
+  const result = await request<{ workspaces: string[] }>("/api/workspaces");
+  return result.workspaces;
+}
+
+export async function selectWorkspace(cwd: string): Promise<string> {
+  const result = await request<{ cwd: string }>("/api/workspaces/select", {
+    method: "POST",
+    body: JSON.stringify({ cwd }),
+  });
+  return result.cwd;
+}
+
 export async function createAgent(input: {
   cwd: string;
   message: string;

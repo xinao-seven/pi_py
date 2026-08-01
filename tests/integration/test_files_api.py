@@ -34,6 +34,7 @@ async def test_list_and_read_only_within_session_workspace(tmp_path: Path) -> No
     (workspace / "src" / "app.py").write_text("print('你好')\n", encoding="utf-8")
     (workspace / ".git").mkdir()
     (workspace / ".env").write_text("SECRET=value", encoding="utf-8")
+    (workspace / "secrets.env").write_text("SECRET=value", encoding="utf-8")
     _allow_workspace(tmp_path / "sessions", workspace)
     app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
     transport = httpx.ASGITransport(app=app)

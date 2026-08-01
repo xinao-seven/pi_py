@@ -22,6 +22,8 @@ const emit = defineEmits<{
   openSidebar: [];
   toggleFiles: [root: string];
   sessionForked: [sessionId: string];
+  switchWorkspace: [];
+  runningChange: [running: boolean];
 }>();
 
 const messagesEnd = ref<HTMLElement | null>(null);
@@ -132,6 +134,12 @@ watch(
   },
   { deep: true },
 );
+
+watch(
+  () => stream.running,
+  (running) => emit("runningChange", running),
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -145,6 +153,14 @@ watch(
         <div class="workspace-path" :title="workspace">{{ workspace || "选择一个工作区开始" }}</div>
       </div>
       <div class="header-meta">
+        <button
+          class="workspace-switch-button"
+          type="button"
+          :disabled="stream.running"
+          @click="emit('switchWorkspace')"
+        >
+          切换项目
+        </button>
         <button
           class="files-toggle-button"
           type="button"

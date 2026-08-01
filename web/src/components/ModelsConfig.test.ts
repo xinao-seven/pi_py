@@ -44,4 +44,45 @@ describe("ModelsConfig", () => {
     });
     expect(wrapper.emitted("saved")).toHaveLength(1);
   });
+
+  it("adds the current DeepSeek V4 preset with one click", async () => {
+    vi.mocked(getModelsConfig).mockResolvedValue({ providers: {} });
+    vi.mocked(saveModelsConfig).mockResolvedValue();
+    const wrapper = mount(ModelsConfig);
+    await flushPromises();
+    const presetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("一键配置 DeepSeek V4"));
+
+    expect(presetButton).toBeDefined();
+    await presetButton!.trigger("click");
+    await wrapper.findAll(".config-footer button")[1].trigger("click");
+    await flushPromises();
+
+    expect(saveModelsConfig).toHaveBeenCalledWith({
+      providers: {
+        deepseek: {
+          api: "deepseek-chat-completions",
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "$DEEPSEEK_API_KEY",
+          models: [
+            {
+              id: "deepseek-v4-flash",
+              name: "DeepSeek V4 Flash",
+              contextWindow: 1_000_000,
+              reasoning: true,
+              thinkingLevels: ["off", "low", "high", "max"],
+            },
+            {
+              id: "deepseek-v4-pro",
+              name: "DeepSeek V4 Pro",
+              contextWindow: 1_000_000,
+              reasoning: true,
+              thinkingLevels: ["off", "high", "max"],
+            },
+          ],
+        },
+      },
+    });
+  });
 });

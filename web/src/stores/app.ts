@@ -13,6 +13,34 @@ export const useAppStore = defineStore("app", () => {
   const activeFilePath = ref<string | null>(null);
   const modelsConfigOpen = ref(false);
   const skillsConfigOpen = ref(false);
+  const theme = ref<"dark" | "light">("dark");
+  const soundEnabled = ref(false);
+
+  function initializePreferences(): void {
+    const savedTheme = window.localStorage.getItem("pi.theme");
+    theme.value = savedTheme === "light" || savedTheme === "dark"
+      ? savedTheme
+      : window.matchMedia?.("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark";
+    soundEnabled.value = window.localStorage.getItem("pi.sound") === "true";
+    applyTheme();
+  }
+
+  function toggleTheme(): void {
+    theme.value = theme.value === "dark" ? "light" : "dark";
+    window.localStorage.setItem("pi.theme", theme.value);
+    applyTheme();
+  }
+
+  function toggleSound(): void {
+    soundEnabled.value = !soundEnabled.value;
+    window.localStorage.setItem("pi.sound", String(soundEnabled.value));
+  }
+
+  function applyTheme(): void {
+    document.documentElement.dataset.theme = theme.value;
+  }
 
   function selectSession(sessionId: string): void {
     selectedSessionId.value = sessionId;
@@ -67,11 +95,16 @@ export const useAppStore = defineStore("app", () => {
     activeFilePath,
     modelsConfigOpen,
     skillsConfigOpen,
+    theme,
+    soundEnabled,
     selectSession,
     startSession,
     setFileWorkspace,
     toggleFilePanel,
     openFile,
     closeFile,
+    initializePreferences,
+    toggleTheme,
+    toggleSound,
   };
 });

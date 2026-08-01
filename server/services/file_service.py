@@ -29,7 +29,7 @@ IGNORED_NAMES = {
 }
 IGNORED_SUFFIXES = {".pyc"}
 SENSITIVE_DIRECTORY_NAMES = {".ssh", ".aws", ".azure", ".gnupg"}
-SENSITIVE_FILE_NAMES = {".env", "credentials", "credentials.json"}
+SENSITIVE_FILE_NAMES = {".env", "secrets.env", "credentials", "credentials.json"}
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 TEXT_PREVIEW_MAX_BYTES = 256 * 1024
 MEDIA_PREVIEW_MAX_BYTES = 10 * 1024 * 1024

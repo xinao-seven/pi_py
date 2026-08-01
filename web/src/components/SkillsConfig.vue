@@ -54,7 +54,7 @@ function messageOf(cause: unknown): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')">
+  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
     <section class="config-dialog" role="dialog" aria-modal="true" aria-labelledby="skills-title">
       <header class="config-header">
         <div>
@@ -62,7 +62,7 @@ function messageOf(cause: unknown): string {
           <h2 id="skills-title">Skills</h2>
           <p>{{ enabledCount }} / {{ skills.length }} 可由模型调用</p>
         </div>
-        <button type="button" aria-label="关闭 Skills 配置" @click="emit('close')">×</button>
+        <button type="button" aria-label="关闭 Skills 配置" autofocus @click="emit('close')">×</button>
       </header>
       <div v-if="loading" class="config-state">正在发现本地 Skills…</div>
       <div v-else class="config-body skills-list">
