@@ -1,4 +1,8 @@
-"""Coding-specific assembly of the generic Agent and persistent Session."""
+"""Coding-specific assembly of the generic Agent and persistent Session.
+
+中文说明：把通用 AgentRuntime 组装成“编程助手”：接入 SessionManager 持久化、
+工作区工具、Skills/模板/项目指令等资源，并编排 compaction 与分支摘要。
+"""
 
 from __future__ import annotations
 
@@ -32,6 +36,11 @@ from pi_coding_agent.core.usage import get_session_stats, get_usage_cost_breakdo
 
 
 class AgentSession(Agent):
+    """编程助手会话：通用 Agent + Session 持久化 + 编程资源 + 压缩/分支摘要。
+
+    对外与 Agent 同接口（prompt/steer/follow_up/abort 等），但会在发送前
+    展开 /skill: 命令与 /模板 命令，并在回合结束时自动判断是否需要压缩上下文。
+    """
     def __init__(
         self,
         *,
@@ -50,20 +59,25 @@ class AgentSession(Agent):
         branch_summary_reserve_tokens: int = 16_384,
         resource_loader: CodingResourceLoader | None = None,
     ) -> None:
+        # compaction：上下文超阈值时自动压缩；branch summary：切换分支时可保留被遗弃分支的摘要
         self.session_manager = session_manager
         self.compaction_settings = compaction_settings
         self.compaction_summarizer = compaction_summarizer
         self.is_compacting = False
         self._compaction_task: asyncio.Task[Any] | None = None
+        # 溢出恢复标记：上下文超限后只允许压缩并重试一次，避免递归
         self._overflow_recovery_active = False
         self.branch_summarizer = branch_summarizer
         self.branch_summary_reserve_tokens = max(0, branch_summary_reserve_tokens)
         self.is_summarizing_branch = False
         self._branch_summary_task: asyncio.Task[Any] | None = None
         self.resource_loader = resource_loader or CodingResourceLoader(session_manager.cwd)
+        # 加载工作区资源（AGENTS.md、Skills、prompts、.pi/SYSTEM.md 等）
         self.resources = self.resource_loader.load()
+        # 用户显式传入的 system prompt 优先于资源目录里的 .pi/SYSTEM.md
         self._custom_system_prompt = system_prompt or None
         self._initial_tool_names = tool_registry.active_names()
+        # 在调用父类前先组装完整系统提示（含工具列表、项目指令与技能清单）
         assembled_system_prompt = self._build_system_prompt()
         super().__init__(
             provider=provider,
@@ -79,19 +93,23 @@ class AgentSession(Agent):
 
     @property
     def skills(self):
+        """当前加载的 Skills 集合（供 UI/配置面板读取）。"""
         return self.resources.skills
 
     @property
     def prompt_templates(self):
+        """当前加载的 Markdown 提示模板集合。"""
         return self.resources.prompt_templates
 
     def reload_resources(self) -> CodingResources:
+        """重新加载工作区资源（Skills/模板/项目指令），并重建系统提示。"""
         self.resources = self.resource_loader.reload()
         self.system_prompt = self._build_system_prompt()
         return self.resources
 
     def set_active_tools(self, names: list[str]) -> None:
         super().set_active_tools(names)
+        # 工具集合变化会影响 system prompt 里的可用工具列表，需要同步重建
         self.system_prompt = self._build_system_prompt()
 
     async def prompt(self, content: str | list[dict[str, Any]]) -> None:
@@ -104,6 +122,7 @@ class AgentSession(Agent):
         await super().follow_up(self._expand_content(content))
 
     def _expand_content(self, content: str | list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+        """发送前展开输入：文本（或文本块）先展开 /skill: 与 /模板 命令。"""
         if isinstance(content, str):
             return self._expand_prompt(content)
         expanded = deepcopy(content)
@@ -113,10 +132,12 @@ class AgentSession(Agent):
         return expanded
 
     def _expand_prompt(self, text: str) -> str:
+        """依次展开 skill 命令与 prompt 模板命令。"""
         expanded = expand_skill_command(text, self.resources.skills)
         return expand_prompt_template(expanded, self.resources.prompt_templates)
 
     def _build_system_prompt(self) -> str:
+        """组装完整系统提示：自定义/默认提示 + 可用工具 + 项目指令 + 技能清单。"""
         custom = self._custom_system_prompt or self.resources.system_prompt
         return build_system_prompt(
             cwd=self.session_manager.cwd,
@@ -133,6 +154,8 @@ class AgentSession(Agent):
         reason: Literal["manual", "threshold", "overflow"] = "manual",
         custom_instructions: str | None = None,
     ) -> dict[str, Any] | None:
+        """压缩上下文：把旧消息交给摘要器生成 checkpoint，保留最近消息。
+        reason 区分手动 / 阈值触发 / 溢出恢复，便于 UI 展示。"""
         if self.is_compacting:
             raise RuntimeError("Compaction is already running")
         settings = self.compaction_settings or CompactionSettings()
@@ -192,6 +215,7 @@ class AgentSession(Agent):
             self._compaction_task = None
 
     async def abort_compaction(self) -> None:
+        """取消正在进行的压缩（如果有）。"""
         task = self._compaction_task
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
@@ -204,7 +228,11 @@ class AgentSession(Agent):
         custom_instructions: str | None = None,
         label: str | None = None,
     ) -> dict[str, Any]:
-        """Move to a session-tree entry, optionally preserving the abandoned branch."""
+        """Move to a session-tree entry, optionally preserving the abandoned branch.
+
+        中文说明：跳转到会话树中的某个节点；可把被遗弃分支生成摘要写回，
+        并自动定位用户消息的父节点以便恢复编辑文本。
+        """
         if self.is_summarizing_branch:
             raise RuntimeError("Branch summarization is already running")
         old_leaf_id = self.session_manager.leaf_id
@@ -233,6 +261,7 @@ class AgentSession(Agent):
 
         summary = None
         if summarize and preparation.messages:
+            # 需要保留被遗弃分支：调用分支摘要器（可用当前 Provider）
             summarizer = self.branch_summarizer or ProviderBranchSummarizer(
                 self.provider,
                 self.model,
@@ -272,6 +301,7 @@ class AgentSession(Agent):
         editor_text: str | None = None
         if target.get("type") == "message" and isinstance(target.get("message"), dict):
             if target["message"].get("role") == "user":
+                # 跳转到用户消息时，叶节点是其父节点，编辑框恢复该消息文本
                 new_leaf_id = _parent_id(target)
                 editor_text = _content_text(target["message"].get("content"))
         elif target.get("type") == "custom_message":
@@ -280,6 +310,7 @@ class AgentSession(Agent):
 
         summary_entry = None
         if summary is not None:
+            # 生成了分支摘要：在目标位置追加 branch_summary 条目作为新叶
             summary_id = self.session_manager.branch_with_summary(
                 new_leaf_id,
                 summary.text,
@@ -323,11 +354,13 @@ class AgentSession(Agent):
         return result
 
     async def abort_branch_summary(self) -> None:
+        """取消正在进行的分支摘要（如果有）。"""
         task = self._branch_summary_task
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
     def get_session_stats(self) -> dict[str, Any]:
+        """返回 Session 的消息/token/成本统计（供 UI 展示）。"""
         return get_session_stats(
             self.session_manager.get_entries(),
             session_id=self.session_manager.session_id,
@@ -336,6 +369,7 @@ class AgentSession(Agent):
         )
 
     def get_usage_cost_breakdown(self) -> list[dict[str, Any]]:
+        """返回按 provider/model 分组的成本明细。"""
         return get_usage_cost_breakdown(self.session_manager.get_entries())
 
     async def _emit(self, event_type: str, **payload: Any) -> None:
@@ -345,6 +379,7 @@ class AgentSession(Agent):
             and self.compaction_settings is not None
             and not self.is_compacting
         ):
+            # 回合结束后检查上下文占用，超过阈值自动触发压缩
             usage = self.get_context_usage()
             if usage and should_compact(
                 int(usage["tokens"]),
@@ -361,6 +396,7 @@ class AgentSession(Agent):
         self,
         new_messages: list[dict[str, Any]],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """在父类重试逻辑之上处理上下文溢出：压缩后重新执行一次 Provider 轮次。"""
         assistant, tool_calls = await super()._provider_turn_with_retry(new_messages)
         if (
             self._overflow_recovery_active

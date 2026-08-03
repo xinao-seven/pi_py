@@ -1,3 +1,4 @@
+<!-- 根组件：组装三栏布局（侧栏/聊天/文件），管理会话列表、配置弹窗与主题声音。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
@@ -32,6 +33,7 @@ const appError = ref<string | null>(null);
 const modelsRevision = ref(0);
 const workspaceSwitcherOpen = ref(false);
 const agentRunning = ref(false);
+// 当前工作区：历史会话的 cwd 或新会话选中的目录
 const selectedWorkspace = computed(
   () =>
     sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd
@@ -40,6 +42,7 @@ const selectedWorkspace = computed(
 );
 
 async function refreshSessions(): Promise<void> {
+  // 刷新侧栏会话列表
   try {
     sessions.value = await listSessions();
     appError.value = null;
@@ -60,6 +63,7 @@ function openWorkspaceSwitcher(): void {
 }
 
 function switchWorkspace(cwd: string): void {
+  // 切换工作区：进入新会话模式
   store.startSession(cwd);
   workspaceSwitcherOpen.value = false;
   appError.value = null;
@@ -83,11 +87,13 @@ function toggleSound(): void {
 }
 
 function handleAgentEnd(): void {
+  // Agent 结束：刷新会话列表并（可选）播放完成音
   void refreshSessions();
   if (soundEnabled.value) playCompletionTone(0.08);
 }
 
 function playCompletionTone(volume: number): void {
+  // 用 Web Audio 生成一个简单的提示音（声音关闭或不可用时静默忽略）
   try {
     audioContext ??= new AudioContext();
     const oscillator = audioContext.createOscillator();

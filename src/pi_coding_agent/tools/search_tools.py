@@ -1,4 +1,8 @@
-"""Portable grep and find tools with bounded output."""
+"""Portable grep and find tools with bounded output.
+
+中文说明：搜索工具：grep（按正则/字面量搜文件内容，带上下文行）
+与 find（按 glob 找文件）。递归时跳过 .git/node_modules/__pycache__。
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ IGNORED_DIRECTORY_NAMES = {".git", "node_modules", "__pycache__"}
 
 
 def _files_under(path: Path) -> Iterable[Path]:
+    """递归枚举路径下的文件，跳过忽略目录。"""
     if path.is_file():
         yield path
         return
@@ -38,6 +43,7 @@ def _matches_glob(relative_path: str, pattern: str | None) -> bool:
 
 
 def create_find_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 find 工具：按 glob 匹配相对路径，结果排序并限制数量。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not pattern:
@@ -99,6 +105,8 @@ def _nonnegative_int(value: object, field: str, default: int = 0) -> int:
 
 
 def create_grep_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 grep 工具：支持正则/字面量、忽略大小写、glob 过滤、
+    上下文行数与结果上限；超长匹配行截断显示。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not pattern:
@@ -131,9 +139,11 @@ def create_grep_tool(paths: WorkspacePaths) -> ToolDefinition:
             try:
                 data = file_path.read_bytes()
                 if b"\x00" in data:
+                    # 跳过二进制文件
                     continue
                 lines = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").split("\n")
             except (OSError, UnicodeDecodeError):
+                # 读取失败或非 UTF-8 的文件跳过，不中断整个搜索
                 continue
             emitted_context: set[int] = set()
             for index, line in enumerate(lines):
@@ -142,6 +152,7 @@ def create_grep_tool(paths: WorkspacePaths) -> ToolDefinition:
                 if match_count >= limit:
                     limit_reached = True
                     break
+                # 输出匹配行及上下文行；: 表示命中行，- 表示上下文行
                 start = max(0, index - context_lines)
                 end = min(len(lines), index + context_lines + 1)
                 for line_index in range(start, end):

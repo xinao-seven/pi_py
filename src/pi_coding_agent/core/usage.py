@@ -1,4 +1,7 @@
-"""Session-wide token, cost, and message statistics."""
+"""Session-wide token, cost, and message statistics.
+
+中文说明：会话级统计：消息数量、token 用量与成本，按 provider/model 分组明细。
+"""
 
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ def get_session_stats(
     session_file: Path | None,
     context_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """汇总整个 Session 的消息/工具调用/token/成本统计。"""
     counts = {"userMessages": 0, "assistantMessages": 0, "toolCalls": 0, "toolResults": 0, "totalMessages": 0}
     totals = _empty_totals()
     for entry in entries:
@@ -53,6 +57,7 @@ def get_session_stats(
 
 
 def get_usage_cost_breakdown(entries: list[SessionEntry]) -> list[dict[str, Any]]:
+    """按 provider/model 分组统计 token 与成本（摘要类归入 Tools/summaries）。"""
     grouped: dict[str, dict[str, float]] = defaultdict(_empty_totals)
     for entry in entries:
         usage: Any = None
@@ -82,10 +87,12 @@ def get_usage_cost_breakdown(entries: list[SessionEntry]) -> list[dict[str, Any]
 
 
 def _empty_totals() -> dict[str, float]:
+    """创建全 0 的统计累计器。"""
     return {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "cost": 0}
 
 
 def _add_usage(totals: dict[str, float], usage: Any) -> None:
+    """把一条 usage 字典累加到统计器（含成本字段）。"""
     if not isinstance(usage, dict):
         return
     for key in ("input", "output", "cacheRead", "cacheWrite"):

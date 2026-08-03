@@ -1,4 +1,8 @@
-"""Concrete tools for a coding assistant."""
+"""Concrete tools for a coding assistant.
+
+中文说明：编程助手的具象工具集合：read/write/edit/ls、bash、grep/find。
+create_builtin_tools 一次性组装全部内置工具。
+"""
 
 from pathlib import Path
 
@@ -16,6 +20,7 @@ from pi_coding_agent.tools.search_tools import create_find_tool, create_grep_too
 
 
 def create_builtin_tools(workspace: str | Path) -> list[AgentTool]:
+    """创建全部内置工具（基于同一个工作区路径边界）。"""
     paths = WorkspacePaths(workspace)
     return [
         create_read_tool(paths),
@@ -29,4 +34,3 @@ def create_builtin_tools(workspace: str | Path) -> list[AgentTool]:
 
 
 __all__ = ["create_builtin_tools", "create_file_tools"]
-

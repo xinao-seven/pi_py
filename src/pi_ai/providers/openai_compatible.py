@@ -1,4 +1,9 @@
-"""OpenAI Chat Completions compatible streaming adapter."""
+"""OpenAI Chat Completions compatible streaming adapter.
+
+中文说明：OpenAI Chat Completions 兼容流式适配器，同时也服务
+一切使用该协议的服务（如各类中转/兼容端点）。负责统一消息 <-> OpenAI 格式转换，
+并把 SSE 流事件归一化为 ProviderEvent。
+"""
 
 from __future__ import annotations
 
@@ -9,10 +14,12 @@ from typing import Any
 from pi_ai.providers.base import ProviderEvent
 from pi_ai.providers.transport import HttpxSSETransport, SSETransport
 
+# OpenAI finish_reason -> 统一 stopReason 的映射
 _STOP_REASONS = {"stop": "stop", "length": "length", "tool_calls": "toolUse"}
 
 
 class OpenAICompatibleProvider:
+    """OpenAI Chat Completions 兼容适配器：消息/工具/思考档位的请求组装与流事件归一化。"""
     name = "openai-compatible"
 
     def __init__(
@@ -39,6 +46,8 @@ class OpenAICompatibleProvider:
         thinking_level: str,
         system_prompt: str,
     ) -> dict[str, Any]:
+        """组装请求体：system 提示并入 messages、工具转 function 声明、
+        stream_options 请求 usage；thinking_level 映射为 reasoning_effort。"""
         body: dict[str, Any] = {
             "model": model,
             "messages": _convert_messages(messages, system_prompt),
@@ -72,6 +81,10 @@ class OpenAICompatibleProvider:
         thinking_level: str,
         system_prompt: str,
     ):
+        """主流程：逐包消费 SSE。usage 随时更新；choices[0].delta 里
+        分别提取文本增量、推理增量（reasoning_content 等）与工具调用增量；
+        finish_reason 映射为停止原因；流结束而没有 finish_reason 视为错误。
+        """
         body = self.build_request(
             model=model,
             messages=messages,
@@ -106,6 +119,7 @@ class OpenAICompatibleProvider:
                 content = delta.get("content")
                 if isinstance(content, str) and content:
                     yield ProviderEvent(type="text_delta", text=content)
+                # 兼容各家厂商对推理字段的不同命名：只要命中一个就转发
                 for field in ("reasoning_content", "reasoning", "reasoning_text"):
                     reasoning = delta.get(field)
                     if isinstance(reasoning, str) and reasoning:
@@ -115,6 +129,7 @@ class OpenAICompatibleProvider:
                     index = int(tool_call.get("index", 0))
                     function = tool_call.get("function") or {}
                     if index not in tool_ids:
+                        # 同一 index 第一次出现：发出 tool_call_start，之后只发参数增量
                         call_id = str(tool_call.get("id", f"tool-{index}"))
                         tool_ids[index] = call_id
                         yield ProviderEvent(
@@ -143,6 +158,8 @@ class OpenAICompatibleProvider:
 
 
 def _convert_messages(messages: list[dict[str, Any]], system_prompt: str) -> list[dict[str, Any]]:
+    """统一消息 -> OpenAI 格式：system 前置，assistant 带 tool_calls，
+    toolResult 转为 role=tool 的消息，图片以 data URL 形式追加为 user 消息。"""
     converted: list[dict[str, Any]] = []
     if system_prompt:
         converted.append({"role": "system", "content": system_prompt})
@@ -185,6 +202,7 @@ def _convert_messages(messages: list[dict[str, Any]], system_prompt: str) -> lis
 
 
 def _openai_content(content: Any) -> list[dict[str, Any]]:
+    """统一 content block -> OpenAI content block（文本与 data URL 图片）。"""
     result: list[dict[str, Any]] = []
     for block in content if isinstance(content, list) else []:
         if block.get("type") == "text":
@@ -200,10 +218,12 @@ def _openai_content(content: Any) -> list[dict[str, Any]]:
 
 
 def _empty_usage() -> dict[str, int]:
+    """创建全 0 的 usage 累计器。"""
     return {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}
 
 
 def _update_openai_usage(usage: dict[str, int], raw: Any) -> None:
+    """把 OpenAI 的 usage 字段（prompt_tokens 等）归一到统一 usage 字典。"""
     if not isinstance(raw, dict):
         return
     usage["input"] = int(raw.get("prompt_tokens", usage["input"]))
@@ -218,6 +238,7 @@ def _update_openai_usage(usage: dict[str, int], raw: Any) -> None:
 
 
 def _done(stop_reason: str, usage: dict[str, int], error: str | None = None) -> ProviderEvent:
+    """构造统一 done 事件：携带停止原因、usage 快照，出错时附 error 信息。"""
     event = ProviderEvent(type="done", stop_reason=stop_reason, usage=dict(usage))
     if error:
         event["error"] = error

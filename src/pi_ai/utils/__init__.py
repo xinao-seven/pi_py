@@ -1,4 +1,7 @@
-"""Reusable provider-independent AI utilities."""
+"""Reusable provider-independent AI utilities.
+
+中文说明：与具体模型厂商无关的通用工具：上下文 token 估算与临时错误重试策略。
+"""
 
 from pi_ai.utils.estimate import (
     ContextUsageEstimate,

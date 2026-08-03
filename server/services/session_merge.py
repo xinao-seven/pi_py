@@ -1,4 +1,8 @@
-"""Create bounded context summaries when merging independent Sessions."""
+"""Create bounded context summaries when merging independent Sessions.
+
+中文说明：会话合并：把来源会话中目标会话没有的独有记录，
+生成有界的可读摘要，作为 custom_message 追加到目标会话。
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ MERGE_CUSTOM_TYPE = "session_merge_summary"
 
 @dataclass(frozen=True, slots=True)
 class MergeSummary:
+    """合并摘要：文本内容、来源独有记录数与展开条目数。"""
     content: str
     source_unique_entry_count: int
     summarized_item_count: int
@@ -26,6 +31,8 @@ def create_session_merge_summary(
     source: SessionManager,
     target: SessionManager,
 ) -> MergeSummary | None:
+    """计算合并摘要：目标会话没有的记录视为独有，逐条转成摘要行；
+    无独有内容返回 None。"""
     source_entries = source.get_entries()
     target_ids = {
         entry["id"]
@@ -37,6 +44,7 @@ def create_session_merge_summary(
         for entry in source_entries
         if isinstance(entry.get("id"), str) and entry["id"] not in target_ids
     ]
+    # 独有记录转成可读描述，最多展开 MAX_MERGE_ITEMS 条
     items = [
         description
         for entry in unique
@@ -70,6 +78,7 @@ def append_merge_summary(
     source_session_id: str,
     summary: MergeSummary,
 ) -> str:
+    """把合并摘要以 custom_message 追加到目标会话并返回 entryId。"""
     return target.append_custom_message(
         MERGE_CUSTOM_TYPE,
         summary.content,
@@ -83,6 +92,7 @@ def append_merge_summary(
 
 
 def _describe_entry(entry: dict[str, Any]) -> str | None:
+    """把一条记录转成一行摘要；toolResult 不单独描述。"""
     entry_type = entry.get("type")
     if entry_type == "message" and isinstance(entry.get("message"), dict):
         message = entry["message"]
@@ -139,6 +149,7 @@ def _content_text(content: Any) -> str:
 
 
 def _truncate(text: str, limit: int, *, normalize: bool = True) -> str:
+    """按字符数截断（可选压缩空白）。"""
     value = re.sub(r"\s+", " ", text).strip() if normalize else text.strip()
     if len(value) <= limit:
         return value

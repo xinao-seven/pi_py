@@ -1,3 +1,4 @@
+<!-- 输入区：文本 + 最多 4 张图片（选择/粘贴/拖放），运行中可插入指令/排队跟进/停止。 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from "vue";
 
@@ -25,10 +26,12 @@ const images = ref<AttachedImage[]>([]);
 const imageError = ref<string | null>(null);
 const dragging = ref(false);
 const canSend = computed(
+  // 有文本或图片且未禁用时才允许发送
   () => (message.value.trim().length > 0 || images.value.length > 0) && !props.disabled,
 );
 
 function submit(mode: "send" | "steer" | "followUp" = props.running ? "followUp" : "send"): void {
+  // 提交：运行中默认排队跟进；steer 立即插入；发送后清空输入与图片
   if (!canSend.value) return;
   const value = message.value.trim();
   const attached = images.value.length ? [...images.value] : undefined;
@@ -46,6 +49,7 @@ function submit(mode: "send" | "steer" | "followUp" = props.running ? "followUp"
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Enter 发送、Shift+Enter 换行（组合输入法期间不触发）
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     submit();
@@ -61,6 +65,7 @@ function resize(): void {
 }
 
 async function addFiles(files: File[]): Promise<void> {
+  // 添加图片：过滤类型、限制数量与单张 5 MB，转 base64 并生成预览
   imageError.value = null;
   const available = MAX_IMAGES - images.value.length;
   const selected = files.filter((file) => file.type.startsWith("image/")).slice(0, available);

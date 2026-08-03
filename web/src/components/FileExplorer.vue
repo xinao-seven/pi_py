@@ -1,3 +1,4 @@
+<!-- 文件树（根目录层）：懒加载根目录列表，点击目录递归展开。 -->
 <script setup lang="ts">
 import { ref, watch } from "vue";
 
@@ -16,6 +17,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 
 async function loadRoot(): Promise<void> {
+  // 加载工作区根目录
   if (!props.root) return;
   loading.value = true;
   error.value = null;

@@ -1,4 +1,8 @@
-"""Coding-agent system prompt composition."""
+"""Coding-agent system prompt composition.
+
+中文说明：组装编程助手的系统提示：基础提示 + 可用工具列表 +
+项目指令 + 技能清单 + 追加提示 + 当前工作目录。
+"""
 
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ def build_system_prompt(
     custom_prompt: str | None = None,
     append_prompt: str | None = None,
 ) -> str:
+    """组装完整系统提示文本（各段按固定顺序拼接）。"""
     prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else DEFAULT_SYSTEM_PROMPT
     tool_names = tuple(selected_tools)
     if tool_names:

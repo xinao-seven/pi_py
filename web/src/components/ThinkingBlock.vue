@@ -1,3 +1,4 @@
+<!-- 思考过程折叠块：流式时默认展开并显示 LIVE 标记。 -->
 <script setup lang="ts">
 defineProps<{ content: string; streaming?: boolean }>();
 </script>

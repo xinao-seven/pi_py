@@ -1,3 +1,4 @@
+<!-- 会话侧栏：品牌区、新建会话、会话列表（按 Fork 层级缩进）与底部配置入口。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 
@@ -20,6 +21,7 @@ interface SessionListItem {
 }
 
 const visibleSessions = computed<SessionListItem[]>(() => {
+  // 把扁平会话列表按 parentSessionId 组织成树，深度用于缩进显示
   const byId = new Map(props.sessions.map((session) => [session.id, session]));
   const children = new Map<string, SessionInfo[]>();
   for (const session of props.sessions) {
@@ -53,10 +55,12 @@ const emit = defineEmits<{
 }>();
 
 function sessionTitle(session: SessionInfo): string {
+  // 会话标题：优先自定义名称，其次首条消息，最后兜底文案
   return session.name?.trim() || session.firstMessage?.trim() || "未命名会话";
 }
 
 function relativeDate(value: string): string {
+  // 时间显示：今天显示时刻，否则显示月/日
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const today = new Date();

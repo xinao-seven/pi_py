@@ -1,4 +1,9 @@
-"""General-purpose Agent loop, state, events, and executable tool types."""
+"""General-purpose Agent loop, state, events, and executable tool types.
+
+中文说明：pi_agent 层（中层）的统一入口：通用 Agent 主循环、状态、事件
+与可执行工具抽象。本层只依赖 pi_ai，不包含具体文件/命令工具，
+也不决定 Session 如何持久化。
+"""
 
 from pi_agent.agent import Agent
 from pi_agent.agent_loop import AgentRuntime

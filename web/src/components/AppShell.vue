@@ -1,3 +1,4 @@
+<!-- 应用外壳：三栏布局（侧栏 / 主区 / 文件面板），窄屏时侧栏以遮罩方式打开。 -->
 <script setup lang="ts">
 defineProps<{
   sidebarOpen: boolean;

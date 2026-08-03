@@ -1,3 +1,4 @@
+<!-- 分支导航条：选择会话树节点定位/Fork，或从其他会话合并有界摘要。 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
@@ -28,6 +29,7 @@ const selectedEntryId = ref(props.leafId ?? "");
 const mergeSourceId = ref("");
 
 const options = computed(() => flattenTree(props.tree));
+// 拍平的树选项（带深度缩进）
 const selectedOption = computed(() =>
   options.value.find((option) => option.id === selectedEntryId.value),
 );
@@ -61,6 +63,7 @@ function merge(): void {
 }
 
 function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
+  // 递归把会话树拍平成下拉选项；assistant 消息节点才允许 Fork
   return nodes.flatMap((node) => {
     const message = node.entry.message;
     const option: TreeOption = {
@@ -74,6 +77,7 @@ function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
 }
 
 function describeEntry(type: string, message?: AgentMessage): string {
+  // 节点标签：消息显示“你/pi: 摘要”，其他类型显示类型名
   if (type !== "message" || !message) return type.replaceAll("_", " ");
   const text = messageText(message).replace(/\s+/g, " ").trim();
   const prefix = message.role === "user" ? "你" : message.role === "assistant" ? "pi" : message.role;

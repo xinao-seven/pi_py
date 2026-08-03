@@ -1,4 +1,8 @@
-"""Safe local workspace alternatives to a native folder picker."""
+"""Safe local workspace alternatives to a native folder picker.
+
+中文说明：工作区 API：获取主目录、列出已登记工作区、创建默认工作区，
+以及安全地登记用户输入的工作区路径（替代原生文件夹选择器）。
+"""
 
 from __future__ import annotations
 
@@ -21,11 +25,13 @@ def get_workspace_service(request: Request) -> WorkspaceService:
 
 @router.get("/api/home")
 async def get_home(service: WorkspaceService = Depends(get_workspace_service)) -> dict[str, str]:
+    """返回受控工作区父目录。"""
     return {"home": str(service.workspace_parent)}
 
 
 @router.get("/api/workspaces")
 async def list_workspaces(service: WorkspaceService = Depends(get_workspace_service)) -> dict:
+    """列出当前允许的所有工作区根目录。"""
     return {"workspaces": [str(root) for root in service.roots()]}
 
 
@@ -33,6 +39,7 @@ async def list_workspaces(service: WorkspaceService = Depends(get_workspace_serv
 async def create_default_workspace(
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> dict[str, str]:
+    """在受控父目录下创建默认工作区（pi-cwd-日期）。"""
     try:
         return {"cwd": str(service.create_default())}
     except OSError as exception:
@@ -44,6 +51,7 @@ async def select_workspace(
     body: SelectWorkspaceRequest,
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> dict[str, str]:
+    """登记一个已有目录为工作区；必须位于父目录或已登记工作区之下。"""
     try:
         return {"cwd": str(service.select(body.cwd))}
     except ValueError as exception:

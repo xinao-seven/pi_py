@@ -1,3 +1,4 @@
+<!-- 聊天主窗口：消息流、Agent 控制条、输入框，以及分支导航/合并等会话操作。 -->
 <script setup lang="ts">
 import { computed, nextTick, ref, toRef, watch } from "vue";
 
@@ -65,19 +66,23 @@ const {
 });
 
 const visibleMessages = computed(() =>
+  // 只展示 user/assistant 消息；toolResult 按 toolCallId 供工具块查询
   messages.value
     .map((message, index) => ({ message, entryId: entryIds.value[index] ?? String(index) }))
     .filter(({ message }) => message.role === "user" || message.role === "assistant"),
 );
 const empty = computed(
+  // 是否为空会话（无消息且不在运行）
   () => visibleMessages.value.length === 0 && !stream.streamingMessage && !stream.running,
 );
 const title = computed(() => {
+  // 窗口标题：新会话 / 会话名称 / 首条消息 / 兜底
   if (isNew.value) return "新会话";
   return detail.value?.info.name || detail.value?.info.firstMessage || "pi 会话";
 });
 const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? "");
 const toolResults = computed(() =>
+  // toolCallId -> toolResult 消息 的映射，供工具调用块展示结果
   Object.fromEntries(
     messages.value
       .filter((message) => message.role === "toolResult" && message.toolCallId)
@@ -86,6 +91,7 @@ const toolResults = computed(() =>
 );
 
 async function navigateBranch(entryId: string): Promise<void> {
+  // 切换会话树分支
   branchBusy.value = true;
   branchError.value = null;
   try {
@@ -98,6 +104,7 @@ async function navigateBranch(entryId: string): Promise<void> {
 }
 
 async function forkBranch(entryId: string): Promise<void> {
+  // 从指定节点 Fork 出独立会话
   if (!props.sessionId) return;
   branchBusy.value = true;
   branchError.value = null;
@@ -112,6 +119,7 @@ async function forkBranch(entryId: string): Promise<void> {
 }
 
 async function mergeFrom(sourceSessionId: string): Promise<void> {
+  // 把来源会话合并进当前会话并刷新
   if (!props.sessionId) return;
   branchBusy.value = true;
   branchError.value = null;

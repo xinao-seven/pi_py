@@ -1,4 +1,8 @@
-"""Coding-agent session, resources, and application services."""
+"""Coding-agent session, resources, and application services.
+
+中文说明：编程助手核心服务：Session v3 数据层、上下文压缩（compaction）、
+分支摘要、Skills/Prompt 模板/项目指令加载、系统提示组装与用量统计。
+"""
 
 from pi_coding_agent.core.branch_summary import (
     BranchPreparation,

@@ -1,4 +1,8 @@
-"""Markdown prompt templates and slash-command expansion."""
+"""Markdown prompt templates and slash-command expansion.
+
+中文说明：Markdown 提示模板与斜杠命令展开：从 .pi/prompts 等目录加载
+带 frontmatter 的模板，把 /模板名 参数 命令展开为模板内容。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from pi_coding_agent.core.frontmatter import parse_frontmatter
 
 @dataclass(frozen=True, slots=True)
 class PromptTemplate:
+    """一个提示模板：名称、描述、正文、来源与参数提示。"""
     name: str
     description: str
     content: str
@@ -27,6 +32,7 @@ def load_prompt_templates(
     agent_dir: str | Path | None = None,
     additional_paths: Iterable[str | Path] = (),
 ) -> tuple[PromptTemplate, ...]:
+    """从用户级/项目级 prompts 目录加载模板（按名称去重）。"""
     root = Path(cwd).resolve()
     sources: list[tuple[Path, str]] = []
     if agent_dir is not None:
@@ -48,6 +54,7 @@ def load_prompt_templates(
 
 
 def expand_prompt_template(text: str, templates: Iterable[PromptTemplate]) -> str:
+    """展开 /模板名 参数 命令；未知模板原样返回。"""
     match = re.fullmatch(r"/([^\s]+)(?:\s+([\s\S]*))?", text)
     if match is None:
         return text
@@ -62,6 +69,8 @@ def expand_prompt_template(text: str, templates: Iterable[PromptTemplate]) -> st
 
 
 def substitute_arguments(content: str, arguments: list[str]) -> str:
+    """按模板里的占位符替换参数：
+    ${1:-默认} 位置参数带默认值、${@:start[:len]} 切片、$ARGUMENTS/$@ 全部参数。"""
     all_arguments = " ".join(arguments)
     pattern = re.compile(
         r"\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)"

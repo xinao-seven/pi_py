@@ -3,6 +3,10 @@
 The data layer deliberately uses plain dictionaries. Session files are a public
 compatibility boundary and may contain extension-defined fields that must survive
 a read/write cycle even when this implementation does not understand them.
+
+中文说明：Session v3 JSONL 数据层。Session 文件是与 pi 兼容的公开边界，
+因此刻意使用普通字典读写并保留未知扩展字段。本模块负责解析、迁移、
+树/分支遍历、compaction-aware 上下文构建与 append-only 持久化。
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from typing import Any, Final, Iterable, Mapping, TypeAlias
 from uuid import uuid4
 
 CURRENT_SESSION_VERSION: Final = 3
+# Session id 必须满足的文件名安全模式（字母数字开头结尾，可含 - _ .）
 SESSION_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 
 JsonObject: TypeAlias = dict[str, Any]
@@ -28,7 +33,11 @@ _LATEST_LEAF = object()
 
 @dataclass(frozen=True, slots=True)
 class SessionInfo:
-    """Metadata used by session selectors and the Web sidebar."""
+    """Metadata used by session selectors and the Web sidebar.
+
+    中文说明：会话选择器与 Web 侧栏使用的会话元数据（路径、id、cwd、
+    创建/修改时间、消息数、首条消息与全文摘要文本）。
+    """
 
     path: Path
     id: str
@@ -86,7 +95,10 @@ def assert_valid_session_id(session_id: str) -> None:
 
 
 def parse_session_entries(content: str) -> list[FileEntry]:
-    """Parse JSONL, skipping blank, malformed, and non-object lines."""
+    """Parse JSONL, skipping blank, malformed, and non-object lines.
+
+    中文说明：解析 JSONL：跳过空行、坏行与非对象行，逐行还原为字典。
+    """
 
     entries: list[FileEntry] = []
     for line in content.splitlines():
@@ -102,7 +114,11 @@ def parse_session_entries(content: str) -> list[FileEntry]:
 
 
 def migrate_session_entries(entries: list[FileEntry]) -> bool:
-    """Migrate entries in place to Session v3 and report whether they changed."""
+    """Migrate entries in place to Session v3 and report whether they changed.
+
+    中文说明：原地迁移到 Session v3。v1->v2 为每条记录补 id/parentId 链；
+    v2->v3 把 hookMessage 角色改名为 custom。返回是否发生了修改。
+    """
 
     header = next((entry for entry in entries if entry.get("type") == "session"), None)
     version = header.get("version", 1) if header else 1
@@ -112,6 +128,7 @@ def migrate_session_entries(entries: list[FileEntry]) -> bool:
         return False
 
     if version < 2:
+        # v1 -> v2：为每条非 session 记录生成 id，并按顺序串成 parentId 链
         existing_ids: set[str] = set()
         previous_id: str | None = None
         for entry in entries:
@@ -132,6 +149,7 @@ def migrate_session_entries(entries: list[FileEntry]) -> bool:
                 entry.pop("firstKeptEntryIndex", None)
 
     if version < 3:
+        # v2 -> v3：hookMessage 角色统一改名为 custom
         for entry in entries:
             if entry.get("type") == "session":
                 entry["version"] = 3
@@ -161,6 +179,9 @@ def build_session_path(
     Omitting ``leaf_id`` selects the last entry, while explicitly passing None
     represents the empty root before the first entry. This avoids JavaScript's
     undefined/null ambiguity while preserving the behavior needed by navigation.
+
+    中文说明：返回从根到指定叶节点的路径。省略 leaf_id 取最后一条记录；
+    显式传 None 表示首条记录之前的空根。
     """
 
     if leaf_id is None:
@@ -218,9 +239,14 @@ def build_context_entries(
     *,
     by_id: Mapping[str, SessionEntry] | None = None,
 ) -> list[SessionEntry]:
-    """Build the active branch with the latest compaction applied."""
+    """Build the active branch with the latest compaction applied.
+
+    中文说明：构建应用了最近一次 compaction 的活动分支：
+    用压缩摘要替换被裁剪的历史，只保留 firstKeptEntryId 之后的旧消息。
+    """
 
     path = build_session_path(entries, leaf_id, by_id=by_id)
+    # 从路径尾部向前找最近一次 compaction
     compaction = next(
         (entry for entry in reversed(path) if entry.get("type") == "compaction"),
         None,
@@ -241,7 +267,11 @@ def build_context_entries(
 
 
 def session_entry_to_context_messages(entry: SessionEntry) -> list[JsonObject]:
-    """Project one persisted entry into runtime messages."""
+    """Project one persisted entry into runtime messages.
+
+    中文说明：把一条持久化记录投影成运行时消息：message/custom_message/
+    branch_summary/compaction 分别映射为对应的运行时消息角色。
+    """
 
     entry_type = entry.get("type")
     timestamp = _timestamp_ms(entry.get("timestamp"))
@@ -282,7 +312,11 @@ def build_session_context(
     *,
     by_id: Mapping[str, SessionEntry] | None = None,
 ) -> JsonObject:
-    """Build messages and settings for one active session branch."""
+    """Build messages and settings for one active session branch.
+
+    中文说明：构建单个活动分支的运行时上下文：消息列表 + 沿途最近的
+    思考档位与模型设置（模型切换/思考切换会覆盖此前设置）。
+    """
 
     path = build_session_path(entries, leaf_id, by_id=by_id)
     thinking_level, model = _context_settings(path)
@@ -300,7 +334,11 @@ def build_session_context_with_entry_ids(
     *,
     by_id: Mapping[str, SessionEntry] | None = None,
 ) -> JsonObject:
-    """Build Web-facing context with an entry ID parallel to every message."""
+    """Build Web-facing context with an entry ID parallel to every message.
+
+    中文说明：Web 端使用的上下文：每条消息附带对应的 entryId，
+    用于 SSE 断线重连时按 id 去重。
+    """
 
     context = build_session_context(entries, leaf_id, by_id=by_id)
     entry_ids: list[str] = []
@@ -326,7 +364,10 @@ def _extract_text_content(message: Mapping[str, Any]) -> str:
 
 
 def build_session_info(path: str | Path) -> SessionInfo | None:
-    """Read sidebar metadata without constructing a live SessionManager."""
+    """Read sidebar metadata without constructing a live SessionManager.
+
+    中文说明：只读侧栏元数据，不创建活动 SessionManager；无效文件返回 None。
+    """
 
     file_path = Path(path).resolve()
     try:
@@ -387,7 +428,10 @@ def build_session_info(path: str | Path) -> SessionInfo | None:
 
 
 def find_most_recent_session(session_dir: str | Path, *, cwd: str | Path | None = None) -> Path | None:
-    """Return the newest valid JSONL session, optionally restricted by cwd."""
+    """Return the newest valid JSONL session, optionally restricted by cwd.
+
+    中文说明：返回目录中最新的有效 JSONL 会话文件，可限定 cwd。
+    """
 
     directory = Path(session_dir).resolve()
     expected_cwd = Path(cwd).resolve() if cwd is not None else None
@@ -410,7 +454,11 @@ def find_most_recent_session(session_dir: str | Path, *, cwd: str | Path | None 
 
 
 class SessionManager:
-    """Append-only manager for one pi-compatible Session v3 file."""
+    """Append-only manager for one pi-compatible Session v3 file.
+
+    中文说明：单个 Session v3 文件的追加式管理器：新建/打开/持久化/分支/树遍历。
+    记录只能追加，通过 parentId 形成树；活动叶节点决定当前上下文。
+    """
 
     def __init__(
         self,
@@ -423,6 +471,7 @@ class SessionManager:
         parent_session: str | None = None,
         file_entries: list[FileEntry] | None = None,
     ) -> None:
+        # 新建会话：生成 header；持久化模式下会话文件放在 session_dir 下
         self._cwd = cwd.resolve()
         self._session_dir = session_dir.resolve() if session_dir else None
         self._session_file = session_file.resolve() if session_file else None
@@ -450,6 +499,7 @@ class SessionManager:
                 safe_time = timestamp.replace(":", "-").replace(".", "-")
                 self._session_file = self._session_dir / f"{safe_time}_{self._session_id}.jsonl"
         else:
+            # 打开已有会话：直接用文件内容，id 来自 header
             self._file_entries = file_entries
             header = next((entry for entry in file_entries if entry.get("type") == "session"), None)
             if header is None or not isinstance(header.get("id"), str):
@@ -462,6 +512,7 @@ class SessionManager:
 
     @classmethod
     def in_memory(cls, cwd: str | Path = ".", *, session_id: str | None = None) -> SessionManager:
+        """创建不落盘的内存会话（测试或临时使用）。"""
         return cls(
             cwd=Path(cwd),
             session_dir=None,
@@ -479,6 +530,7 @@ class SessionManager:
         session_id: str | None = None,
         parent_session: str | None = None,
     ) -> SessionManager:
+        """在指定目录新建一个持久化会话。"""
         return cls(
             cwd=Path(cwd),
             session_dir=Path(session_dir),
@@ -490,6 +542,7 @@ class SessionManager:
 
     @classmethod
     def open(cls, path: str | Path, *, cwd_override: str | Path | None = None) -> SessionManager:
+        """打开已有会话文件；不存在时新建；旧版本自动迁移并重写文件。"""
         session_file = Path(path).resolve()
         if not session_file.exists():
             return cls(
@@ -529,6 +582,7 @@ class SessionManager:
         return manager
 
     def _rebuild_index(self) -> None:
+        # 重建 id -> entry 索引、当前叶节点与标签表（标签以最新一条为准）
         entries = self.get_entries()
         self._by_id = _entry_index(entries)
         self._leaf_id = entries[-1].get("id") if entries and isinstance(entries[-1].get("id"), str) else None
@@ -544,6 +598,7 @@ class SessionManager:
                 self._labels.pop(target_id, None)
 
     def _rewrite_file(self) -> None:
+        """把全部记录整体写回文件（用于首次落盘与迁移后的重写）。"""
         if not self._persist or self._session_file is None:
             return
         self._session_file.parent.mkdir(parents=True, exist_ok=True)
@@ -551,6 +606,7 @@ class SessionManager:
         self._session_file.write_text(text, encoding="utf-8", newline="\n")
 
     def _persist_entry(self, entry: SessionEntry) -> None:
+        """追加单条记录：尚无 assistant 消息前不落盘（避免只含 header 的空文件）。"""
         if not self._persist or self._session_file is None:
             return
         has_assistant = any(
@@ -571,6 +627,7 @@ class SessionManager:
                 handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
 
     def _append(self, entry_type: str, **fields: Any) -> str:
+        """通用追加：生成新 id、链接到当前叶节点、更新索引并持久化。"""
         entry_id = _new_entry_id(self._by_id)
         entry: SessionEntry = {
             "type": entry_type,
@@ -612,15 +669,18 @@ class SessionManager:
         return deepcopy(entry) if entry else None
 
     def append_message(self, message: Mapping[str, Any]) -> str:
+        """追加一条对话消息（compaction/branch 摘要必须用专用方法）。"""
         role = message.get("role")
         if role in {"compactionSummary", "branchSummary"}:
             raise ValueError(f"{role} must use its dedicated append method")
         return self._append("message", message=deepcopy(dict(message)))
 
     def append_thinking_level_change(self, thinking_level: str) -> str:
+        """记录一次思考档位切换。"""
         return self._append("thinking_level_change", thinkingLevel=thinking_level)
 
     def append_model_change(self, provider: str, model_id: str) -> str:
+        """记录一次模型切换。"""
         return self._append("model_change", provider=provider, modelId=model_id)
 
     def append_compaction(
@@ -633,6 +693,7 @@ class SessionManager:
         from_hook: bool | None = None,
         usage: Mapping[str, Any] | None = None,
     ) -> str:
+        """追加一条压缩摘要记录。"""
         fields: JsonObject = {
             "summary": summary,
             "firstKeptEntryId": first_kept_entry_id,
@@ -647,6 +708,7 @@ class SessionManager:
         return self._append("compaction", **fields)
 
     def append_custom_entry(self, custom_type: str, data: object | None = None) -> str:
+        """追加一条自定义结构化记录。"""
         fields: JsonObject = {"customType": custom_type}
         if data is not None:
             fields["data"] = deepcopy(data)
@@ -660,6 +722,7 @@ class SessionManager:
         display: bool,
         details: object | None = None,
     ) -> str:
+        """追加一条自定义消息（如会话合并摘要）。"""
         fields: JsonObject = {
             "customType": custom_type,
             "content": deepcopy(content),
@@ -670,10 +733,12 @@ class SessionManager:
         return self._append("custom_message", **fields)
 
     def append_session_info(self, name: str) -> str:
+        """追加/更新会话名称（清洗掉换行）。"""
         sanitized = re.sub(r"[\r\n]+", " ", name).strip()
         return self._append("session_info", name=sanitized)
 
     def append_label_change(self, target_id: str, label: str | None) -> str:
+        """给某个节点打标签；label 为 None 时清除标签。"""
         if target_id not in self._by_id:
             raise KeyError(f"Entry {target_id} not found")
         entry_id = self._append("label", targetId=target_id, label=label)
@@ -692,11 +757,13 @@ class SessionManager:
         return None
 
     def branch(self, entry_id: str) -> None:
+        """把叶节点切换到既有记录（形成分支导航）。"""
         if entry_id not in self._by_id:
             raise KeyError(f"Entry {entry_id} not found")
         self._leaf_id = entry_id
 
     def reset_leaf(self) -> None:
+        """把叶节点重置为空根（导航到首条记录之前）。"""
         self._leaf_id = None
 
     def branch_with_summary(
@@ -708,6 +775,7 @@ class SessionManager:
         from_hook: bool | None = None,
         usage: Mapping[str, Any] | None = None,
     ) -> str:
+        """在指定位置追加分支摘要并作为新叶节点。"""
         if from_id is not None and from_id not in self._by_id:
             raise KeyError(f"Entry {from_id} not found")
         self._leaf_id = from_id
@@ -737,6 +805,7 @@ class SessionManager:
         return build_session_context_with_entry_ids(self.get_entries(), self._leaf_id, by_id=self._by_id)
 
     def get_tree(self) -> list[JsonObject]:
+        """构建会话树：按 parentId 组织节点，带标签信息，供 Web 分支导航。"""
         nodes = {
             entry_id: {
                 "entry": deepcopy(entry),
@@ -761,7 +830,11 @@ class SessionManager:
         return roots
 
     def create_branched_session(self, leaf_id: str) -> Path | None:
-        """Replace this manager with a new session containing one selected path."""
+        """Replace this manager with a new session containing one selected path.
+
+        中文说明：以指定叶节点为终点，把这条路径复制成一个新会话文件，
+        当前 manager 原地切换为新会话。
+        """
 
         if leaf_id not in self._by_id:
             raise KeyError(f"Entry {leaf_id} not found")
@@ -838,7 +911,11 @@ class SessionManager:
         *,
         session_id: str | None = None,
     ) -> SessionManager:
-        """Copy a complete source session into a new target project session."""
+        """Copy a complete source session into a new target project session.
+
+        中文说明：把完整源会话复制为指定 cwd 下的新项目会话（跨项目 fork），
+        保留全部历史记录并写入 parentSession 引用。
+        """
 
         source = Path(source_path).resolve()
         try:
@@ -879,6 +956,7 @@ class SessionManager:
 
     @staticmethod
     def list(session_dir: str | Path, *, cwd: str | Path | None = None) -> list[SessionInfo]:
+        """列出目录内的会话元数据，按修改时间倒序。"""
         directory = Path(session_dir).resolve()
         expected_cwd = Path(cwd).resolve() if cwd is not None else None
         if not directory.is_dir():
@@ -896,7 +974,10 @@ class SessionManager:
 
     @staticmethod
     def list_all(sessions_root: str | Path, *, direct: bool = False) -> list[SessionInfo]:
-        """List sessions from one custom dir or all immediate project dirs."""
+        """List sessions from one custom dir or all immediate project dirs.
+
+        中文说明：从一个自定义目录或所有一级项目子目录汇总会话列表。
+        """
 
         root = Path(sessions_root).resolve()
         if not root.is_dir():

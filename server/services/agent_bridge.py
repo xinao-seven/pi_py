@@ -1,4 +1,8 @@
-"""Translate HTTP commands and Agent events."""
+"""Translate HTTP commands and Agent events.
+
+中文说明：HTTP 与 Agent 之间的桥接：把 REST 命令翻译成 AgentSession 操作，
+把 Agent 事件包装成 SSE 帧（含心跳与 Last-Event-ID 序号）。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from server.services.agent_registry import RegistryEntry
 
 
 def agent_state(entry: RegistryEntry) -> dict[str, Any]:
+    """汇总 Agent 当前状态（运行中标志、压缩/分支摘要/重试状态、模型、工具、用量）。"""
     agent = entry.agent
     return {
         "sessionId": entry.session_id,
@@ -29,10 +34,12 @@ def agent_state(entry: RegistryEntry) -> dict[str, Any]:
 
 
 async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[str, Any]:
+    """按命令类型分发到 Agent 操作；非法命令返回 422。"""
     agent = entry.agent
     command_type = command.get("type")
     entry.touch()
     if command_type == "prompt":
+        # 发起新对话：Agent 空闲时后台运行，立即返回已接受
         content = _message_content(command)
         if agent.is_streaming:
             raise APIError(409, "agent_busy", "The Agent is already running")
@@ -85,6 +92,7 @@ async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[st
         await agent.abort_compaction()
         return {"aborted": True}
     if command_type == "navigate_tree":
+        # 会话树导航：可附带分支摘要与标签
         target_id = _required_text(command, "targetId")
         return await agent.navigate_tree(
             target_id,
@@ -96,6 +104,7 @@ async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[st
         await agent.abort_branch_summary()
         return {"aborted": True}
     if command_type == "append_custom_message":
+        # 追加自定义消息（如系统注入的上下文）并刷新 Agent 上下文
         custom_type = _required_text(command, "customType")
         content = command.get("content")
         if not isinstance(content, (str, list)):
@@ -117,6 +126,7 @@ async def event_stream(
     heartbeat_seconds: float,
     after_event_id: int = 0,
 ) -> AsyncIterator[str]:
+    """把订阅队列转成 SSE 帧：连接确认、id 序号、心跳注释行，断开时退订。"""
     queue, unsubscribe = entry.subscribe(after_event_id=after_event_id)
     connected = {"type": "connected", "sessionId": entry.session_id}
     yield "retry: 1000\n" + _sse_data(connected)

@@ -1,4 +1,8 @@
-"""Cross-platform subprocess tool."""
+"""Cross-platform subprocess tool.
+
+中文说明：bash 工具：在固定工作目录启动子进程执行命令，
+Windows 用 PowerShell、POSIX 用配置的 shell；支持超时/取消与输出截断。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from pi_coding_agent.tools.file_tools import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINE
 
 
 def _truncate_tail(text: str) -> tuple[str, JsonObject | None]:
+    """从尾部截断超长输出，返回保留的尾部与截断信息（供模型继续读取）。"""
     lines = text.split("\n")
     kept: list[str] = []
     kept_bytes = 0
@@ -35,6 +40,8 @@ def _truncate_tail(text: str) -> tuple[str, JsonObject | None]:
 
 
 def create_bash_tool(workspace: str | Path) -> ToolDefinition:
+    """创建 bash 工具：命令在 workspace 内执行，合并 stdout/stderr，
+    超时与取消会杀掉子进程，输出按行数/字节数截断。"""
     cwd = Path(workspace).resolve()
 
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
@@ -47,9 +54,11 @@ def create_bash_tool(workspace: str | Path) -> ToolDefinition:
         ):
             raise ToolError("timeout must be a positive number of seconds")
         if os.name == "nt":
+            # Windows：用无窗口的 PowerShell 执行，避免弹出控制台
             argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
             creationflags = 0x08000000
         else:
+            # POSIX：用配置的 shell（默认 /bin/sh）以 -lc 执行
             argv = [os.environ.get("SHELL", "/bin/sh"), "-lc", command]
             creationflags = 0
         try:
@@ -65,10 +74,12 @@ def create_bash_tool(workspace: str | Path) -> ToolDefinition:
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=float(timeout) if timeout else None)
         except TimeoutError as error:
+            # 超时：杀掉子进程并等待退出，返回用户可见错误
             process.kill()
             await process.communicate()
             raise ToolError(f"Command timed out after {timeout} seconds") from error
         except asyncio.CancelledError:
+            # 任务被取消（abort）：同样先清理子进程再向上传播
             process.kill()
             await process.communicate()
             raise

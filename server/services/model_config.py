@@ -1,4 +1,8 @@
-"""Credential-safe models.json storage and Web model catalog."""
+"""Credential-safe models.json storage and Web model catalog.
+
+中文说明：模型配置服务：读写 models.json（apiKey 只允许 $ENV_VAR 引用），
+解析密钥后构造 Provider，并生成 Web 端模型目录。
+"""
 
 from __future__ import annotations
 
@@ -15,10 +19,12 @@ from server.services.agent_registry import ProviderConfigurationError, ResolvedM
 from server.services.secret_store import SecretConfigError, SecretStore
 
 ENV_REFERENCE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+# 全部思考档位（与前端选项一致）
 THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class ProviderAlias:
+    """名称别名适配：models.json 里的自定义 provider 名映射到内置 Provider。"""
     def __init__(self, name: str, provider: LLMProvider) -> None:
         self.name = name
         self._provider = provider
@@ -31,6 +37,7 @@ class ProviderAlias:
 
 
 class ModelConfigService:
+    """models.json 的读写/校验 + Provider/模型解析 + Web 目录生成。"""
     def __init__(
         self,
         agent_dir: str | Path,
@@ -39,11 +46,13 @@ class ModelConfigService:
     ) -> None:
         self.agent_dir = Path(agent_dir).expanduser().resolve()
         self.path = self.agent_dir / "models.json"
+        # 密钥文件默认与 models.json 同目录（secrets.env）
         self.secret_store = SecretStore(
             secrets_file or self.agent_dir / "secrets.env"
         )
 
     def read(self) -> dict[str, Any]:
+        """读取 models.json；缺失或损坏时返回空配置。"""
         if not self.path.is_file():
             return {"providers": {}}
         try:
@@ -53,6 +62,7 @@ class ModelConfigService:
         return value if isinstance(value, dict) and isinstance(value.get("providers"), dict) else {"providers": {}}
 
     def write(self, value: dict[str, Any]) -> None:
+        """校验后原子写入：先写临时文件再替换，避免写一半损坏配置。"""
         validated = self.validate(value)
         self.agent_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f".models.{uuid4().hex}.tmp")
@@ -64,6 +74,8 @@ class ModelConfigService:
         temporary.replace(self.path)
 
     def validate(self, value: dict[str, Any]) -> dict[str, Any]:
+        """校验配置结构：provider 名称、apiKey 必须是 $ENV_VAR 引用、
+        模型 id/contextWindow/reasoning/thinkingLevels 的合法性。"""
         if not isinstance(value, dict) or not isinstance(value.get("providers", {}), dict):
             raise ValueError("models config must contain a providers object")
         result = deepcopy(value)
@@ -113,6 +125,8 @@ class ModelConfigService:
         return result
 
     def resolve_provider(self, name: str) -> LLMProvider:
+        """按 models.json 配置构造 Provider：api 字段决定内置类型，
+        密钥从环境变量或 secrets.env 解析（绝不在 API 中返回）。"""
         provider_config = self.read().get("providers", {}).get(name)
         if not isinstance(provider_config, dict):
             return _environment_provider(name, self.secret_store)
@@ -141,6 +155,7 @@ class ModelConfigService:
         return provider if provider.name == name else ProviderAlias(name, provider)
 
     def resolve_model(self, provider_name: str, model_id: str) -> ResolvedModel:
+        """解析模型元数据（主要取上下文窗口），供 Agent 上下文管理使用。"""
         provider = self.read().get("providers", {}).get(provider_name)
         if not isinstance(provider, dict):
             return ResolvedModel(provider_name, model_id)
@@ -169,6 +184,7 @@ class ModelConfigService:
         default_provider: str,
         default_model: str,
     ) -> dict[str, Any]:
+        """生成 Web 模型目录：模型列表、默认模型、各模型的思考档位与映射。"""
         config = self.read()
         model_list: list[dict[str, Any]] = []
         thinking_levels: dict[str, list[str]] = {}
@@ -216,6 +232,7 @@ class ModelConfigService:
 
 
 def _default_key_env(provider: str) -> str:
+    """内置 Provider 对应的默认环境变量名。"""
     if provider == "anthropic":
         return "ANTHROPIC_API_KEY"
     if provider == "deepseek":
@@ -224,6 +241,7 @@ def _default_key_env(provider: str) -> str:
 
 
 def _environment_provider(name: str, secret_store: SecretStore) -> LLMProvider:
+    """无 models.json 配置时的回退：按默认环境变量名解析密钥。"""
     built_in = "openai-compatible" if name in {"openai", "openai-compatible"} else name
     env_name = _default_key_env(built_in)
     try:

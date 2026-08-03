@@ -1,4 +1,8 @@
-"""Environment-backed server configuration."""
+"""Environment-backed server configuration.
+
+中文说明：从环境变量读取服务配置（目录、CORS、超时、默认模型等），
+所有 PI_SERVER_* 变量集中在这里解析。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
+    """服务配置集合：agent 目录、会话目录、工作区父目录、CORS、超时与静态前端目录。"""
     agent_dir: Path = field(default_factory=lambda: Path.home() / ".pi" / "agent")
     sessions_dir: Path = field(
         default_factory=lambda: Path.home() / ".pi" / "agent" / "sessions"
@@ -26,6 +31,7 @@ class ServerSettings:
 
     @classmethod
     def from_env(cls) -> ServerSettings:
+        """从环境变量构造配置；未设置的项使用默认值。"""
         agent_dir = Path(
             os.getenv("PI_SERVER_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
         ).expanduser()

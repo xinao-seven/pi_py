@@ -1,4 +1,9 @@
-"""Agent Skills discovery, validation, and prompt formatting."""
+"""Agent Skills discovery, validation, and prompt formatting.
+
+中文说明：Agent Skills 的发现、校验与提示格式化：递归扫描用户级/项目级
+skills 目录，解析 SKILL.md frontmatter，输出给模型的技能清单，
+并支持 /skill:name 命令展开为完整技能内容。
+"""
 
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ class ResourceDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class Skill:
+    """一个已加载的技能：名称、描述、文件位置、来源与是否对模型可见。"""
     name: str
     description: str
     file_path: Path
@@ -31,6 +37,7 @@ class Skill:
     disable_model_invocation: bool = False
 
     def read_body(self) -> str:
+        """读取 SKILL.md 正文（去掉 frontmatter）。"""
         _, body = parse_frontmatter(self.file_path.read_text(encoding="utf-8"))
         return body.strip()
 
@@ -47,6 +54,8 @@ def load_skills(
     agent_dir: str | Path | None = None,
     additional_paths: Iterable[str | Path] = (),
 ) -> SkillsResult:
+    """从 用户级 agent_dir/skills、项目 .pi/skills、.agents/skills 与附加路径
+    递归发现技能；同名冲突保留先发现者并记录诊断。"""
     root = Path(cwd).resolve()
     sources: list[tuple[Path, str]] = []
     if agent_dir is not None:
@@ -85,6 +94,7 @@ def load_skills(
 
 
 def format_skills_for_prompt(skills: Iterable[Skill]) -> str:
+    """把技能清单格式化为 system prompt 里的 XML 片段（跳过禁用的技能）。"""
     visible = [skill for skill in skills if not skill.disable_model_invocation]
     if not visible:
         return ""
@@ -111,6 +121,7 @@ def format_skills_for_prompt(skills: Iterable[Skill]) -> str:
 
 
 def expand_skill_command(text: str, skills: Iterable[Skill]) -> str:
+    """把 /skill:名称 [参数] 命令展开为技能正文块（路径按技能目录解析）。"""
     if not text.startswith("/skill:"):
         return text
     command, _, arguments = text.partition(" ")
@@ -126,6 +137,7 @@ def expand_skill_command(text: str, skills: Iterable[Skill]) -> str:
 
 
 def _discover_skill_files(path: Path) -> list[Path]:
+    """递归发现技能文件：目录含 SKILL.md 即视为一个技能根，否则继续向下。"""
     if path.is_file():
         return [path] if path.suffix.lower() == ".md" else []
     if not path.is_dir():
@@ -149,6 +161,7 @@ def _discover_skill_files(path: Path) -> list[Path]:
 
 
 def _load_skill(path: Path, source: str) -> tuple[Skill | None, list[ResourceDiagnostic]]:
+    """解析单个技能文件并校验 frontmatter；问题以诊断形式返回而非中断。"""
     diagnostics: list[ResourceDiagnostic] = []
     try:
         metadata, _ = parse_frontmatter(path.read_text(encoding="utf-8"))

@@ -1,3 +1,4 @@
+<!-- 工具调用块：展示参数与对应结果，按结果状态显示 运行中/完成/失败。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 
@@ -13,6 +14,7 @@ const props = defineProps<{
 const argumentsText = computed(() => JSON.stringify(props.call.arguments ?? {}, null, 2));
 const resultText = computed(() => (props.result ? messageText(props.result) : ""));
 const status = computed(() => {
+  // 状态文案：失败优先，其次完成/运行中/等待
   if (props.result?.isError) return "失败";
   if (props.result) return "完成";
   return props.streaming ? "运行中" : "等待结果";

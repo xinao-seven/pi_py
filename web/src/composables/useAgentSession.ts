@@ -1,3 +1,5 @@
+// Agent 会话核心组合函数：管理消息列表、SSE 事件流、模型/思考/工具配置，
+// 以及发送/中止/压缩/分支导航等全部会话操作。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import type { Ref } from "vue";
 
@@ -23,6 +25,7 @@ import type {
 } from "@/types";
 
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+// 默认激活的工具集合（与后端默认一致）
 
 interface AgentSessionOptions {
   sessionId: Ref<string | null>;
@@ -33,6 +36,7 @@ interface AgentSessionOptions {
 }
 
 export function useAgentSession(options: AgentSessionOptions) {
+  // 会话状态：当前会话 id、详情、消息与 entryIds（SSE 去重）
   const activeSessionId = ref<string | null>(options.sessionId.value);
   const detail = ref<SessionDetail | null>(null);
   const messages = ref<AgentMessage[]>([]);
@@ -52,12 +56,15 @@ export function useAgentSession(options: AgentSessionOptions) {
   let loadSequence = 0;
 
   const isNew = computed(
+    // 是否处于“新会话”模式（无历史会话且已选工作区）
     () => activeSessionId.value === null && options.newSessionCwd.value !== null,
   );
   const displayModel = computed(
+    // 展示用的模型：优先会话上下文里保存的，其次新会话选择的，最后默认模型
     () => detail.value?.context.model ?? newSessionModel.value ?? catalog.value?.defaultModel ?? null,
   );
   const statusLabel = computed(() => {
+    // 顶栏状态文案：空闲/生成/工具/等待
     if (!stream.running) return "空闲";
     if (stream.phase === "responding") return "正在生成回复";
     if (stream.phase === "tool") return "正在执行工具";
@@ -72,6 +79,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function loadSession(sessionId: string, showLoading = false): Promise<void> {
+    // 加载会话详情与 Agent 状态；用序号防止并发加载时旧结果覆盖新结果
     const sequence = ++loadSequence;
     if (showLoading) loading.value = true;
     try {
@@ -104,6 +112,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   function connectEvents(sessionId: string): void {
+    // 建立 SSE 连接；收到事件交给 handleAgentEvent 处理
     if (eventSource && activeSessionId.value === sessionId) return;
     closeEvents();
     const source = new EventSource(agentEventsUrl(sessionId));
@@ -134,6 +143,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   function handleAgentEvent(event: AgentEvent, sessionId: string): void {
+    // 处理一个 SSE 事件：更新流式状态、上下文占用、重试/压缩状态与消息列表
     assignStream(reduceAgentEvent(stream, event));
     if (event.contextUsage !== undefined) contextUsage.value = event.contextUsage ?? null;
 
@@ -155,6 +165,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
 
     if (event.type === "message_end" && event.message) {
+      // 按 entryId 去重：已存在则原地替换，否则追加到列表末尾
       const existingIndex = event.entryId ? entryIds.value.indexOf(event.entryId) : -1;
       if (existingIndex >= 0) {
         messages.value[existingIndex] = event.message;
@@ -165,12 +176,14 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
 
     if (event.type === "agent_end") {
+      // 一轮结束：重新加载会话以同步持久化内容
       void loadSession(sessionId);
       options.onAgentEnd?.();
     }
   }
 
   async function send(message: string, images: AttachedImage[] = []): Promise<void> {
+    // 发送消息：新会话先创建 Agent，历史会话直接发 prompt 命令
     const text = message.trim();
     if ((!text && images.length === 0) || stream.running) return;
     const imageBlocks = images.map(toImageBlock);
@@ -178,6 +191,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     assignStream({ running: true, phase: "waiting", streamingMessage: null, error: null });
     try {
       if (activeSessionId.value === null) {
+        // 新会话：带模型/思考/工具配置创建 Agent 并连接事件流
         const cwd = options.newSessionCwd.value;
         if (!cwd) throw new Error("请先选择工作区");
         const sessionId = await createAgent({
@@ -194,6 +208,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         await loadSession(sessionId);
         connectEvents(sessionId);
       } else {
+        // 历史会话：直接发送 prompt 命令
         const sessionId = activeSessionId.value;
         await sendAgentCommand(sessionId, {
           type: "prompt",
@@ -213,6 +228,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function abort(): Promise<void> {
+    // 中止当前运行
     if (!activeSessionId.value || !stream.running) return;
     try {
       await sendAgentCommand(activeSessionId.value, { type: "abort" });
@@ -222,10 +238,12 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function steer(message: string, images: AttachedImage[] = []): Promise<void> {
+    // 运行中插入指令（立即参与当前回合）
     await liveTextCommand("steer", message, images);
   }
 
   async function followUp(message: string, images: AttachedImage[] = []): Promise<void> {
+    // 运行中排队消息（当前回合结束后处理）
     await liveTextCommand("follow_up", message, images);
   }
 
@@ -234,6 +252,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     message: string,
     images: AttachedImage[],
   ): Promise<void> {
+    // steer/follow_up 共用的发送逻辑：要求会话正在运行
     if (!activeSessionId.value || !stream.running || (!message.trim() && images.length === 0)) return;
     try {
       await sendAgentCommand(activeSessionId.value, {
@@ -247,6 +266,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function changeModel(model: ModelRef): Promise<void> {
+    // 切换模型：新会话只记录选择，历史会话发 set_model 命令
     if (!activeSessionId.value) {
       newSessionModel.value = model;
       return;
@@ -260,6 +280,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function changeThinkingLevel(level: string): Promise<void> {
+    // 切换思考档位
     if (!activeSessionId.value) {
       thinkingLevel.value = level;
       return;
@@ -276,6 +297,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function changeTools(toolNames: string[]): Promise<void> {
+    // 切换激活工具集合
     if (!activeSessionId.value) {
       activeTools.value = toolNames;
       return;
@@ -289,6 +311,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function compact(): Promise<void> {
+    // 手动压缩上下文
     if (!activeSessionId.value || stream.running || compacting.value) return;
     compacting.value = true;
     compactionError.value = null;
@@ -303,6 +326,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   async function navigateTree(targetId: string): Promise<void> {
+    // 会话树导航（切换到指定节点）
     if (!activeSessionId.value || stream.running) return;
     error.value = null;
     await sendAgentCommand(activeSessionId.value, {
@@ -354,6 +378,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   });
 
   async function loadCatalog(): Promise<void> {
+    // 加载模型目录，为新会话初始化默认模型
     try {
       catalog.value = await getModels();
       newSessionModel.value ??= catalog.value.defaultModel;

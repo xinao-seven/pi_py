@@ -1,4 +1,8 @@
-"""Coding Agent tools, persistence, and application assembly."""
+"""Coding Agent tools, persistence, and application assembly.
+
+中文说明：pi_coding_agent 层（顶层）的统一入口：把通用 Agent、Session 持久化、
+具体工具和编程助手业务能力组装在一起，供 FastAPI/Web 等应用层使用。
+"""
 
 from pi_agent.tool_registry import ToolRegistry
 from pi_coding_agent.agent_session import AgentSession

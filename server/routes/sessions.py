@@ -1,4 +1,8 @@
-"""Persistent Session browsing and metadata routes."""
+"""Persistent Session browsing and metadata routes.
+
+中文说明：会话相关 API：列表、详情、上下文、重命名、删除（子会话重定向）、
+分支 fork 与会话合并。
+"""
 
 from __future__ import annotations
 
@@ -40,6 +44,7 @@ class ForkSessionRequest(BaseModel):
 
 
 def get_session_store(request: Request) -> SessionStore:
+    """从 app.state 取出会话存储。"""
     return request.app.state.session_store
 
 
@@ -49,6 +54,7 @@ def get_agent_registry(request: Request) -> AgentRegistry:
 
 @router.get("")
 async def list_sessions(store: SessionStore = Depends(get_session_store)) -> dict:
+    """列出全部会话（含损坏的 orphan 文件），按修改时间倒序。"""
     sessions = [*session_info_list_to_dict(store.list()), *store.list_orphans()]
     sessions.sort(key=lambda item: str(item.get("modified", "")), reverse=True)
     return {"sessions": sessions}
@@ -56,6 +62,7 @@ async def list_sessions(store: SessionStore = Depends(get_session_store)) -> dic
 
 @router.get("/{session_id}")
 async def get_session(session_id: str, store: SessionStore = Depends(get_session_store)) -> dict:
+    """返回会话详情：元数据 + 会话树 + 当前上下文。"""
     info = store.find(session_id)
     if info is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
@@ -76,6 +83,7 @@ async def get_session_context(
     leaf_id: str | None = None,
     store: SessionStore = Depends(get_session_store),
 ) -> dict:
+    """返回指定叶节点的 Web 上下文（消息 + entryIds），用于断线续传去重。"""
     manager = store.open(session_id)
     if manager is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
@@ -97,6 +105,7 @@ async def rename_session(
     body: RenameSessionRequest,
     store: SessionStore = Depends(get_session_store),
 ) -> dict[str, bool]:
+    """重命名会话（写入 session_info 记录）。"""
     manager = store.open(session_id)
     if manager is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
@@ -110,6 +119,7 @@ async def delete_session(
     store: SessionStore = Depends(get_session_store),
     registry: AgentRegistry = Depends(get_agent_registry),
 ) -> dict:
+    """删除会话：先回收活跃 Agent，再把子会话的 parentSession 重定向到父级。"""
     if store.find(session_id) is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
     await registry.remove(session_id)
@@ -128,6 +138,7 @@ async def fork_session(
     body: ForkSessionRequest,
     store: SessionStore = Depends(get_session_store),
 ) -> dict:
+    """从指定叶节点创建持久化 Fork 会话（复制该分支路径）。"""
     source = store.open(session_id)
     if source is None:
         raise APIError(404, "session_not_found", f"Session {session_id!r} was not found")
@@ -160,6 +171,7 @@ async def merge_session(
     store: SessionStore = Depends(get_session_store),
     registry: AgentRegistry = Depends(get_agent_registry),
 ) -> dict:
+    """把来源会话的独有内容生成有界摘要，追加到目标会话上下文。"""
     if body.sourceSessionId == session_id:
         raise APIError(400, "invalid_merge", "A Session cannot be merged into itself")
     target_info = store.find(session_id)

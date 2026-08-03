@@ -1,4 +1,8 @@
-"""Workspace file list, preview, media, and watch routes."""
+"""Workspace file list, preview, media, and watch routes.
+
+中文说明：Files API：工作区目录浏览、文本/图片/音频预览与文件变化 SSE 监听。
+所有路径经 FileService 做工作区边界与敏感文件检查。
+"""
 
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ async def access_file(
     ] = "list",
     service: FileService = Depends(get_file_service),
 ):
+    """按 type 参数分发：list 列目录、read 读文本/媒体、media 返回媒体、watch SSE 监听。"""
     try:
         if preview_type == "list":
             return service.list_directory(file_path, root)

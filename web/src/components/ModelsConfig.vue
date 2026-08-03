@@ -1,3 +1,4 @@
+<!-- 模型配置弹窗：以结构化表单编辑 models.json，支持一键 DeepSeek V4 预设。 -->
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 
@@ -25,6 +26,7 @@ const error = ref<string | null>(null);
 const presetNotice = ref<string | null>(null);
 
 onMounted(async () => {
+  // 打开时读取现有配置并转成表单结构（保留未编辑的扩展字段）
   try {
     const config = await getModelsConfig();
     providers.value = Object.entries(config.providers).map(([name, provider]) => ({
@@ -54,6 +56,7 @@ function addProvider(): void {
 }
 
 function configureDeepSeek(): void {
+  // 一键写入 DeepSeek V4 预设（Flash/Pro、1M 上下文、思考档位、密钥变量引用）
   const preset: ProviderForm = {
     name: "deepseek",
     api: "deepseek-chat-completions",
@@ -91,6 +94,7 @@ function addModel(provider: ProviderForm): void {
 }
 
 async function save(): Promise<void> {
+  // 保存：校验名称/模型 id 后合并扩展字段，写回 models.json
   error.value = null;
   const names = providers.value.map((provider) => provider.name.trim());
   if (names.some((name) => !name) || new Set(names).size !== names.length) {

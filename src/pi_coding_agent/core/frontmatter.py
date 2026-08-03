@@ -1,4 +1,7 @@
-"""Small dependency-free Markdown frontmatter parser."""
+"""Small dependency-free Markdown frontmatter parser.
+
+中文说明：零依赖的极简 Markdown frontmatter 解析器（用于 SKILL.md/模板文件头）。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,8 @@ from typing import Any
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """解析以 --- 包裹的元数据块：支持键值对、引号值与 true/false 布尔。
+    返回 (元数据, 正文)。无 frontmatter 时原样返回正文。"""
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}, text

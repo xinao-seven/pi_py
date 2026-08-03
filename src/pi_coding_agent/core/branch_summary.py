@@ -1,4 +1,8 @@
-"""Summarize an abandoned session-tree branch while navigating elsewhere."""
+"""Summarize an abandoned session-tree branch while navigating elsewhere.
+
+中文说明：分支摘要。当用户从会话树的一个分支跳到另一个分支时，
+可把被遗弃分支的内容交给摘要器生成 checkpoint，跳回时上下文不丢失。
+"""
 
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ Preserve exact file paths, function names, and error messages."""
 
 @dataclass(frozen=True, slots=True)
 class BranchSummary:
+    """分支摘要产物：摘要文本、可选 usage 与细节。"""
     text: str
     usage: dict[str, Any] | None = None
     details: dict[str, Any] | None = None
@@ -34,6 +39,7 @@ class BranchSummary:
 
 @dataclass(frozen=True, slots=True)
 class BranchPreparation:
+    """分支摘要准备结果：被遗弃分支的记录、消息、公共祖先与 token 预算内内容。"""
     entries: tuple[SessionEntry, ...]
     messages: tuple[dict[str, Any], ...]
     common_ancestor_id: str | None
@@ -41,6 +47,7 @@ class BranchPreparation:
 
 
 class BranchSummarizer(Protocol):
+    # 分支摘要器协议
     async def summarize(
         self,
         messages: list[dict[str, Any]],
@@ -50,6 +57,7 @@ class BranchSummarizer(Protocol):
 
 
 class ProviderBranchSummarizer:
+    """用当前 Provider 生成分支摘要的实现。"""
     def __init__(self, provider: LLMProvider, model: str, *, thinking_level: str = "off") -> None:
         self.provider = provider
         self.model = model
@@ -61,6 +69,7 @@ class ProviderBranchSummarizer:
         *,
         custom_instructions: str | None = None,
     ) -> BranchSummary:
+        """把被遗弃分支消息序列化后请求摘要，返回带固定前言的文本。"""
         conversation = json.dumps(messages, ensure_ascii=False, indent=2)
         prompt = f"<conversation>\n{conversation}\n</conversation>\n\n{BRANCH_SUMMARY_FORMAT}"
         if custom_instructions:
@@ -97,12 +106,16 @@ def prepare_branch_summary(
     *,
     token_budget: int = 0,
 ) -> BranchPreparation:
+    """计算新旧分支的公共祖先，收集旧分支上需要摘要的消息；
+    token_budget>0 时从尾部向前累计，超出预算即停止（保留最近内容优先）。"""
     if old_leaf_id is None:
         return BranchPreparation((), (), None, 0)
+    # 旧分支的节点 id 集合与目标分支路径求交集，得到公共祖先
     old_ids = {entry["id"] for entry in session.get_branch(old_leaf_id)}
     target_path = session.get_branch(target_id)
     common = next((entry["id"] for entry in reversed(target_path) if entry["id"] in old_ids), None)
     collected: list[SessionEntry] = []
+    # 从旧叶向上走到公共祖先，收集被遗弃的记录
     current: str | None = old_leaf_id
     while current is not None and current != common:
         entry = session.get_entry(current)
@@ -126,6 +139,7 @@ def prepare_branch_summary(
 
 
 def _summary_messages(entry: SessionEntry) -> list[dict[str, Any]]:
+    """取记录的可摘要消息；toolResult 不单独摘要（会跟随其回合上下文）。"""
     if entry.get("type") == "message":
         message = entry.get("message")
         if isinstance(message, dict) and message.get("role") == "toolResult":

@@ -1,3 +1,4 @@
+<!-- 已打开文件的标签栏：切换与关闭。 -->
 <script setup lang="ts">
 import type { FileTab } from "@/types";
 

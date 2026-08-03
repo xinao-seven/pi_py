@@ -1,4 +1,8 @@
-"""Local dotenv-style secret loading with environment-variable precedence."""
+"""Local dotenv-style secret loading with environment-variable precedence.
+
+中文说明：密钥存储：从仓库外的 secrets.env 读取密钥，
+进程环境变量优先于文件；只提供解析，绝不向 API 返回真实密钥。
+"""
 
 from __future__ import annotations
 
@@ -12,20 +16,28 @@ MAX_SECRET_FILE_BYTES = 64 * 1024
 
 
 class SecretConfigError(ValueError):
-    """Raised when the local secrets file is malformed or cannot be read."""
+    """Raised when the local secrets file is malformed or cannot be read.
+
+    中文说明：secrets.env 格式错误或不可读时抛出。
+    """
 
 
 class SecretStore:
+    """解析 secrets.env（dotenv 风格，支持引号值与 export 前缀）。"""
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve()
 
     def resolve(self, name: str) -> str | None:
-        """Resolve a secret, preferring the current process environment."""
+        """Resolve a secret, preferring the current process environment.
+
+        中文说明：解析密钥：进程环境变量优先，其次读 secrets.env 文件。
+        """
         if name in os.environ:
             return os.environ[name]
         return self.read().get(name)
 
     def read(self) -> dict[str, str]:
+        """解析密钥文件：跳过注释/空行，校验变量名与引号配对。"""
         if not self.path.is_file():
             return {}
         try:

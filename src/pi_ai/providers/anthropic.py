@@ -1,4 +1,9 @@
-"""Anthropic Messages API adapter."""
+"""Anthropic Messages API adapter.
+
+中文说明：Anthropic Messages API 适配器。负责两件事：
+1) 把统一消息格式转换成 Anthropic 的请求体（build_request / _convert_messages）；
+2) 把 Anthropic SSE 流事件归一化为统一的 ProviderEvent（stream）。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ from typing import Any
 from pi_ai.providers.base import ProviderEvent
 from pi_ai.providers.transport import HttpxSSETransport, SSETransport
 
+# thinking 档位 -> Anthropic thinking budget_tokens 的映射
 _THINKING_BUDGETS = {
     "minimal": 1024,
     "low": 2048,
@@ -17,10 +23,12 @@ _THINKING_BUDGETS = {
     "xhigh": 16384,
     "max": 32768,
 }
+# Anthropic 结束原因 -> 统一 stopReason 的映射
 _STOP_REASONS = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length", "tool_use": "toolUse"}
 
 
 class AnthropicProvider:
+    """Anthropic Messages API 适配器：统一消息 <-> Anthropic 格式，SSE 事件归一化为 ProviderEvent。"""
     name = "anthropic"
 
     def __init__(
@@ -47,6 +55,8 @@ class AnthropicProvider:
         thinking_level: str,
         system_prompt: str,
     ) -> dict[str, Any]:
+        """组装 Anthropic 请求体：模型、转换后的消息、max_tokens、流式开关；
+        有系统提示时写入 system，有工具时写入 tools，思考档位映射为 thinking 预算。"""
         body: dict[str, Any] = {
             "model": model,
             "messages": _convert_messages(messages),
@@ -79,6 +89,11 @@ class AnthropicProvider:
         thinking_level: str,
         system_prompt: str,
     ):
+        """主流程：逐包消费 Anthropic SSE 流并转发为统一事件。
+        message_start 记录 usage；content_block_start 标记工具调用开始；
+        content_block_delta 转发文本/思考/工具参数增量；
+        message_delta 记录结束原因；最后 yield done 事件。
+        """
         body = self.build_request(
             model=model,
             messages=messages,
@@ -100,17 +115,20 @@ class AnthropicProvider:
             ):
                 packet_type = packet.get("type")
                 if packet_type == "error":
+                    # 厂商直接返回错误：产出 done(error) 并结束本轮
                     error = packet.get("error", {})
                     message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
                     yield _done("error", usage, message)
                     return
                 if packet_type == "message_start":
+                    # 流开始：记录请求侧的 usage（输入 token 等）
                     raw_usage = packet.get("message", {}).get("usage", {})
                     _update_anthropic_usage(usage, raw_usage)
                 elif packet_type == "content_block_start":
                     index = int(packet.get("index", 0))
                     block = packet.get("content_block", {})
                     if block.get("type") == "tool_use":
+                        # 工具调用开始：记住 index -> (id, name)，后续参数增量按 index 回填
                         call_id, name = str(block.get("id", "")), str(block.get("name", ""))
                         tool_blocks[index] = (call_id, name)
                         yield ProviderEvent(
@@ -127,6 +145,7 @@ class AnthropicProvider:
                     elif delta_type == "thinking_delta":
                         yield ProviderEvent(type="thinking_delta", text=str(delta.get("thinking", "")))
                     elif delta_type == "input_json_delta":
+                        # 工具参数是流式 JSON 片段，按 index 找到对应工具 id 后转发
                         call_id, _ = tool_blocks.get(int(packet.get("index", 0)), ("", ""))
                         yield ProviderEvent(
                             type="tool_call_delta", id=call_id, arguments=str(delta.get("partial_json", ""))
@@ -134,6 +153,7 @@ class AnthropicProvider:
                 elif packet_type == "message_delta":
                     delta = packet.get("delta", {})
                     if delta.get("stop_reason"):
+                        # 流结束：记录停止原因，并更新输出侧的 usage
                         stop_reason = _STOP_REASONS.get(str(delta["stop_reason"]), "error")
                     _update_anthropic_usage(usage, packet.get("usage", {}))
             error = None if stop_reason != "error" else "Unknown Anthropic stop reason"
@@ -149,6 +169,7 @@ class AnthropicProvider:
 
 
 def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """统一消息 -> Anthropic 消息格式；相邻同角色消息合并为一个 content 列表。"""
     converted: list[dict[str, Any]] = []
     for message in messages:
         role = message.get("role")
@@ -200,6 +221,7 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _anthropic_content(content: Any) -> list[dict[str, Any]]:
+    """统一 content block -> Anthropic content block（文本与 base64 图片）。"""
     if not isinstance(content, list):
         return [{"type": "text", "text": str(content)}]
     result: list[dict[str, Any]] = []
@@ -221,10 +243,12 @@ def _anthropic_content(content: Any) -> list[dict[str, Any]]:
 
 
 def _empty_usage() -> dict[str, int]:
+    """创建全 0 的 usage 累计器。"""
     return {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}
 
 
 def _update_anthropic_usage(usage: dict[str, int], raw: Any) -> None:
+    """把 Anthropic 的 usage 字段名（input_tokens 等）归一到统一 usage 字典。"""
     if not isinstance(raw, dict):
         return
     mapping = {
@@ -243,6 +267,7 @@ def _update_anthropic_usage(usage: dict[str, int], raw: Any) -> None:
 
 
 def _done(stop_reason: str, usage: dict[str, int], error: str | None = None) -> ProviderEvent:
+    """构造统一 done 事件：携带停止原因、usage 快照，出错时附 error 信息。"""
     event = ProviderEvent(type="done", stop_reason=stop_reason, usage=dict(usage))
     if error:
         event["error"] = error

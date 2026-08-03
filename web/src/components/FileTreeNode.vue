@@ -1,3 +1,4 @@
+<!-- 文件树节点：目录点击展开/收起（懒加载子项），文件点击触发打开。 -->
 <script setup lang="ts">
 import { ref } from "vue";
 
@@ -22,6 +23,7 @@ const error = ref<string | null>(null);
 const children = ref<FileTreeItem[]>([]);
 
 async function activate(): Promise<void> {
+  // 文件：发出 open；目录：切换展开并首次展开时懒加载子目录
   if (!props.item.isDir) {
     emit("open", props.item.path);
     return;
@@ -44,6 +46,7 @@ async function activate(): Promise<void> {
 }
 
 function joinPath(parent: string, name: string): string {
+  // 拼接相对路径（统一用 /）
   return parent ? `${parent}/${name}` : name;
 }
 </script>

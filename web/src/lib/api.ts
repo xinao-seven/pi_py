@@ -1,3 +1,4 @@
+// REST 客户端：封装全部后端 API，统一错误解析（ApiError）。
 import type {
   AgentStateResponse,
   FileListResponse,
@@ -20,6 +21,7 @@ interface ErrorEnvelope {
 }
 
 export class ApiError extends Error {
+  // 带状态码与机器码的 API 错误
   constructor(
     message: string,
     readonly status: number,
@@ -32,6 +34,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // 通用请求：自动加 JSON Content-Type，非 2xx 时解析后端错误信封并抛 ApiError
   const response = await fetch(path, {
     ...init,
     headers: {
@@ -53,15 +56,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
+  // 会话列表
   const result = await request<{ sessions: SessionInfo[] }>("/api/sessions");
   return result.sessions;
 }
 
 export function getSession(sessionId: string): Promise<SessionDetail> {
+  // 会话详情（含树与上下文）
   return request(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 export function forkSession(sessionId: string, leafId: string): Promise<ForkSessionResponse> {
+  // 从指定叶节点 Fork 新会话
   return request(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, {
     method: "POST",
     body: JSON.stringify({ leafId }),
@@ -83,6 +89,7 @@ export function getAgentState(sessionId: string): Promise<AgentStateResponse> {
 }
 
 export async function createDefaultWorkspace(): Promise<string> {
+  // 创建默认工作区
   const result = await request<{ cwd: string }>("/api/default-cwd", { method: "POST" });
   return result.cwd;
 }
@@ -98,6 +105,7 @@ export async function listWorkspaces(): Promise<string[]> {
 }
 
 export async function selectWorkspace(cwd: string): Promise<string> {
+  // 登记并选择工作区
   const result = await request<{ cwd: string }>("/api/workspaces/select", {
     method: "POST",
     body: JSON.stringify({ cwd }),
@@ -114,6 +122,7 @@ export async function createAgent(input: {
   toolNames?: string[];
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
 }): Promise<string> {
+  // 创建新 Agent 会话并发送首条消息，返回 sessionId
   const result = await request<{ success: true; sessionId: string }>("/api/agent/new", {
     method: "POST",
     body: JSON.stringify(input),
@@ -125,6 +134,7 @@ export async function sendAgentCommand(
   sessionId: string,
   command: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  // 向指定会话发送统一命令（prompt/steer/abort/compact 等）
   const result = await request<{ success: true; data: Record<string, unknown> }>(
     `/api/agent/${encodeURIComponent(sessionId)}`,
     {
@@ -166,6 +176,7 @@ export async function setSkillDisabled(
 }
 
 export function agentEventsUrl(sessionId: string): string {
+  // SSE 事件流地址
   return `/api/agent/${encodeURIComponent(sessionId)}/events`;
 }
 
@@ -178,6 +189,7 @@ export function readFile(root: string, path: string): Promise<FileReadResponse> 
 }
 
 export function fileMediaUrl(root: string, path: string): string {
+  // 图片/音频预览地址
   return fileAccessUrl(root, path, "media");
 }
 
@@ -186,6 +198,7 @@ function fileAccessUrl(
   path: string,
   type: "list" | "read" | "media",
 ): string {
+  // 构造 /api/files 访问 URL：路径规范化并逐段编码，root 与 type 走查询参数
   const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "");
   const encodedPath = normalized.split("/").filter(Boolean).map(encodeURIComponent).join("/");
   const query = new URLSearchParams({ root, type });

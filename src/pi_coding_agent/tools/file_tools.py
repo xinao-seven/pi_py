@@ -1,4 +1,8 @@
-"""Read, write, edit, and directory-listing tools."""
+"""Read, write, edit, and directory-listing tools.
+
+中文说明：文件工具：read（分页读 UTF-8 文本）、write（整体覆盖）、
+edit（精确唯一替换）、ls（目录列表）。所有路径经 WorkspacePaths 边界校验。
+"""
 
 from __future__ import annotations
 
@@ -37,6 +41,7 @@ def _truncate_head(
     max_lines: int = DEFAULT_MAX_LINES,
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> tuple[str, JsonObject | None]:
+    """按行数/字节数从头部截断输出，返回截断信息。"""
     lines = text.split("\n")
     output: list[str] = []
     output_bytes = 0
@@ -72,6 +77,7 @@ def _require_text(value: object, field: str) -> str:
 
 
 def _decode_text(path: Path) -> str:
+    """读取 UTF-8 文本：先拒绝含 NUL 的二进制文件，再校验编码。"""
     data = path.read_bytes()
     if b"\x00" in data:
         raise ToolError(f"Binary files are not supported yet: {path.name}")
@@ -82,6 +88,7 @@ def _decode_text(path: Path) -> str:
 
 
 def create_read_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 read 工具：1 起始的 offset 与 limit 分页，超过上限提示继续读取。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         path = paths.resolve(arguments.get("path"), must_exist=True)
         if not path.is_file():
@@ -125,6 +132,7 @@ def create_read_tool(paths: WorkspacePaths) -> ToolDefinition:
 
 
 def create_write_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 write 工具：完全覆盖目标文件（自动创建父目录，加写锁）。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         path = paths.resolve(arguments.get("path"))
         content = _require_text(arguments.get("content"), "content")
@@ -151,6 +159,7 @@ def create_write_tool(paths: WorkspacePaths) -> ToolDefinition:
 
 
 def _validated_edits(arguments: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """校验并规范化编辑列表：兼容旧版 oldText/newText 单块写法。"""
     raw_edits = arguments.get("edits")
     if raw_edits is None and ("oldText" in arguments or "newText" in arguments):
         raw_edits = [{"oldText": arguments.get("oldText"), "newText": arguments.get("newText")}]
@@ -169,6 +178,8 @@ def _validated_edits(arguments: Mapping[str, Any]) -> list[tuple[str, str]]:
 
 
 def create_edit_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 edit 工具：对原文做唯一、精确、不重叠的替换，
+    保留 BOM 与换行风格，并返回 unified diff 供模型查看。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         path = paths.resolve(arguments.get("path"), must_exist=True)
         if not path.is_file():
@@ -234,6 +245,7 @@ def create_edit_tool(paths: WorkspacePaths) -> ToolDefinition:
 
 
 def create_ls_tool(paths: WorkspacePaths) -> ToolDefinition:
+    """创建 ls 工具：按名称排序列出目录项，目录以 '/' 结尾，可限制条数。"""
     async def execute(arguments: Mapping[str, Any]) -> ToolResult:
         raw_path = arguments.get("path", ".")
         path = paths.resolve(raw_path, must_exist=True)
@@ -271,6 +283,7 @@ def create_ls_tool(paths: WorkspacePaths) -> ToolDefinition:
 
 
 def create_file_tools(workspace: str | Path) -> list[ToolDefinition]:
+    """创建文件类工具集合（read/write/edit/ls）。"""
     paths = WorkspacePaths(workspace)
     return [
         create_read_tool(paths),

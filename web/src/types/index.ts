@@ -1,3 +1,5 @@
+// 统一的前端数据类型：与后端 API 的 JSON 结构一一对应。
+// 消息角色：用户 / 助手 / 工具结果 / 自定义 / 压缩摘要 / 分支摘要
 export type MessageRole =
   | "user"
   | "assistant"
@@ -7,6 +9,7 @@ export type MessageRole =
   | "branchSummary";
 
 export interface ContentBlock {
+  // 消息内容块：文本、思考、图片或工具调用，按 type 区分
   type: string;
   text?: string;
   thinking?: string;
@@ -18,6 +21,7 @@ export interface ContentBlock {
 }
 
 export interface AgentMessage {
+  // 一条消息：角色 + 内容 + 可选元数据（模型、usage、错误等）
   role: MessageRole;
   content?: string | ContentBlock[];
   timestamp?: number;
@@ -37,6 +41,7 @@ export interface ModelRef {
 }
 
 export interface SessionContext {
+  // 会话上下文：消息列表 + 每条消息对应的 entryId（SSE 去重用）+ 模型/思考设置
   messages: AgentMessage[];
   entryIds: string[];
   thinkingLevel: string;
@@ -44,6 +49,7 @@ export interface SessionContext {
 }
 
 export interface SessionInfo {
+  // 会话列表项元数据（侧栏展示用）
   id: string;
   path: string | null;
   cwd: string;
@@ -59,6 +65,7 @@ export interface SessionInfo {
 }
 
 export interface SessionEntry {
+  // 会话树节点：type 为 message/compaction/label 等，parentId 形成树
   type: string;
   id: string;
   parentId: string | null;
@@ -77,6 +84,7 @@ export interface SessionTreeNode {
 }
 
 export interface SessionDetail {
+  // 会话详情：元数据 + 树 + 当前叶节点 + 上下文
   sessionId: string;
   filePath: string | null;
   info: SessionInfo;
@@ -92,6 +100,7 @@ export interface ContextUsage {
 }
 
 export interface AgentState {
+  // Agent 运行状态快照
   sessionId: string;
   isStreaming: boolean;
   isCompacting: boolean;
@@ -118,6 +127,7 @@ export interface ModelListItem {
 }
 
 export interface ModelCatalog {
+  // 模型目录：模型 id 映射、列表、默认模型与各模型思考档位
   models: Record<string, string>;
   modelList: ModelListItem[];
   defaultModel: ModelRef;
@@ -173,6 +183,7 @@ export interface SkillsResponse {
 }
 
 export interface AttachedImage {
+  // 待发送的图片：base64 数据 + MIME + 本地预览 URL
   data: string;
   mimeType: string;
   previewUrl: string;
@@ -180,6 +191,7 @@ export interface AttachedImage {
 }
 
 export interface AgentEvent {
+  // SSE 事件：type 与后端 AgentEvent 一致，其余字段按类型存在
   type: string;
   message?: AgentMessage;
   entryId?: string;
@@ -195,8 +207,10 @@ export interface AgentEvent {
 }
 
 export type AgentPhase = "idle" | "waiting" | "responding" | "tool";
+// Agent 阶段：空闲 / 等待模型 / 正在生成 / 正在执行工具
 
 export interface AgentStreamState {
+  // 前端简化的流式状态机：运行中、阶段、当前流式消息与错误
   running: boolean;
   phase: AgentPhase;
   streamingMessage: AgentMessage | null;
@@ -245,6 +259,7 @@ export interface FileReadResponse {
 }
 
 export interface FileTab {
+  // 已打开文件标签
   path: string;
   name: string;
 }

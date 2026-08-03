@@ -1,4 +1,8 @@
-"""Discover and serialize persistent pi Session files."""
+"""Discover and serialize persistent pi Session files.
+
+中文说明：会话存储：发现/打开/删除持久化 Session 文件，生成 Web 端
+会话列表/详情结构，并支持删除时的子会话 parent 重定向。
+"""
 
 from __future__ import annotations
 
@@ -20,10 +24,12 @@ from pi_coding_agent.core.session_manager import (
 
 
 class SessionStore:
+    """以目录树组织会话文件（按工作区哈希子目录），负责查找与打开。"""
     def __init__(self, sessions_dir: str | Path) -> None:
         self.sessions_dir = Path(sessions_dir).expanduser().resolve()
 
     def list(self) -> list[SessionInfo]:
+        """递归发现全部有效会话，按修改时间倒序。"""
         if not self.sessions_dir.is_dir():
             return []
         sessions = [
@@ -35,6 +41,7 @@ class SessionStore:
         return sessions
 
     def list_orphans(self) -> list[dict[str, Any]]:
+        """发现无法解析的损坏/缺 header 文件，作为 orphan 返回。"""
         if not self.sessions_dir.is_dir():
             return []
         known = {_path_key(info.path.resolve()) for info in self.list()}
@@ -45,6 +52,7 @@ class SessionStore:
         ]
 
     def find(self, session_id: str) -> SessionInfo | None:
+        """按 id 查找会话元数据。"""
         return next((info for info in self.list() if info.id == session_id), None)
 
     def open(self, session_id: str) -> SessionManager | None:
@@ -52,13 +60,18 @@ class SessionStore:
         return SessionManager.open(info.path) if info is not None else None
 
     def session_directory(self, cwd: str | Path) -> Path:
-        """Use one deterministic directory per workspace without exposing its path."""
+        """Use one deterministic directory per workspace without exposing its path.
+
+        中文说明：每个工作区对应一个确定性的哈希子目录（不暴露原始路径）。
+        """
         resolved = Path(cwd).resolve()
         label = re.sub(r"[^A-Za-z0-9._-]+", "-", resolved.name).strip("-") or "workspace"
         digest = hashlib.sha256(str(resolved).casefold().encode("utf-8")).hexdigest()[:12]
         return self.sessions_dir / f"{label[:40]}-{digest}"
 
     def delete_with_reparent(self, session_id: str) -> int | None:
+        """删除会话：其直接子会话的 parentSession 重定向到被删会话的父级；
+        返回重定向的子会话数量。"""
         target_info = self.find(session_id)
         if target_info is None:
             return None
@@ -84,6 +97,7 @@ def session_info_to_dict(
     *,
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
+    """把 SessionInfo 转成 Web 端使用的 camelCase 字典。"""
     values = asdict(info)
     values["path"] = str(info.path)
     values["created"] = info.created.isoformat()
@@ -97,6 +111,7 @@ def session_info_to_dict(
 
 
 def session_info_list_to_dict(infos: Iterable[SessionInfo]) -> list[dict[str, Any]]:
+    """批量转换，并把 parentSessionPath 映射为 parentSessionId。"""
     items = list(infos)
     ids_by_path = {_path_key(info.path.resolve()): info.id for info in items}
     return [
@@ -113,6 +128,7 @@ def session_info_list_to_dict(infos: Iterable[SessionInfo]) -> list[dict[str, An
 
 
 def orphan_session_to_dict(path: Path) -> dict[str, Any]:
+    """把损坏的会话文件转成 Web 端 orphan 结构（不可运行）。"""
     resolved = path.resolve()
     try:
         stat = resolved.stat()
@@ -142,6 +158,7 @@ def session_detail(
     *,
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
+    """组装会话详情：元数据 + 会话树 + 叶节点 + Web 上下文。"""
     header = manager.get_header()
     context = manager.build_web_session_context()
     resolved_info = info or (
@@ -177,6 +194,7 @@ def _path_key(path: Path) -> str:
 
 
 def _rewrite_parent_session(path: Path, parent_path: str | None) -> None:
+    """原子改写会话文件 header 的 parentSession 字段。"""
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines()
     if not lines:

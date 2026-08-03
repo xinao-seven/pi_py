@@ -1,3 +1,4 @@
+<!-- 项目切换弹窗：列出已登记/历史工作区，也可输入受控范围内的新绝对路径。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
@@ -21,6 +22,7 @@ const loading = ref(true);
 const pending = ref(false);
 const error = ref<string | null>(null);
 const orderedWorkspaces = computed(() =>
+  // 去重排序，当前工作区置顶
   [...new Set(workspaces.value)].sort((left, right) => {
     if (left === props.currentCwd) return -1;
     if (right === props.currentCwd) return 1;
@@ -45,6 +47,7 @@ async function load(): Promise<void> {
 }
 
 async function choose(cwd: string): Promise<void> {
+  // 选择/登记工作区并通知父组件
   if (!cwd.trim() || pending.value) return;
   pending.value = true;
   error.value = null;
@@ -58,6 +61,7 @@ async function choose(cwd: string): Promise<void> {
 }
 
 async function createDefault(): Promise<void> {
+  // 创建默认工作区
   if (pending.value) return;
   pending.value = true;
   error.value = null;
@@ -71,6 +75,7 @@ async function createDefault(): Promise<void> {
 }
 
 function folderName(cwd: string): string {
+  // 取路径最后一段作为展示名
   return cwd.replaceAll("\\", "/").replace(/\/$/, "").split("/").at(-1) || cwd;
 }
 

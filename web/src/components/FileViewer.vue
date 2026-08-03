@@ -1,4 +1,5 @@
 <!-- Rendered source HTML is sanitized with DOMPurify before it reaches v-html. -->
+<!-- 文件预览：文本（语法高亮 + DOMPurify 清洗）、图片与音频。 -->
 <script setup lang="ts">
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
@@ -17,6 +18,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 
 const kind = computed<"image" | "audio" | "text">(() => {
+  // 按扩展名判断预览类型
   const extension = props.path?.split(".").at(-1)?.toLowerCase() ?? "";
   if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(extension)) {
     return "image";
@@ -28,6 +30,7 @@ const mediaUrl = computed(() =>
   props.path && kind.value !== "text" ? fileMediaUrl(props.root, props.path) : "",
 );
 const highlighted = computed(() => {
+  // 代码高亮：有对应语言用 hljs 高亮，否则自动检测；结果先经 DOMPurify 清洗
   if (!content.value) return "";
   const language = content.value.language;
   const html = hljs.getLanguage(language)

@@ -1,4 +1,8 @@
-"""FastAPI application factory and Uvicorn entry point."""
+"""FastAPI application factory and Uvicorn entry point.
+
+中文说明：应用工厂：组装依赖（SessionStore、AgentRegistry、模型配置、
+工作区/文件/技能服务），注册路由与中间件，可选挂载 Vue 静态前端。
+"""
 
 from __future__ import annotations
 
@@ -25,8 +29,12 @@ def create_app(
     *,
     provider_resolver: ProviderResolver | None = None,
 ) -> FastAPI:
+    """创建 FastAPI 应用：依赖装配、路由注册与静态托管。
+    provider_resolver 可注入，测试用它替换真实 Provider 实现。"""
     resolved = settings or ServerSettings.from_env()
+    # 会话存储：负责发现/打开持久化 Session 文件
     store = SessionStore(resolved.sessions_dir)
+    # 模型配置：读写 models.json，并把 apiKey 变量引用解析为真实密钥
     model_config = ModelConfigService(
         resolved.agent_dir,
         secrets_file=resolved.secrets_file or resolved.agent_dir / "secrets.env",
@@ -42,6 +50,7 @@ def create_app(
         **registry_kwargs,
     )
     workspace_service = WorkspaceService(
+        # 已知工作区根：历史会话 cwd + 活跃 Agent 的 cwd + 用户手动选择
         resolved.workspace_parent,
         lambda: [
             *(info.cwd for info in store.list() if info.cwd),
@@ -52,6 +61,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        # 应用关闭时清理全部活跃 Agent（取消任务、解除订阅）
         del application
         yield
         await registry.close()
@@ -63,6 +73,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    # 把装配好的服务挂到 app.state，路由用 Depends 取用
     app.state.settings = resolved
     app.state.session_store = store
     app.state.agent_registry = registry
@@ -89,6 +100,7 @@ def create_app(
     app.include_router(workspaces.router)
     app.include_router(skills.router)
     if resolved.web_dist_dir is not None and resolved.web_dist_dir.is_dir():
+        # 生产模式：API 路由之后挂载 Vue 静态文件（同源托管）
         app.mount(
             "/",
             StaticFiles(directory=resolved.web_dist_dir, html=True),

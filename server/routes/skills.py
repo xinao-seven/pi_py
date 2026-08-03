@@ -1,4 +1,8 @@
-"""Local Skill discovery and model-invocation toggle routes."""
+"""Local Skill discovery and model-invocation toggle routes.
+
+中文说明：Skills API：列出工作区的本地技能与诊断信息，
+并安全切换 disable-model-invocation（是否对模型可见）。
+"""
 
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ def get_registry(request: Request) -> AgentRegistry:
 
 @router.get("")
 async def list_skills(cwd: str, service: SkillService = Depends(get_skill_service)) -> dict:
+    """列出指定工作区的技能（只允许已登记工作区）。"""
     try:
         return service.list(cwd)
     except PermissionError as exception:
@@ -39,6 +44,7 @@ async def toggle_skill(
     service: SkillService = Depends(get_skill_service),
     registry: AgentRegistry = Depends(get_registry),
 ) -> dict[str, bool]:
+    """切换技能文件的 disable-model-invocation 标记，并刷新所有活跃 Agent。"""
     try:
         service.toggle(body.filePath, body.disableModelInvocation)
     except PermissionError as exception:

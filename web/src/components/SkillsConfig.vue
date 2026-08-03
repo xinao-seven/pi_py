@@ -1,3 +1,4 @@
+<!-- Skills 配置弹窗：列出项目/用户级技能，切换模型可见性并显示加载诊断。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
@@ -33,6 +34,7 @@ async function load(): Promise<void> {
 }
 
 async function toggle(skill: SkillInfo): Promise<void> {
+  // 切换技能的 disable-model-invocation（是否对模型隐藏）
   const next = !skill.disableModelInvocation;
   pending.value.add(skill.filePath);
   pending.value = new Set(pending.value);

@@ -1,4 +1,8 @@
-"""Workspace-scoped file browsing and preview operations."""
+"""Workspace-scoped file browsing and preview operations.
+
+中文说明：文件服务：目录浏览、文本/媒体预览与变化监听。
+所有访问先校验根目录白名单，再做真实路径边界与敏感文件检查。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from typing import Any
 
 
 IGNORED_NAMES = {
+    # 目录浏览时忽略的重型/生成目录
     "node_modules",
     ".git",
     ".next",
@@ -29,6 +34,7 @@ IGNORED_NAMES = {
 }
 IGNORED_SUFFIXES = {".pyc"}
 SENSITIVE_DIRECTORY_NAMES = {".ssh", ".aws", ".azure", ".gnupg"}
+# 禁止预览的敏感文件/后缀（.env、密钥、凭据等）
 SENSITIVE_FILE_NAMES = {".env", "secrets.env", "credentials", "credentials.json"}
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 TEXT_PREVIEW_MAX_BYTES = 256 * 1024
@@ -80,6 +86,7 @@ EXT_TO_LANGUAGE = {
 
 
 class FileAccessError(Exception):
+    """文件访问错误：状态码 + 机器码 + 消息，路由转成 APIError。"""
     def __init__(self, status_code: int, code: str, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -88,10 +95,12 @@ class FileAccessError(Exception):
 
 
 class FileService:
+    """工作区文件操作：roots_provider 动态提供允许的根目录集合。"""
     def __init__(self, roots_provider: Callable[[], Iterable[str | Path]]) -> None:
         self._roots_provider = roots_provider
 
     def allowed_roots(self) -> tuple[Path, ...]:
+        """解析并去重当前允许的根目录。"""
         unique: dict[str, Path] = {}
         for root in self._roots_provider():
             resolved = Path(root).expanduser().resolve()
@@ -99,6 +108,7 @@ class FileService:
         return tuple(unique.values())
 
     def resolve(self, file_path: str, root_path: str) -> tuple[Path, Path]:
+        """解析目标路径：根目录必须白名单内，解析后必须仍位于根内，且不是敏感文件。"""
         root = Path(root_path).expanduser().resolve()
         allowed = {_path_key(item) for item in self.allowed_roots()}
         if _path_key(root) not in allowed:
@@ -121,6 +131,7 @@ class FileService:
         return resolved, root
 
     def list_directory(self, file_path: str, root_path: str) -> dict[str, Any]:
+        """列目录：过滤忽略项，返回名称/类型/大小/修改时间，目录优先排序。"""
         target, _ = self.resolve(file_path, root_path)
         if not target.exists():
             raise FileAccessError(404, "file_not_found", "Directory was not found")
@@ -149,6 +160,7 @@ class FileService:
         return {"entries": entries, "path": str(target)}
 
     def read_text(self, file_path: str, root_path: str) -> dict[str, Any]:
+        """读文本预览：限制大小与 UTF-8 编码，附带语法高亮语言。"""
         target, _ = self.resolve(file_path, root_path)
         stat = self._file_stat(target)
         if stat.st_size > TEXT_PREVIEW_MAX_BYTES:
@@ -172,6 +184,7 @@ class FileService:
         }
 
     def media_file(self, file_path: str, root_path: str) -> tuple[Path, str]:
+        """返回可预览的媒体文件（图片/音频）及其 MIME。"""
         target, _ = self.resolve(file_path, root_path)
         stat = self._file_stat(target)
         mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -192,6 +205,7 @@ class FileService:
         *,
         poll_seconds: float = 1,
     ) -> AsyncIterator[str]:
+        """轮询监听文件变化，通过 SSE 推送 change 事件（附带心跳）。"""
         target, _ = self.resolve(file_path, root_path)
         stat = self._file_stat(target)
         previous = (stat.st_mtime_ns, stat.st_size)
@@ -225,6 +239,7 @@ class FileService:
 
 
 def guess_language(path: Path) -> str:
+    """按文件名/后缀猜测代码语言，用于前端高亮。"""
     base = path.name.casefold()
     if base == "dockerfile" or base.startswith("dockerfile."):
         return "dockerfile"
@@ -238,6 +253,7 @@ def _path_key(path: Path) -> str:
 
 
 def _is_sensitive(path: Path, root: Path) -> bool:
+    """敏感判定：敏感目录、.env/密钥文件、凭据后缀、.git/config 等。"""
     relative_parts = [part.casefold() for part in path.relative_to(root).parts]
     if any(part in SENSITIVE_DIRECTORY_NAMES for part in relative_parts):
         return True
@@ -251,6 +267,7 @@ def _is_sensitive(path: Path, root: Path) -> bool:
 
 
 def _should_ignore(path: Path) -> bool:
+    """目录浏览时是否忽略：重型目录、敏感文件、pyc/密钥后缀。"""
     name = path.name.casefold()
     return (
         name in {item.casefold() for item in IGNORED_NAMES}

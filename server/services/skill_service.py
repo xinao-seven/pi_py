@@ -1,4 +1,8 @@
-"""List and safely toggle local Agent Skills."""
+"""List and safely toggle local Agent Skills.
+
+中文说明：技能服务：列出已登记工作区的本地技能与诊断，
+并安全地切换技能的 disable-model-invocation 标记。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from pi_coding_agent.core.skills import Skill, load_skills
 
 
 class SkillService:
+    """工作区技能列表与开关；只允许操作已登记工作区内的技能文件。"""
     def __init__(
         self,
         agent_dir: str | Path,
@@ -21,6 +26,7 @@ class SkillService:
         self._workspace_roots_provider = workspace_roots_provider
 
     def list(self, cwd: str | Path) -> dict[str, Any]:
+        """列出工作区技能；工作区未登记时拒绝。"""
         root = Path(cwd).expanduser().resolve()
         if _key(root) not in {_key(item) for item in self.workspace_roots()}:
             raise PermissionError("Workspace is not registered")
@@ -38,6 +44,8 @@ class SkillService:
         }
 
     def toggle(self, file_path: str | Path, disabled: bool) -> None:
+        """切换技能文件里的 disable-model-invocation 字段：
+        置 true 时插入/更新字段，置 false 时删除字段，原子写入。"""
         target = Path(file_path).expanduser().resolve()
         allowed = {
             skill.file_path.resolve()
@@ -67,10 +75,12 @@ class SkillService:
         temporary.replace(target)
 
     def workspace_roots(self) -> tuple[Path, ...]:
+        """返回当前允许的工作区根目录集合。"""
         return tuple(Path(item).expanduser().resolve() for item in self._workspace_roots_provider())
 
 
 def _skill_dict(skill: Skill) -> dict[str, Any]:
+    """把 Skill 转成 Web 端结构。"""
     return {
         "name": skill.name,
         "description": skill.description,

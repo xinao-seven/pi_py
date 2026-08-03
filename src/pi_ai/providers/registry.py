@@ -1,4 +1,7 @@
-"""Small provider registry used by CLI, API, and tests."""
+"""Small provider registry used by CLI, API, and tests.
+
+中文说明：小型 Provider 注册表，供命令行、API 与测试按名称获取 Provider 实例。
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from pi_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 
 class ProviderRegistry:
+    """名称 -> Provider 实例 的映射，支持注册、按名获取与枚举。"""
     def __init__(self, providers: Iterable[LLMProvider] = ()) -> None:
         self._providers: dict[str, LLMProvider] = {}
         for provider in providers:
@@ -39,7 +43,11 @@ def create_provider(
     api_key: str,
     base_url: str | None = None,
 ) -> LLMProvider:
-    """Create a built-in provider without reading environment variables."""
+    """Create a built-in provider without reading environment variables.
+
+    中文说明：按字符串创建内置 Provider 的工厂函数，不读取环境变量。
+    支持 anthropic / openai / openai-compatible / deepseek。
+    """
 
     if provider == "anthropic":
         kwargs = {"base_url": base_url} if base_url else {}

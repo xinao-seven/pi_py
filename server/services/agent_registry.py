@@ -1,4 +1,8 @@
-"""Active AgentSession registry with bounded event replay."""
+"""Active AgentSession registry with bounded event replay.
+
+中文说明：活跃 Agent 注册表：管理运行中的 AgentSession 生命周期
+（创建/激活/空闲回收/关闭），并为每个 Agent 维护有界事件回放与多订阅者 SSE。
+"""
 
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from server.services.session_store import SessionStore
 
 
 class ProviderResolver(Protocol):
+    # 按名称解析 Provider 实例的协议（测试可注入）
     def __call__(self, name: str) -> LLMProvider: ...
 
 
@@ -35,14 +40,17 @@ class ResolvedModel:
 
 
 class ModelResolver(Protocol):
+    # 按 provider/model 解析模型元数据（含上下文窗口）的协议
     def __call__(self, provider: str, model: str) -> ResolvedModel: ...
 
 
 class ProviderConfigurationError(ValueError):
+    """Provider 未配置或密钥缺失时抛出的错误。"""
     pass
 
 
 def environment_provider_resolver(name: str) -> LLMProvider:
+    """默认 Provider 解析器：从环境变量 {NAME}_API_KEY / {NAME}_BASE_URL 构造。"""
     normalized = "openai" if name == "openai-compatible" else name
     prefix = normalized.upper().replace("-", "_")
     api_key = os.getenv(f"{prefix}_API_KEY")
@@ -56,11 +64,13 @@ def environment_provider_resolver(name: str) -> LLMProvider:
 
 
 def _camelize_key(value: str) -> str:
+    """把 snake_case 键转成 camelCase（如 context_window -> contextWindow）。"""
     head, *tail = value.split("_")
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 def web_value(value: Any) -> Any:
+    """递归把事件里的 snake_case 键转 camelCase，供 Web 端直接使用。"""
     if isinstance(value, dict):
         return {_camelize_key(str(key)): web_value(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -72,6 +82,8 @@ def web_value(value: Any) -> Any:
 
 @dataclass(slots=True, eq=False)
 class RegistryEntry:
+    """一个活跃 Agent 的注册项：持有 AgentSession、事件回放队列、
+    订阅者队列、空闲定时器与运行任务集合。"""
     agent: AgentSession
     idle_timeout: float
     on_idle: Callable[[str], None]
@@ -88,6 +100,7 @@ class RegistryEntry:
 
     def __post_init__(self) -> None:
         self._events = deque(maxlen=self.replay_limit)
+        # 订阅 Agent 内部事件，统一转成带序号的事件流
         self._unsubscribe_agent = self.agent.subscribe(self._publish_agent_event)
         self.touch()
 
@@ -99,6 +112,7 @@ class RegistryEntry:
         self.publish(event.to_dict())
 
     def set_model(self, provider_name: str, model: str) -> ResolvedModel:
+        """切换模型：解析配置 -> 构造 Provider -> 更新 Agent。"""
         resolved = self.model_resolver(provider_name, model)
         provider = self.provider_resolver(resolved.provider)
         self.agent.set_model(
@@ -109,6 +123,7 @@ class RegistryEntry:
         return resolved
 
     def publish(self, event: dict[str, Any]) -> int:
+        """发布一个事件：写入回放缓冲并广播给所有订阅队列。"""
         self._sequence += 1
         item = (self._sequence, web_value(event))
         self._events.append(item)
@@ -126,6 +141,7 @@ class RegistryEntry:
         *,
         after_event_id: int = 0,
     ) -> tuple[asyncio.Queue[tuple[int, dict[str, Any]]], Callable[[], None]]:
+        """新增订阅者：先回放 after_event_id 之后的历史事件，返回队列与退订函数。"""
         queue: asyncio.Queue[tuple[int, dict[str, Any]]] = asyncio.Queue(
             maxsize=self.replay_limit
         )
@@ -140,6 +156,7 @@ class RegistryEntry:
         return queue, unsubscribe
 
     def start(self, awaitable: Awaitable[Any]) -> asyncio.Task[Any]:
+        """启动一个 Agent 运行任务并纳入跟踪；完成后刷新空闲定时器。"""
         task = asyncio.create_task(awaitable)
         self._tasks.add(task)
         self._cancel_idle_timer()
@@ -157,12 +174,14 @@ class RegistryEntry:
         return task
 
     def touch(self) -> None:
+        """刷新空闲定时器（每次有活动就重新计时）。"""
         self._cancel_idle_timer()
         if self.idle_timeout <= 0 or not self.alive:
             return
         self._idle_task = asyncio.create_task(self._idle_cleanup())
 
     async def _idle_cleanup(self) -> None:
+        """空闲超时后调用 on_idle 回收该 Agent。"""
         try:
             await asyncio.sleep(self.idle_timeout)
             self.on_idle(self.session_id)
@@ -175,6 +194,7 @@ class RegistryEntry:
         self._idle_task = None
 
     async def close(self) -> None:
+        """关闭注册项：退订、中止 Agent、取消全部任务并清空订阅者。"""
         if not self.alive:
             return
         self.alive = False
@@ -193,6 +213,7 @@ class RegistryEntry:
 
 
 class AgentRegistry:
+    """会话 -> RegistryEntry 的映射，负责 Agent 的创建、激活与回收。"""
     def __init__(
         self,
         store: SessionStore,
@@ -202,6 +223,7 @@ class AgentRegistry:
         agent_dir: str | Path | None = None,
         idle_timeout: float = 600,
     ) -> None:
+        # provider_resolver/model_resolver 可注入，测试用 FakeProvider 替换
         self.store = store
         self.provider_resolver = provider_resolver
         self.model_resolver = model_resolver or (
@@ -217,6 +239,7 @@ class AgentRegistry:
         return entry if entry is not None and entry.alive else None
 
     def workspace_roots(self) -> tuple[Path, ...]:
+        """返回所有活跃 Agent 的工作目录（供文件/技能服务校验）。"""
         return tuple(entry.agent.session_manager.cwd for entry in self._entries.values() if entry.alive)
 
     def entries(self) -> tuple[RegistryEntry, ...]:
@@ -231,6 +254,7 @@ class AgentRegistry:
         thinking_level: str = "off",
         tool_names: list[str] | None = None,
     ) -> RegistryEntry:
+        """新建持久化 Session 并注册 Agent。"""
         workspace = Path(cwd).expanduser().resolve()
         manager = SessionManager.create(
             workspace,
@@ -252,6 +276,7 @@ class AgentRegistry:
         model: str,
         tool_names: list[str] | None = None,
     ) -> RegistryEntry | None:
+        """按 session_id 激活历史会话：优先恢复 Session 里保存的模型设置。"""
         existing = self.get(session_id)
         if existing is not None:
             existing.touch()
@@ -268,6 +293,7 @@ class AgentRegistry:
                 context = manager.build_session_context()
                 saved_model = context.get("model")
                 if isinstance(saved_model, dict):
+                    # 恢复历史会话时沿用其保存的 provider/model
                     saved_provider = saved_model.get("provider")
                     saved_model_id = saved_model.get("modelId")
                     if isinstance(saved_provider, str) and isinstance(saved_model_id, str):
@@ -292,10 +318,12 @@ class AgentRegistry:
         thinking_level: str,
         tool_names: list[str] | None,
     ) -> RegistryEntry:
+        """核心装配：解析模型/Provider，构造工具与 AgentSession，创建注册项。"""
         resolved_model = self.model_resolver(provider_name, model)
         provider = self.provider_resolver(resolved_model.provider)
         context = manager.build_session_context()
         branch = manager.get_branch()
+        # 首次创建的会话：把初始模型与思考档位持久化到 Session
         if context.get("model") is None:
             manager.append_model_change(resolved_model.provider, resolved_model.model)
         if not any(entry.get("type") == "thinking_level_change" for entry in branch):
@@ -324,16 +352,19 @@ class AgentRegistry:
         return entry
 
     def remove_later(self, session_id: str) -> None:
+        """空闲回收：异步关闭注册项。"""
         entry = self._entries.pop(session_id, None)
         if entry is not None:
             asyncio.create_task(entry.close())
 
     async def remove(self, session_id: str) -> None:
+        """显式移除（如删除会话时）：同步关闭。"""
         entry = self._entries.pop(session_id, None)
         if entry is not None:
             await entry.close()
 
     async def close(self) -> None:
+        """应用关闭时清理所有注册项。"""
         entries = list(self._entries.values())
         self._entries.clear()
         await asyncio.gather(*(entry.close() for entry in entries), return_exceptions=True)

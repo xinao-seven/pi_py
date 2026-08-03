@@ -1,4 +1,8 @@
-"""Agent creation, commands, state, and SSE routes."""
+"""Agent creation, commands, state, and SSE routes.
+
+中文说明：Agent API：创建新 Agent、统一命令入口（prompt/steer/abort/模型切换等）、
+状态查询与 SSE 事件流（支持 Last-Event-ID 断点续传）。
+"""
 
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
 class ImageInput(BaseModel):
+    """图片输入：base64 数据 + MIME；单图不超过 5 MB。"""
     type: Literal["image"] = "image"
     data: Annotated[str, Field(min_length=1, max_length=7_000_000)]
     mimeType: Annotated[str, Field(min_length=1, max_length=100)]
@@ -29,6 +34,7 @@ class ImageInput(BaseModel):
     @field_validator("data")
     @classmethod
     def validate_data(cls, value: str) -> str:
+        """校验 base64 有效性并限制解码后大小。"""
         try:
             decoded = base64.b64decode(value, validate=True)
         except (binascii.Error, ValueError) as exception:
@@ -46,6 +52,7 @@ class ImageInput(BaseModel):
 
 
 class NewAgentRequest(BaseModel):
+    """创建 Agent 的请求：工作目录 + 首条消息/图片 + 模型与工具配置。"""
     cwd: str
     message: str = ""
     images: list[ImageInput] = Field(default_factory=list, max_length=4)
@@ -62,6 +69,7 @@ class NewAgentRequest(BaseModel):
 
 
 class AgentCommandRequest(BaseModel):
+    """统一命令请求：type 决定命令类型，其余字段按类型可选。"""
     type: str
     message: str | None = None
     images: list[ImageInput] = Field(default_factory=list, max_length=4)
@@ -93,6 +101,7 @@ async def create_agent(
     registry: AgentRegistry = Depends(get_registry),
     settings: ServerSettings = Depends(get_settings),
 ) -> dict[str, Any]:
+    """创建新会话并立即发送首条消息；启动失败会回滚删除刚建的会话。"""
     from pathlib import Path
 
     cwd = Path(body.cwd).expanduser()
@@ -130,6 +139,7 @@ async def command_agent(
     registry: AgentRegistry = Depends(get_registry),
     settings: ServerSettings = Depends(get_settings),
 ) -> dict[str, Any]:
+    """对已有会话发送命令；会话未激活时先按历史配置激活。"""
     entry = registry.get(session_id)
     if entry is None:
         try:
@@ -155,6 +165,7 @@ async def get_agent_state(
     session_id: str,
     registry: AgentRegistry = Depends(get_registry),
 ) -> dict[str, Any]:
+    """返回 Agent 是否在运行及其详细状态。"""
     entry = registry.get(session_id)
     return (
         {"running": True, "state": agent_state(entry)}
@@ -171,6 +182,7 @@ async def stream_agent_events(
     registry: AgentRegistry = Depends(get_registry),
     settings: ServerSettings = Depends(get_settings),
 ) -> StreamingResponse:
+    """SSE 事件流：从 after_event_id 之后开始回放（Last-Event-ID 续传）。"""
     del request
     entry = registry.get(session_id)
     if entry is None:

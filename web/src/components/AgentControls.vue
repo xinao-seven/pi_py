@@ -1,3 +1,4 @@
+<!-- Agent 控制条：模型 / 推理档位 / 工具预设选择、压缩按钮、上下文占用条与重试指示。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 
@@ -25,11 +26,13 @@ const modelKey = computed(() =>
   props.model ? `${props.model.provider}:${props.model.modelId}` : "",
 );
 const availableThinkingLevels = computed(() =>
+  // 当前模型支持的思考档位（来自模型目录）
   props.model
     ? props.catalog?.thinkingLevels[`${props.model.provider}:${props.model.modelId}`] ?? ["off"]
     : ["off"],
 );
 const toolPreset = computed(() => {
+  // 由当前激活工具集合推导预设：空=none，全部=full，否则=default
   if (props.activeTools.length === 0) return "none";
   if (["read", "bash", "edit", "write", "grep", "find", "ls"].every((name) => props.activeTools.includes(name))) {
     return "full";
@@ -38,6 +41,7 @@ const toolPreset = computed(() => {
 });
 
 function changeModel(event: Event): void {
+  // 根据下拉值（provider:model）触发模型切换
   const value = (event.target as HTMLSelectElement).value;
   const model = props.catalog?.modelList.find(
     (item) => `${item.provider}:${item.id}` === value,
@@ -46,6 +50,7 @@ function changeModel(event: Event): void {
 }
 
 function changeTools(event: Event): void {
+  // 按预设切换工具集合
   const preset = (event.target as HTMLSelectElement).value;
   if (preset === "none") emit("toolsChange", []);
   else if (preset === "full") {
