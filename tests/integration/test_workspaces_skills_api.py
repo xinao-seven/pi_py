@@ -18,6 +18,7 @@ async def test_default_and_selected_workspaces_are_controlled_by_parent(tmp_path
         ServerSettings(
             agent_dir=tmp_path / "agent",
             sessions_dir=tmp_path / "sessions",
+            own_config_dir=tmp_path / "agent-python",
             workspace_parent=parent,
         )
     )
@@ -52,6 +53,7 @@ async def test_skills_list_and_toggle_only_registered_skill_files(tmp_path: Path
         ServerSettings(
             agent_dir=tmp_path / "agent",
             sessions_dir=tmp_path / "sessions",
+            own_config_dir=tmp_path / "agent-python",
             workspace_parent=parent,
         )
     )

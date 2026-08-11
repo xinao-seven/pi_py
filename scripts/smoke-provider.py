@@ -14,9 +14,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from server.config import ServerSettings  # noqa: E402
 from server.services.agent_registry import ProviderConfigurationError  # noqa: E402
 from server.services.model_config import ModelConfigService  # noqa: E402
+from server.services.pi_config import PiConfig  # noqa: E402
 
 
 async def run() -> int:
+    # 脚本自身的 smoke 参数（不是 pi 的密钥/设置）；密钥只来自 auth.json
     provider_name = os.getenv("PI_SMOKE_PROVIDER", "anthropic").strip()
     model = os.getenv("PI_SMOKE_MODEL", "claude-sonnet-4-6").strip()
     prompt = os.getenv(
@@ -26,16 +28,17 @@ async def run() -> int:
     settings = ServerSettings.from_env()
     print(f"Provider smoke: provider={provider_name}, model={model}")
     print("This performs one real API request and may incur a small charge.")
+    pi_config = PiConfig(settings.agent_dir)
     try:
         provider = ModelConfigService(
-            settings.agent_dir,
-            secrets_file=settings.secrets_file,
+            pi_config,
+            settings.own_config_dir,
         ).resolve_provider(provider_name)
     except ProviderConfigurationError as exception:
         print(f"Configuration error: {exception}", file=sys.stderr)
         print(
-            "Set it in the current environment or the configured secrets.env; "
-            "do not paste the key into models.json.",
+            "Store the key in the original pi's ~/.pi/agent/auth.json "
+            "(e.g. via /login in pi); do not paste it into models.json.",
             file=sys.stderr,
         )
         return 2

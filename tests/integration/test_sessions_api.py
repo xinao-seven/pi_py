@@ -29,7 +29,7 @@ def _create_session(root: Path, cwd: Path) -> SessionManager:
 @pytest.mark.asyncio
 async def test_list_and_get_session_return_web_context(tmp_path: Path) -> None:
     manager = _create_session(tmp_path / "sessions", tmp_path / "workspace")
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -51,7 +51,7 @@ async def test_list_and_get_session_return_web_context(tmp_path: Path) -> None:
 async def test_context_can_select_a_specific_leaf(tmp_path: Path) -> None:
     manager = _create_session(tmp_path / "sessions", tmp_path / "workspace")
     first_entry_id = manager.get_entries()[0]["id"]
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -67,7 +67,7 @@ async def test_context_can_select_a_specific_leaf(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_rename_persists_and_missing_session_uses_error_envelope(tmp_path: Path) -> None:
     _create_session(tmp_path / "sessions", tmp_path / "workspace")
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -91,7 +91,7 @@ async def test_list_marks_malformed_session_as_orphan_without_opening_it(tmp_pat
     project_dir.mkdir(parents=True)
     broken = project_dir / "broken.jsonl"
     broken.write_text("not-json\n", encoding="utf-8")
-    app = create_app(ServerSettings(sessions_dir=sessions_dir))
+    app = create_app(ServerSettings(sessions_dir=sessions_dir, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

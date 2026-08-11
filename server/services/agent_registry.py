@@ -10,13 +10,11 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
 from typing import Any, Protocol
 
 from pi_agent import ToolRegistry
 from pi_ai.providers.base import LLMProvider
-from pi_ai.providers.registry import create_provider
 from pi_coding_agent import (
     AgentSession,
     CodingResourceLoader,
@@ -47,20 +45,6 @@ class ModelResolver(Protocol):
 class ProviderConfigurationError(ValueError):
     """Provider 未配置或密钥缺失时抛出的错误。"""
     pass
-
-
-def environment_provider_resolver(name: str) -> LLMProvider:
-    """默认 Provider 解析器：从环境变量 {NAME}_API_KEY / {NAME}_BASE_URL 构造。"""
-    normalized = "openai" if name == "openai-compatible" else name
-    prefix = normalized.upper().replace("-", "_")
-    api_key = os.getenv(f"{prefix}_API_KEY")
-    if not api_key:
-        raise ProviderConfigurationError(f"Environment variable {prefix}_API_KEY is not set")
-    return create_provider(
-        name,
-        api_key=api_key,
-        base_url=os.getenv(f"{prefix}_BASE_URL"),
-    )
 
 
 def _camelize_key(value: str) -> str:
@@ -218,12 +202,14 @@ class AgentRegistry:
         self,
         store: SessionStore,
         *,
-        provider_resolver: ProviderResolver = environment_provider_resolver,
+        provider_resolver: ProviderResolver | None = None,
         model_resolver: ModelResolver | None = None,
         agent_dir: str | Path | None = None,
         idle_timeout: float = 600,
     ) -> None:
-        # provider_resolver/model_resolver 可注入，测试用 FakeProvider 替换
+        # provider_resolver/model_resolver 由应用层注入（main.py 使用
+        # ModelConfigService，密钥来自原版 pi 的 auth.json）；不注入时
+        # 在首次解析 Provider 时给出明确错误，而不是读环境变量。
         self.store = store
         self.provider_resolver = provider_resolver
         self.model_resolver = model_resolver or (
@@ -320,6 +306,10 @@ class AgentRegistry:
     ) -> RegistryEntry:
         """核心装配：解析模型/Provider，构造工具与 AgentSession，创建注册项。"""
         resolved_model = self.model_resolver(provider_name, model)
+        if self.provider_resolver is None:
+            raise ProviderConfigurationError(
+                "Provider resolution is not configured for this server"
+            )
         provider = self.provider_resolver(resolved_model.provider)
         context = manager.build_session_context()
         branch = manager.get_branch()

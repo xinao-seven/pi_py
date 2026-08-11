@@ -36,7 +36,7 @@ async def test_list_and_read_only_within_session_workspace(tmp_path: Path) -> No
     (workspace / ".env").write_text("SECRET=value", encoding="utf-8")
     (workspace / "secrets.env").write_text("SECRET=value", encoding="utf-8")
     _allow_workspace(tmp_path / "sessions", workspace)
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -65,7 +65,7 @@ async def test_file_api_rejects_unregistered_roots_traversal_and_secrets(tmp_pat
     outside = tmp_path / "outside.txt"
     outside.write_text("outside", encoding="utf-8")
     _allow_workspace(tmp_path / "sessions", workspace)
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -96,7 +96,7 @@ async def test_text_size_limit_and_media_preview(tmp_path: Path) -> None:
     image = workspace / "pixel.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
     _allow_workspace(tmp_path / "sessions", workspace)
-    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions"))
+    app = create_app(ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

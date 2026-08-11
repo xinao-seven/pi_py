@@ -44,7 +44,7 @@ async def test_delete_reparents_direct_child_to_deleted_sessions_parent(tmp_path
         parent_session=str(parent.session_file),
     )
     _persist(child, "child", "child answer")
-    app = create_app(ServerSettings(sessions_dir=root))
+    app = create_app(ServerSettings(sessions_dir=root, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -69,7 +69,7 @@ async def test_list_resolves_parent_session_id_and_fork_copies_selected_path(tmp
     source.branch(first)
     source.append_message({"role": "user", "content": "branch request"})
     branch_leaf = source.append_message(_assistant("branch answer"))
-    app = create_app(ServerSettings(sessions_dir=root))
+    app = create_app(ServerSettings(sessions_dir=root, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -98,7 +98,7 @@ async def test_fork_rejects_unknown_entry(tmp_path: Path) -> None:
     directory = root / "project"
     source = SessionManager.create(tmp_path, directory, session_id="source")
     _persist(source, "request", "answer")
-    app = create_app(ServerSettings(sessions_dir=root))
+    app = create_app(ServerSettings(sessions_dir=root, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -124,7 +124,7 @@ async def test_merge_appends_bounded_custom_summary_to_target(tmp_path: Path) ->
         session_id="source",
     )
     _persist(source, "source-only request", "source-only answer")
-    app = create_app(ServerSettings(sessions_dir=root))
+    app = create_app(ServerSettings(sessions_dir=root, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -157,7 +157,7 @@ async def test_merge_rejects_self_and_source_without_unique_content(tmp_path: Pa
         directory,
         session_id="source",
     )
-    app = create_app(ServerSettings(sessions_dir=root))
+    app = create_app(ServerSettings(sessions_dir=root, own_config_dir=tmp_path / "agent-python"))
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

@@ -56,7 +56,9 @@ function addProvider(): void {
 }
 
 function configureDeepSeek(): void {
-  // 一键写入 DeepSeek V4 预设（Flash/Pro、1M 上下文、思考档位、密钥变量引用）
+  // 一键写入 DeepSeek V4 预设（Flash/Pro、1M 上下文、思考档位、密钥变量引用）。
+  // 写入的是 pi.py 自身配置目录（~/.pi/agent-python/models.json），
+  // 不会修改原版 pi 的 ~/.pi/agent/models.json。
   const preset: ProviderForm = {
     name: "deepseek",
     api: "deepseek-chat-completions",
@@ -86,7 +88,7 @@ function configureDeepSeek(): void {
   if (existingIndex === -1) providers.value.push(preset);
   else providers.value.splice(existingIndex, 1, preset);
   error.value = null;
-  presetNotice.value = "DeepSeek V4 预设已就绪；保存后请在 secrets.env 中填写 DEEPSEEK_API_KEY。";
+  presetNotice.value = "DeepSeek V4 预设已就绪；保存后请在原版 pi 的 auth.json 中配置 DEEPSEEK_API_KEY（或在 pi 中执行 /login）。";
 }
 
 function addModel(provider: ProviderForm): void {
@@ -160,7 +162,7 @@ function messageOf(cause: unknown): string {
 
       <div v-if="loading" class="config-state">正在读取 models.json…</div>
       <div v-else class="config-body">
-        <p class="config-help">API Key 只保存变量引用，例如 <code>$OPENAI_API_KEY</code>；真实值可放在当前环境或 <code>%USERPROFILE%\.pi\agent\secrets.env</code>，不会写入 models.json。</p>
+        <p class="config-help">这里编辑的是 pi.py 自己的模型配置（<code>%USERPROFILE%\.pi\agent-python\models.json</code>），不会改动原版 pi 的文件。API Key 只保存变量引用（例如 <code>$DEEPSEEK_API_KEY</code>），真实值来自原版 pi 的 <code>%USERPROFILE%\.pi\agent\auth.json</code>（在 pi 中执行 <code>/login</code> 即可写入），不会写入此文件。</p>
         <div class="config-presets">
           <button type="button" class="config-add" @click="configureDeepSeek">一键配置 DeepSeek V4</button>
           <button type="button" class="config-add" @click="addProvider">＋ 添加自定义 Provider</button>

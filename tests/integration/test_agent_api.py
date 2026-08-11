@@ -41,6 +41,7 @@ async def test_create_agent_runs_prompt_and_persists_session(tmp_path: Path) -> 
     settings = ServerSettings(
         sessions_dir=tmp_path / "sessions",
         idle_timeout_seconds=60,
+        own_config_dir=tmp_path / "agent-python",
     )
     app = create_app(settings, provider_resolver=lambda name: _provider())
     transport = httpx.ASGITransport(app=app)
@@ -76,7 +77,7 @@ async def test_create_agent_runs_prompt_and_persists_session(tmp_path: Path) -> 
 async def test_create_agent_accepts_image_only_content_and_persists_blocks(tmp_path: Path) -> None:
     provider = _provider()
     app = create_app(
-        ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60),
+        ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60, own_config_dir=tmp_path / "agent-python"),
         provider_resolver=lambda name: provider,
     )
     transport = httpx.ASGITransport(app=app)
@@ -107,7 +108,7 @@ async def test_create_agent_accepts_image_only_content_and_persists_blocks(tmp_p
 @pytest.mark.asyncio
 async def test_create_agent_rejects_invalid_image_content(tmp_path: Path) -> None:
     app = create_app(
-        ServerSettings(sessions_dir=tmp_path / "sessions"),
+        ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"),
         provider_resolver=lambda name: _provider(),
     )
     transport = httpx.ASGITransport(app=app)
@@ -128,7 +129,7 @@ async def test_create_agent_rejects_invalid_image_content(tmp_path: Path) -> Non
 @pytest.mark.asyncio
 async def test_event_stream_replays_events_and_honors_event_cursor(tmp_path: Path) -> None:
     app = create_app(
-        ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60),
+        ServerSettings(sessions_dir=tmp_path / "sessions", idle_timeout_seconds=60, own_config_dir=tmp_path / "agent-python"),
         provider_resolver=lambda name: _provider(),
     )
     registry = app.state.agent_registry
@@ -162,7 +163,7 @@ async def test_event_stream_replays_events_and_honors_event_cursor(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_invalid_workspace_and_unknown_command_return_api_errors(tmp_path: Path) -> None:
     app = create_app(
-        ServerSettings(sessions_dir=tmp_path / "sessions"),
+        ServerSettings(sessions_dir=tmp_path / "sessions", own_config_dir=tmp_path / "agent-python"),
         provider_resolver=lambda name: _provider(),
     )
     transport = httpx.ASGITransport(app=app)
@@ -208,6 +209,7 @@ async def test_model_switch_restores_provider_and_context_window(tmp_path: Path)
             default_provider="alpha",
             default_model="alpha-model",
             idle_timeout_seconds=60,
+            own_config_dir=tmp_path / "agent-python",
         ),
         provider_resolver=lambda name: providers[name],
     )
@@ -295,6 +297,7 @@ async def test_agent_registry_injects_global_resources(tmp_path: Path) -> None:
             agent_dir=agent_dir,
             sessions_dir=tmp_path / "sessions",
             idle_timeout_seconds=60,
+            own_config_dir=tmp_path / "agent-python",
         ),
         provider_resolver=lambda name: provider,
     )

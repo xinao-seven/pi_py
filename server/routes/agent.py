@@ -112,7 +112,7 @@ async def create_agent(
             cwd=cwd,
             provider_name=body.provider or settings.default_provider,
             model=body.modelId or settings.default_model,
-            thinking_level=body.thinkingLevel,
+            thinking_level=body.thinkingLevel or settings.default_thinking_level,
             tool_names=body.toolNames,
         )
     except ProviderConfigurationError as exception:
