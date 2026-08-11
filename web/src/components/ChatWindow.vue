@@ -6,6 +6,7 @@ import AgentControls from "@/components/AgentControls.vue";
 import BranchNavigator from "@/components/BranchNavigator.vue";
 import ChatInput from "@/components/ChatInput.vue";
 import MessageView from "@/components/MessageView.vue";
+import ToolApprovalDialog from "@/components/ToolApprovalDialog.vue";
 import { useAgentSession } from "@/composables/useAgentSession";
 import { forkSession, mergeSession } from "@/lib/api";
 import type { SessionInfo } from "@/types";
@@ -49,6 +50,7 @@ const {
   statusLabel,
   send,
   abort,
+  approveToolCall,
   steer,
   followUp,
   changeModel,
@@ -270,5 +272,10 @@ watch(
         <div class="local-note">内容保存在本机 Session v3 文件中</div>
       </div>
     </template>
+    <ToolApprovalDialog
+      v-if="stream.pendingToolCall"
+      :pending="stream.pendingToolCall"
+      @approve="approveToolCall"
+    />
   </section>
 </template>

@@ -54,6 +54,17 @@ async def send_command(entry: RegistryEntry, command: dict[str, Any]) -> dict[st
     if command_type == "abort":
         await agent.abort()
         return {"aborted": True}
+    if command_type == "approve_tool":
+        # 危险命令人工确认：对挂起的工具调用给出允许/拒绝
+        tool_call_id = _required_text(command, "toolCallId")
+        approved = bool(command.get("approved", False))
+        if not entry.tool_approval.resolve(tool_call_id, approved):
+            raise APIError(
+                422,
+                "no_pending_tool_call",
+                f"No pending tool call to approve: {tool_call_id!r}",
+            )
+        return {"toolCallId": tool_call_id, "approved": approved}
     if command_type == "set_model":
         provider_name = _optional_text(command.get("provider")) or agent.provider.name
         resolved = entry.set_model(provider_name, _required_text(command, "modelId"))

@@ -23,6 +23,7 @@ from pi_coding_agent import (
     create_builtin_tools,
 )
 from server.services.session_store import SessionStore
+from server.services.tool_approval import ToolApprovalGate
 
 
 class ProviderResolver(Protocol):
@@ -67,12 +68,13 @@ def web_value(value: Any) -> Any:
 @dataclass(slots=True, eq=False)
 class RegistryEntry:
     """一个活跃 Agent 的注册项：持有 AgentSession、事件回放队列、
-    订阅者队列、空闲定时器与运行任务集合。"""
+    订阅者队列、空闲定时器、工具审批门与运行任务集合。"""
     agent: AgentSession
     idle_timeout: float
     on_idle: Callable[[str], None]
     provider_resolver: ProviderResolver
     model_resolver: ModelResolver
+    tool_approval: ToolApprovalGate
     replay_limit: int = 256
     _events: deque[tuple[int, dict[str, Any]]] = field(init=False)
     _subscribers: set[asyncio.Queue[tuple[int, dict[str, Any]]]] = field(default_factory=set)
@@ -86,6 +88,8 @@ class RegistryEntry:
         self._events = deque(maxlen=self.replay_limit)
         # 订阅 Agent 内部事件，统一转成带序号的事件流
         self._unsubscribe_agent = self.agent.subscribe(self._publish_agent_event)
+        # 工具审批门用注册项的事件发布器广播 pending 事件
+        self.tool_approval.bind_publisher(self.publish)
         self.touch()
 
     @property
@@ -178,7 +182,7 @@ class RegistryEntry:
         self._idle_task = None
 
     async def close(self) -> None:
-        """关闭注册项：退订、中止 Agent、取消全部任务并清空订阅者。"""
+        """关闭注册项：退订、中止 Agent、清理审批挂起项并取消全部任务。"""
         if not self.alive:
             return
         self.alive = False
@@ -186,6 +190,8 @@ class RegistryEntry:
         if self._unsubscribe_agent is not None:
             self._unsubscribe_agent()
             self._unsubscribe_agent = None
+        # 未确认的危险命令按“拒绝”处理，避免关闭后仍挂起
+        self.tool_approval.cancel_all()
         await self.agent.abort()
         tasks = list(self._tasks)
         for task in tasks:
@@ -311,6 +317,8 @@ class AgentRegistry:
                 "Provider resolution is not configured for this server"
             )
         provider = self.provider_resolver(resolved_model.provider)
+        # 危险命令人工确认门：Agent 执行工具前调用，挂起等待用户允许/拒绝
+        approval_gate = ToolApprovalGate()
         context = manager.build_session_context()
         branch = manager.get_branch()
         # 首次创建的会话：把初始模型与思考档位持久化到 Session
@@ -330,6 +338,7 @@ class AgentRegistry:
             context_window=resolved_model.context_window,
             compaction_settings=CompactionSettings(),
             resource_loader=CodingResourceLoader(manager.cwd, agent_dir=self.agent_dir),
+            tool_approver=approval_gate.approve,
         )
         entry = RegistryEntry(
             agent=agent,
@@ -337,6 +346,7 @@ class AgentRegistry:
             on_idle=self.remove_later,
             provider_resolver=self.provider_resolver,
             model_resolver=self.model_resolver,
+            tool_approval=approval_gate,
         )
         self._entries[manager.session_id] = entry
         return entry

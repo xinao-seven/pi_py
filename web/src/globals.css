@@ -1455,6 +1455,48 @@ select:focus-visible {
   background: var(--accent);
 }
 
+/* 危险命令确认弹窗 */
+.approval-dialog {
+  width: min(560px, 100%);
+  min-height: 0;
+}
+
+.approval-reason {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.approval-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.approval-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.approval-hint {
+  margin: 10px 0 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.approval-footer {
+  gap: 8px;
+}
+
+.approval-footer .danger-action {
+  border-color: rgba(255, 129, 120, 0.35);
+  color: var(--danger);
+}
+
 .skills-list {
   display: grid;
   gap: 10px;

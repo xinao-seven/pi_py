@@ -188,7 +188,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     if ((!text && images.length === 0) || stream.running) return;
     const imageBlocks = images.map(toImageBlock);
     error.value = null;
-    assignStream({ running: true, phase: "waiting", streamingMessage: null, error: null });
+    assignStream({ running: true, phase: "waiting", streamingMessage: null, error: null, pendingToolCall: null });
     try {
       if (activeSessionId.value === null) {
         // 新会话：带模型/思考/工具配置创建 Agent 并连接事件流
@@ -223,6 +223,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         phase: "idle",
         streamingMessage: null,
         error: errorMessage(cause),
+        pendingToolCall: null,
       });
     }
   }
@@ -232,6 +233,23 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (!activeSessionId.value || !stream.running) return;
     try {
       await sendAgentCommand(activeSessionId.value, { type: "abort" });
+    } catch (cause) {
+      error.value = errorMessage(cause);
+    }
+  }
+
+  async function approveToolCall(approved: boolean): Promise<void> {
+    // 危险命令人工确认：对挂起的工具调用给出允许/拒绝
+    const pending = stream.pendingToolCall;
+    if (!activeSessionId.value || !pending) return;
+    try {
+      await sendAgentCommand(activeSessionId.value, {
+        type: "approve_tool",
+        toolCallId: pending.toolCallId,
+        approved,
+      });
+      // 乐观清除弹窗；后续 tool_execution_end/blocked 事件会再次同步状态
+      stream.pendingToolCall = null;
     } catch (cause) {
       error.value = errorMessage(cause);
     }
@@ -411,6 +429,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     statusLabel,
     send,
     abort,
+    approveToolCall,
     steer,
     followUp,
     changeModel,

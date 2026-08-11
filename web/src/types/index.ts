@@ -209,12 +209,22 @@ export interface AgentEvent {
 export type AgentPhase = "idle" | "waiting" | "responding" | "tool";
 // Agent 阶段：空闲 / 等待模型 / 正在生成 / 正在执行工具
 
+export interface PendingToolCall {
+  // 等待人工确认的危险工具调用（来自 tool_call_pending 事件）
+  toolCallId: string;
+  toolName: string;
+  reason: string;
+  rule: string;
+  args: Record<string, unknown>;
+}
+
 export interface AgentStreamState {
-  // 前端简化的流式状态机：运行中、阶段、当前流式消息与错误
+  // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误与待确认工具调用
   running: boolean;
   phase: AgentPhase;
   streamingMessage: AgentMessage | null;
   error: string | null;
+  pendingToolCall: PendingToolCall | null;
 }
 
 export interface RetryInfo {

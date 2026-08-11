@@ -105,6 +105,9 @@
   默认工作区；切换时创建新会话上下文，不会原地修改历史 Session 的 cwd。
 - 新会话会持久化初始模型与 thinking level；重新激活会恢复历史 Provider/模型，`set_model`
   支持跨 Provider 原子切换。
+- 危险命令人工确认：bash 工具执行前经 `ToolApprovalGate` 匹配危险命令黑名单，命中则广播
+  `tool_call_pending` 事件并挂起执行；`approve_tool` 命令允许/拒绝，拒绝或 60 秒超时按
+  “不执行”处理并归一化为 isError toolResult；前端弹出 `ToolApprovalDialog` 确认弹窗。
 - Server 的全局 `agent_dir` 已注入每个 AgentSession，用户级 AGENTS、system prompt、prompts
   与 skills 会进入实际运行链路。
 

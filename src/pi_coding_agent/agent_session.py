@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from pi_agent.agent import Agent
+from pi_agent.agent_loop import ToolApprover
 from pi_agent.tool_registry import ToolRegistry
 from pi_ai.providers.base import LLMProvider
 from pi_ai.utils import RetryPolicy
@@ -58,6 +59,7 @@ class AgentSession(Agent):
         branch_summarizer: BranchSummarizer | None = None,
         branch_summary_reserve_tokens: int = 16_384,
         resource_loader: CodingResourceLoader | None = None,
+        tool_approver: ToolApprover | None = None,
     ) -> None:
         # compaction：上下文超阈值时自动压缩；branch summary：切换分支时可保留被遗弃分支的摘要
         self.session_manager = session_manager
@@ -89,6 +91,7 @@ class AgentSession(Agent):
             tool_execution=tool_execution,
             retry_policy=retry_policy,
             context_window=context_window,
+            tool_approver=tool_approver,
         )
 
     @property

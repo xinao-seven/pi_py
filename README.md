@@ -128,7 +128,7 @@ Windows 下也可从项目根目录一键启动开发环境：
 | 端点 | 说明 |
 |------|------|
 | `/api/sessions` | 会话列表、详情、上下文、重命名、删除、merge、fork |
-| `/api/agent` | Agent 创建、统一命令、状态与 SSE 事件流 |
+| `/api/agent` | Agent 创建、统一命令（含 `approve_tool` 危险命令确认）、状态与 SSE 事件流 |
 | `/api/files` | 限定在 Session 工作区内的目录浏览、文件预览与变化监听 |
 | `/api/models`、`/api/models-config` | 模型目录（只读合并）与 pi.py 自身 Provider 配置 |
 | `/api/skills` | 本地 Skills 发现、诊断与启停 |
@@ -151,6 +151,10 @@ pi.py 自己的 `~/.pi/agent-python/models.json`（**不会**修改原版 pi 的
 - 不要把 `.env`、`secrets.env`、API Key 或凭据文件放入 Session 工作区；Files API
   会拦截常见敏感文件、密钥后缀与工作区外路径。
 - 模型配置界面只保存 `$ENV_VAR` 引用，任何 API 响应都不包含真实密钥。
+- **危险命令人工确认**：模型请求执行 `bash` 命令前会经过危险命令黑名单检查
+  （递归删除、格式化、关机、提权删除、强制 Git 推送、批量卸载、远程脚本管道执行等），
+  命中时弹出确认弹窗，需人工允许才会执行；拒绝或 60 秒超时自动拦截。
+  规则清单见 `server/services/tool_approval.py` 的 `DANGEROUS_RULES`。
 
 ## 开发
 

@@ -87,6 +87,20 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 - 不要把 `.env`、`secrets.env`、凭据文件放进 Session 工作区；Files API 的敏感文件
   拦截清单新增敏感类型时要同步更新测试。
 
+### 4.4 危险命令人工确认
+
+- 所有 `bash` 工具调用在**执行前**经过 `ToolApprovalGate`（`server/services/tool_approval.py`）：
+  命中 `DANGEROUS_RULES` 黑名单（递归删除、格式化、关机、提权删除、强制推送、
+  批量卸载、远程脚本管道执行等）时广播 `tool_call_pending` 事件并**挂起**执行，
+  等待 `approve_tool` 命令给出允许/拒绝。
+- 拒绝/超时（默认 60 秒）按“拒绝”处理，工具不执行，结果归一化为 `isError` 的
+  toolResult 交给模型；Agent 被中止或注册项关闭时未确认项一律按拒绝清理。
+- 新增危险规则必须同步 `DANGEROUS_RULES` 与 `tests/unit/test_tool_approval.py` 的
+  命中/放行用例；集成测试用 `FakeProvider` + 真实 `Remove-Item` 验证允许/拒绝两侧。
+- 前端收到 `tool_call_pending` 弹出 `ToolApprovalDialog`（`web/src/components/`），
+  允许/拒绝通过 `approve_tool` 命令下发；事件流保持 `pi_agent` 层的
+  `ToolApprover` 协议通用（不感知具体规则）。
+
 ## 5. 测试规范
 
 - 后端：`tests/unit/`（纯逻辑）+ `tests/integration/`（ASGI 全链路，注入

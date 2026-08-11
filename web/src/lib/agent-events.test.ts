@@ -26,4 +26,59 @@ describe("reduceAgentEvent", () => {
     expect(ended.error).toBe("provider unavailable");
     expect(ended.running).toBe(false);
   });
+
+  it("shows a pending tool call until approval is resolved", () => {
+    const started = reduceAgentEvent(INITIAL_STREAM_STATE, { type: "agent_start" });
+    const pending = reduceAgentEvent(started, {
+      type: "tool_call_pending",
+      toolCallId: "call-1",
+      toolName: "bash",
+      reason: "递归/强制删除文件或目录",
+      rule: "recursive-delete",
+      args: { command: "rm -rf ./build" },
+    });
+
+    expect(pending.phase).toBe("tool");
+    expect(pending.pendingToolCall).toEqual({
+      toolCallId: "call-1",
+      toolName: "bash",
+      reason: "递归/强制删除文件或目录",
+      rule: "recursive-delete",
+      args: { command: "rm -rf ./build" },
+    });
+
+    const rejected = reduceAgentEvent(pending, {
+      type: "tool_execution_blocked",
+      toolCallId: "call-1",
+    });
+    expect(rejected.pendingToolCall).toBeNull();
+    expect(rejected.phase).toBe("waiting");
+  });
+
+  it("clears pending on execution end and agent end", () => {
+    const pending = reduceAgentEvent(INITIAL_STREAM_STATE, {
+      type: "tool_call_pending",
+      toolCallId: "call-1",
+      toolName: "bash",
+      reason: "格式化磁盘",
+      args: { command: "format c:" },
+    });
+    const executed = reduceAgentEvent(pending, {
+      type: "tool_execution_end",
+      toolCallId: "call-1",
+      isError: false,
+    });
+    expect(executed.pendingToolCall).toBeNull();
+
+    const again = reduceAgentEvent(INITIAL_STREAM_STATE, {
+      type: "tool_call_pending",
+      toolCallId: "call-2",
+      toolName: "bash",
+      reason: "关机",
+      args: { command: "shutdown /s" },
+    });
+    const ended = reduceAgentEvent(again, { type: "agent_end", error: null });
+    expect(ended.pendingToolCall).toBeNull();
+    expect(ended).toEqual(INITIAL_STREAM_STATE);
+  });
 });

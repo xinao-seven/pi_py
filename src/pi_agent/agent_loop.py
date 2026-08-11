@@ -28,6 +28,21 @@ from pi_agent.types import ToolError
 EventListener = Callable[[AgentEvent], None | Awaitable[None]]
 
 
+class ToolApprover(Protocol):
+    """工具执行前的审批钩子：返回 True 放行，False 拒绝。
+
+    中文说明：由应用层注入（如危险命令人工确认）。pi_agent 层只负责
+    在工具执行前调用并信任返回值，不知道“危险命令”的具体规则。
+    """
+
+    def __call__(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Awaitable[bool]: ...
+
+
 class TranscriptStore(Protocol):
     # 转录存储协议：AgentRuntime 只依赖这四个方法，不关心底层是文件还是数据库
     def build_session_context(self) -> dict[str, Any]: ...
@@ -63,6 +78,7 @@ class AgentRuntime:
         tool_execution: Literal["sequential", "parallel"] = "parallel",
         retry_policy: RetryPolicy | None = None,
         context_window: int = 0,
+        tool_approver: ToolApprover | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -73,6 +89,8 @@ class AgentRuntime:
         self.tool_execution = tool_execution
         self.retry_policy = retry_policy
         self.context_window = context_window
+        # 工具审批钩子：None 表示直接执行（默认行为）
+        self.tool_approver = tool_approver
         # 从 Session 恢复的历史上下文；无 Session 时从空列表开始
         self.messages: list[dict[str, Any]] = (
             session.build_session_context()["messages"] if session is not None else []
@@ -483,10 +501,30 @@ class AgentRuntime:
         )
 
     async def _run_tool(self, call: dict[str, Any]) -> dict[str, Any]:
-        """运行单个工具调用：成功返回结构化结果，异常归一化为 isError 的 toolResult。"""
+        """运行单个工具调用：成功返回结构化结果，异常归一化为 isError 的 toolResult；
+        配置了审批钩子且用户拒绝时，不执行并同样归一化为 isError。"""
         call_id = call["id"]
         name = call["name"]
         arguments = call["arguments"]
+        if self.tool_approver is not None:
+            try:
+                approved = await self.tool_approver(call_id, name, arguments)
+            except asyncio.CancelledError:
+                raise
+            if not approved:
+                # 用户拒绝：不执行，返回 isError 的 toolResult 交给模型继续推理
+                await self._emit(
+                    "tool_execution_blocked",
+                    toolCallId=call_id,
+                    toolName=name,
+                    args=deepcopy(arguments),
+                )
+                return self._tool_message(
+                    call_id,
+                    name,
+                    [{"type": "text", "text": "Tool call was blocked by the user"}],
+                    is_error=True,
+                )
         try:
             result = await self.tools.execute(call_id, name, arguments)
         except asyncio.CancelledError:
@@ -499,14 +537,7 @@ class AgentRuntime:
             content = deepcopy(result.content)
             details = deepcopy(result.details)
             is_error = result.is_error
-        tool_message = {
-            "role": "toolResult",
-            "toolCallId": call_id,
-            "toolName": name,
-            "content": content,
-            "isError": is_error,
-            "timestamp": _timestamp_ms(),
-        }
+        tool_message = self._tool_message(call_id, name, content, is_error=is_error)
         await self._emit(
             "tool_execution_end",
             toolCallId=call_id,
@@ -515,3 +546,21 @@ class AgentRuntime:
             isError=is_error,
         )
         return tool_message
+
+    @staticmethod
+    def _tool_message(
+        call_id: str,
+        name: str,
+        content: list[dict[str, Any]],
+        *,
+        is_error: bool,
+    ) -> dict[str, Any]:
+        """构造工具结果消息（统一 role/toolCallId/toolName/isError 结构）。"""
+        return {
+            "role": "toolResult",
+            "toolCallId": call_id,
+            "toolName": name,
+            "content": content,
+            "isError": is_error,
+            "timestamp": _timestamp_ms(),
+        }

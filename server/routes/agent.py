@@ -85,6 +85,8 @@ class AgentCommandRequest(BaseModel):
     content: str | list[dict[str, Any]] | None = None
     display: bool = True
     details: Any = None
+    toolCallId: str | None = None
+    approved: bool = False
 
 
 def get_registry(request: Request) -> AgentRegistry:
