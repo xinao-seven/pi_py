@@ -88,15 +88,19 @@
 - Files API 支持目录浏览、UTF-8 文本、图片/音频预览和轮询 SSE 文件变化监听。
 - 文件访问只允许已保存 Session 或活跃 Agent 的 cwd；真实路径解析后再次检查边界，并拦截
   `.env`、密钥、凭据和敏感配置目录。
-- Models Config 使用原子 JSON 写入；`apiKey` 只允许 `$ENV_VAR` 引用，真实值可从进程环境或
-  用户级 `secrets.env` 读取，解析后的密钥不会通过 API 返回。
-- Models API 汇总配置模型、默认模型和 thinking level 能力，配置后的 Provider 可直接供
-  AgentRegistry 创建实例。
+- Models Config 使用原子 JSON 写入到 pi.py 自身目录（`~/.pi/agent-python/models.json`），
+  与原版 pi 的 `models.json` 完全隔离；`apiKey` 只允许 `$ENV_VAR` 引用，真实值只从
+  原版 pi 的 `auth.json` 解析（不再使用环境变量或 secrets.env），解析后的密钥不会通过 API 返回。
+- Models API 汇总 pi 的 models-store.json 内置目录 + pi 的 models.json 用户覆盖
+  （均只读）+ pi.py 自身覆盖，默认 Provider/模型/思考档位取自原版 pi 的 settings.json；
+  配置后的 Provider 可直接供 AgentRegistry 创建实例。
 - DeepSeek V4 使用独立 Provider 适配器，支持官方 Chat Completions 流、工具调用、思考开关和
-  reasoning effort；Models Config 可一键写入 V4 Flash/Pro、1M 上下文及安全密钥引用。
+  reasoning effort；Models Config 可一键写入 V4 Flash/Pro、1M 上下文及安全密钥引用，
+  写入目标是 pi.py 自身目录，不会改动原版 pi 的配置。
 - Skills API 复用 Coding Agent 的本地发现逻辑，支持诊断展示和
   `disable-model-invocation` 原子切换，并刷新活跃 Agent 的资源。
-- 工作区 API 可在受控父目录下创建默认 cwd、登记已有目录并列出允许根目录；Files 和 Skills
+- 工作区 API 可在受控父目录下创建默认 cwd、登记已有目录并列出允许根目录；手动登记的工作区
+  持久化到 `~/.pi/agent-python/workspaces.json`，重启不丢失；Files 和 Skills
   共用同一根目录集合。Web 端提供项目切换弹窗，可复用历史目录、输入受控范围内的新路径或创建
   默认工作区；切换时创建新会话上下文，不会原地修改历史 Session 的 cwd。
 - 新会话会持久化初始模型与 thinking level；重新激活会恢复历史 Provider/模型，`set_model`
@@ -180,7 +184,7 @@
 - ModelsConfig 与 SkillsConfig 支持 Escape 关闭、打开后自动聚焦关闭按钮；全站保留键盘焦点样式、
   reduced-motion 和移动端覆盖式布局。消息正文、Markdown 与工具状态使用主题变量，亮色模式保持
   深色文字；用户消息只走单一渲染路径，输入框移除多余的黄色焦点框。
-- 新增真实 Provider smoke 脚本，从环境变量或用户级 `secrets.env` 读取密钥，显示 Provider/模型
+- 新增真实 Provider smoke 脚本，从原版 pi 的 `auth.json` 读取密钥（不读环境变量），显示 Provider/模型
   但不回显 Key；调用
   必须由用户显式执行，因为会访问真实服务并可能产生费用。
 
@@ -193,9 +197,9 @@
 - grep/find 会忽略 `.git`、`node_modules` 和 `__pycache__`，但尚未完整解析任意 `.gitignore` 规则。
 - bash 已处理直接子进程的超时和取消；完整跨平台进程树终止仍需专项验证。
 - Provider 请求和 SSE 映射已有完全离线测试，但尚未进行需要 API Key 的受控真实服务 smoke test。
-- Models Config 不保存明文 API Key，只接受变量引用；真实值由仓库外的用户级 `secrets.env` 或
-  环境变量提供，与参考 Web 允许直接保存字符串的行为不同。
-- 原生 Windows 文件夹选择器由 `PI_SERVER_WORKSPACE_PARENT` 下的受控选择接口替代。
+- Models Config 不保存明文 API Key，只接受变量引用；真实值来自原版 pi 的 `auth.json`，
+  与参考 Web 允许直接保存字符串的行为不同。
+- 原生 Windows 文件夹选择器由用户主目录下的受控选择接口替代，登记结果持久化在 pi.py 自身目录。
 
 ## 验证结果
 
