@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { vi } from "vitest";
 
 import { getModelsConfig, saveModelsConfig } from "@/lib/api";
-import ModelsConfig from "./ModelsConfig.vue";
+import ModelsConfig from "@/components/ModelsConfig.vue";
 
 vi.mock("@/lib/api", () => ({
   getModelsConfig: vi.fn(),

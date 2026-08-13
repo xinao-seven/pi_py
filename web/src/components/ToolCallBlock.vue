@@ -22,7 +22,13 @@ const status = computed(() => {
 </script>
 
 <template>
-  <details class="tool-call" :class="{ 'tool-call--error': result?.isError }">
+  <details
+    class="tool-call"
+    :class="{
+      'tool-call--error': result?.isError,
+      'tool-call--success': !!result && !result.isError,
+    }"
+  >
     <summary>
       <span class="tool-glyph" aria-hidden="true">›_</span>
       <span class="tool-name">{{ call.name || "tool" }}</span>

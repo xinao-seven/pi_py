@@ -1,11 +1,9 @@
 from pathlib import Path
 
-import pytest
-
 from server.services.workspace_service import WorkspaceService
 
 
-def test_select_allows_descendants_of_registered_roots(tmp_path: Path) -> None:
+def test_select_allows_any_existing_directory_chosen_by_the_user(tmp_path: Path) -> None:
     configured_parent = tmp_path / "home"
     configured_parent.mkdir()
     registered_root = tmp_path / "external" / "code"
@@ -17,8 +15,8 @@ def test_select_allows_descendants_of_registered_roots(tmp_path: Path) -> None:
 
     assert service.select(project) == project.resolve()
     assert project.resolve() in service.roots()
-    with pytest.raises(PermissionError, match="configured parent or a registered workspace"):
-        service.select(unrelated)
+    assert service.select(unrelated) == unrelated.resolve()
+    assert unrelated.resolve() in service.roots()
 
 
 def test_selected_workspaces_persist_across_instances(tmp_path: Path) -> None:

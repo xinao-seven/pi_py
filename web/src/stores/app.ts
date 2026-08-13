@@ -15,17 +15,13 @@ export const useAppStore = defineStore("app", () => {
   const activeFilePath = ref<string | null>(null);
   const modelsConfigOpen = ref(false);
   const skillsConfigOpen = ref(false);
-  const theme = ref<"dark" | "light">("dark");
+  const theme = ref<"dark" | "light">("light");
   const soundEnabled = ref(false);
 
   function initializePreferences(): void {
     // 启动时从 localStorage 恢复主题与声音偏好，并应用主题
     const savedTheme = window.localStorage.getItem("pi.theme");
-    theme.value = savedTheme === "light" || savedTheme === "dark"
-      ? savedTheme
-      : window.matchMedia?.("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark";
+    theme.value = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
     soundEnabled.value = window.localStorage.getItem("pi.sound") === "true";
     applyTheme();
   }

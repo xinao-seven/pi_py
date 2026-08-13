@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { vi } from "vitest";
 
 import { getSkills, setSkillDisabled } from "@/lib/api";
-import SkillsConfig from "./SkillsConfig.vue";
+import SkillsConfig from "@/components/SkillsConfig.vue";
 
 vi.mock("@/lib/api", () => ({
   getSkills: vi.fn(),

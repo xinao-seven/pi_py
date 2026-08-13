@@ -95,7 +95,7 @@ pi_py/
 ├── src/pi_coding_agent/       # 对应 packages/coding-agent
 ├── server/
 ├── web/
-├── tests/
+├── test/
 │   ├── unit/
 │   ├── integration/
 │   └── fixtures/

@@ -624,7 +624,7 @@ class AutoRetryEndEvent(AgentEvent):
 ## 7. 测试策略
 
 ```
-tests/
+test/
 ├── test_session_manager.py    # .jsonl 读写、fork、navigate_tree
 ├── test_session_context.py    # build_session_context
 ├── test_tools.py              # 每种工具独立测试

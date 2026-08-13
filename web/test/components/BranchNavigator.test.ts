@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 
 import type { SessionTreeNode } from "@/types";
-import BranchNavigator from "./BranchNavigator.vue";
+import BranchNavigator from "@/components/BranchNavigator.vue";
 
 const tree: SessionTreeNode[] = [
   {

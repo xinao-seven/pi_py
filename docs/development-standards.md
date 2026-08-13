@@ -14,7 +14,7 @@
   [`docs/implementation-plan.md`](implementation-plan.md)）。参考仓库更新时，
   先记录新提交号与兼容差异，再决定是否跟进，避免基线漂移。
 - 分层与依赖方向见 [`docs/three-layer-architecture.md`](three-layer-architecture.md)，
-  这是**硬性约束**，由 `tests/unit/test_architecture.py` 校验：
+  这是**硬性约束**，由 `test/unit/test_architecture.py` 校验：
   - `pi_ai` 不得导入 `pi_agent` / `pi_coding_agent`
   - `pi_agent` 不得导入 `pi_coding_agent`
   - FastAPI（`server/`）与 Vue（`web/`）位于 `pi_coding_agent` 之上
@@ -27,7 +27,7 @@ src/pi_agent/         # 中层：通用 Agent loop、事件、工具抽象
 src/pi_coding_agent/  # 顶层：Session v3、Coding Agent 组装、资源加载、工具实现
 server/               # FastAPI 应用层：routes（薄）→ services（逻辑）→ errors（统一错误）
 web/                  # Vue 3 + Vite + Pinia 前端
-tests/                # unit（纯逻辑）/ integration（ASGI 全链路）/ compat（pi fixture）
+test/                 # unit（纯逻辑）/ integration（ASGI 全链路）/ compat（pi fixture）
 scripts/              # 启动与验证脚本（.ps1 / .bat / .py）
 docs/                 # 架构、计划、实施状态等文档
 ```
@@ -95,7 +95,7 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
   等待 `approve_tool` 命令给出允许/拒绝。
 - 拒绝/超时（默认 60 秒）按“拒绝”处理，工具不执行，结果归一化为 `isError` 的
   toolResult 交给模型；Agent 被中止或注册项关闭时未确认项一律按拒绝清理。
-- 新增危险规则必须同步 `DANGEROUS_RULES` 与 `tests/unit/test_tool_approval.py` 的
+- 新增危险规则必须同步 `DANGEROUS_RULES` 与 `test/unit/test_tool_approval.py` 的
   命中/放行用例；集成测试用 `FakeProvider` + 真实 `Remove-Item` 验证允许/拒绝两侧。
 - 前端收到 `tool_call_pending` 弹出 `ToolApprovalDialog`（`web/src/components/`），
   允许/拒绝通过 `approve_tool` 命令下发；事件流保持 `pi_agent` 层的
@@ -103,7 +103,7 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 
 ## 5. 测试规范
 
-- 后端：`tests/unit/`（纯逻辑）+ `tests/integration/`（ASGI 全链路，注入
+- 后端：`test/unit/`（纯逻辑）+ `test/integration/`（ASGI 全链路，注入
   `FakeProvider`，绝不访问网络）。
 - 前端：`web/src/**/*.test.ts`（vitest）+ typecheck + lint + build。
 - **改动必须附带测试**；集成测试的 `ServerSettings` 必须隔离 `agent_dir` /

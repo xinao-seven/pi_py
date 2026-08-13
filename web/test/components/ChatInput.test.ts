@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { vi } from "vitest";
 
-import ChatInput from "./ChatInput.vue";
+import ChatInput from "@/components/ChatInput.vue";
 
 describe("ChatInput", () => {
   it("submits trimmed text with Enter", async () => {

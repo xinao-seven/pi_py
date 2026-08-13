@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 
-import { useAppStore } from "./app";
+import { useAppStore } from "@/stores/app";
 
 describe("app store file tabs", () => {
   it("deduplicates tabs, chooses a neighbor on close, and resets across workspaces", () => {

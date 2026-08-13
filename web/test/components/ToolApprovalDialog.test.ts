@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 
 import type { PendingToolCall } from "@/types";
-import ToolApprovalDialog from "./ToolApprovalDialog.vue";
+import ToolApprovalDialog from "@/components/ToolApprovalDialog.vue";
 
 const PENDING: PendingToolCall = {
   toolCallId: "call-1",

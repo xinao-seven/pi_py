@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 
-import AgentControls from "./AgentControls.vue";
+import AgentControls from "@/components/AgentControls.vue";
 
 const catalog = {
   models: { "alpha:a": "Alpha", "beta:b": "Beta" },

@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 
-import MessageView from "./MessageView.vue";
+import MessageView from "@/components/MessageView.vue";
 
 describe("MessageView", () => {
   it("renders a user message only once", () => {

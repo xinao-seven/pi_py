@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { vi } from "vitest";
 
 import { listFiles } from "@/lib/api";
-import FileExplorer from "./FileExplorer.vue";
+import FileExplorer from "@/components/FileExplorer.vue";
 
 vi.mock("@/lib/api", () => ({
   listFiles: vi.fn(),

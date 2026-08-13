@@ -5,14 +5,16 @@ import {
   createDefaultWorkspace,
   getWorkspaceHome,
   listWorkspaces,
+  pickWorkspaceDirectory,
   selectWorkspace,
 } from "@/lib/api";
-import WorkspaceSwitcher from "./WorkspaceSwitcher.vue";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher.vue";
 
 vi.mock("@/lib/api", () => ({
   createDefaultWorkspace: vi.fn(),
   getWorkspaceHome: vi.fn(),
   listWorkspaces: vi.fn(),
+  pickWorkspaceDirectory: vi.fn(),
   selectWorkspace: vi.fn(),
 }));
 
@@ -55,5 +57,19 @@ describe("WorkspaceSwitcher", () => {
       ["C:/work/new-project"],
       ["C:/work/pi-cwd-20260801"],
     ]);
+  });
+
+  it("selects a project through the native folder picker", async () => {
+    vi.mocked(getWorkspaceHome).mockResolvedValue("C:/work");
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(pickWorkspaceDirectory).mockResolvedValue("D:/projects/example");
+    const wrapper = mount(WorkspaceSwitcher, { props: { currentCwd: null } });
+    await flushPromises();
+
+    await wrapper.get("button.workspace-picker-button").trigger("click");
+    await flushPromises();
+
+    expect(pickWorkspaceDirectory).toHaveBeenCalledOnce();
+    expect(wrapper.emitted("selected")).toEqual([["D:/projects/example"]]);
   });
 });

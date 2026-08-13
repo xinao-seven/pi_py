@@ -1,4 +1,4 @@
-import { INITIAL_STREAM_STATE, messageText, reduceAgentEvent } from "./agent-events";
+import { INITIAL_STREAM_STATE, messageText, reduceAgentEvent } from "@/lib/agent-events";
 
 describe("reduceAgentEvent", () => {
   it("tracks a streaming assistant response through completion", () => {

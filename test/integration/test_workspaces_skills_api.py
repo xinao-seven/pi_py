@@ -8,7 +8,7 @@ from server.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_default_and_selected_workspaces_are_controlled_by_parent(tmp_path: Path) -> None:
+async def test_default_and_selected_workspaces_can_be_any_existing_directory(tmp_path: Path) -> None:
     parent = tmp_path / "allowed"
     selected = parent / "project"
     selected.mkdir(parents=True)
@@ -27,13 +27,35 @@ async def test_default_and_selected_workspaces_are_controlled_by_parent(tmp_path
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         default = await client.post("/api/default-cwd")
         accepted = await client.post("/api/workspaces/select", json={"cwd": str(selected)})
-        rejected = await client.post("/api/workspaces/select", json={"cwd": str(outside)})
+        arbitrary = await client.post("/api/workspaces/select", json={"cwd": str(outside)})
         listing = await client.get("/api/workspaces")
 
     assert Path(default.json()["cwd"]).is_dir()
     assert accepted.json()["cwd"] == str(selected.resolve())
-    assert rejected.status_code == 403
+    assert arbitrary.json()["cwd"] == str(outside.resolve())
     assert str(selected.resolve()) in listing.json()["workspaces"]
+    assert str(outside.resolve()) in listing.json()["workspaces"]
+
+
+@pytest.mark.asyncio
+async def test_native_directory_picker_registers_its_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    selected = tmp_path / "picked-project"
+    selected.mkdir()
+    monkeypatch.setattr("server.routes.workspaces.choose_directory", lambda: str(selected))
+    app = create_app(
+        ServerSettings(
+            agent_dir=tmp_path / "agent",
+            sessions_dir=tmp_path / "sessions",
+            own_config_dir=tmp_path / "agent-python",
+            workspace_parent=tmp_path / "workspaces",
+        )
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/workspaces/pick")
+
+    assert response.json() == {"cwd": str(selected.resolve())}
 
 
 @pytest.mark.asyncio

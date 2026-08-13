@@ -45,10 +45,9 @@ const images = computed(() =>
     v-if="message.role === 'user' || message.role === 'assistant'"
     class="message-row"
     :class="{ 'message-row--user': isUser }"
+    :aria-label="isUser ? '用户消息' : '助手消息'"
   >
-    <div v-if="!isUser" class="assistant-avatar" aria-hidden="true">π</div>
     <div class="message-body" :class="{ 'message-body--user': isUser }">
-      <div v-if="!isUser" class="message-author">pi</div>
       <div v-if="isUser" class="message-text">{{ text }}</div>
       <div v-if="images.length" class="message-images">
         <img

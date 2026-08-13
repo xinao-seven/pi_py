@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 
-import MarkdownContent from "./MarkdownContent.vue";
+import MarkdownContent from "@/components/MarkdownContent.vue";
 
 describe("MarkdownContent", () => {
   it("renders GFM and highlighted code without executable markup", () => {
