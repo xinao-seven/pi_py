@@ -1,4 +1,4 @@
-<!-- 项目切换弹窗：列出已登记/历史工作区，也可输入受控范围内的新绝对路径。 -->
+<!-- 项目切换弹窗：列出已登记/历史工作区，也可输入任意已有本地目录。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
@@ -6,6 +6,7 @@ import {
   createDefaultWorkspace,
   getWorkspaceHome,
   listWorkspaces,
+  pickWorkspaceDirectory,
   selectWorkspace,
 } from "@/lib/api";
 
@@ -74,6 +75,20 @@ async function createDefault(): Promise<void> {
   }
 }
 
+async function pickDirectory(): Promise<void> {
+  if (pending.value) return;
+  pending.value = true;
+  error.value = null;
+  try {
+    const cwd = await pickWorkspaceDirectory();
+    if (cwd) emit("selected", cwd);
+  } catch (cause) {
+    error.value = messageOf(cause);
+  } finally {
+    pending.value = false;
+  }
+}
+
 function folderName(cwd: string): string {
   // 取路径最后一段作为展示名
   return cwd.replaceAll("\\", "/").replace(/\/$/, "").split("/").at(-1) || cwd;
@@ -99,18 +114,21 @@ function messageOf(cause: unknown): string {
       <div v-if="loading" class="config-state">正在读取可用项目…</div>
       <div v-else class="config-body">
         <form class="workspace-path-form" @submit.prevent="choose(path)">
-          <label for="workspace-path-input">项目绝对路径</label>
+          <label for="workspace-path-input">项目目录</label>
           <div>
             <input
               id="workspace-path-input"
               v-model="path"
               autofocus
               autocomplete="off"
-              :placeholder="workspaceHome ? `${workspaceHome} 下的项目目录` : '输入项目绝对路径'"
+              :placeholder="workspaceHome ? `例如 ${workspaceHome}\\Projects\\my-app` : '输入项目绝对路径'"
             />
             <button type="submit" class="primary-action" :disabled="!path.trim() || pending">打开</button>
+            <button type="button" class="workspace-picker-button" :disabled="pending" @click="pickDirectory">
+              选择文件夹…
+            </button>
           </div>
-          <small v-if="workspaceHome">安全范围：{{ workspaceHome }}</small>
+          <small>点击“选择文件夹”打开系统目录选择器；也可直接输入任意已有本地目录。</small>
         </form>
 
         <div class="workspace-list-heading">最近和已登记的项目</div>

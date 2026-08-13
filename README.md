@@ -12,7 +12,7 @@ JSONL，直接复用原版 pi 在 `~/.pi` 下的配置与会话数据（只读�
   `pi_coding_agent`（Session v3 / 工具 / 资源加载），依赖方向由测试强制约束
 - **兼容原版 pi 数据**：读取并继续使用原版 pi 的 Session v3 会话与 `~/.pi/agent` 配置
 - **安全密钥**：API Key 只从原版 pi 的 `auth.json` 读取，Web 界面只保存 `$ENV_VAR` 引用
-- **受控工作区**：会话级目录浏览/文件访问，支持切换项目目录且登记结果持久化
+- **本地工作区**：可打开任意已有本地目录作为项目；会话级目录浏览/文件访问仍限制在已登记工作区内，登记结果会持久化
 - **流式 Agent 体验**：SSE 事件流、thinking/工具调用展示、分支导航、会话合并、compaction
 - **单端口生产模式**：Vue 构建后由 FastAPI 同源托管，一键脚本启动
 
@@ -132,7 +132,7 @@ Windows 下也可从项目根目录一键启动开发环境：
 | `/api/files` | 限定在 Session 工作区内的目录浏览、文件预览与变化监听 |
 | `/api/models`、`/api/models-config` | 模型目录（只读合并）与 pi.py 自身 Provider 配置 |
 | `/api/skills` | 本地 Skills 发现、诊断与启停 |
-| `/api/workspaces`、`/api/default-cwd` | 受控工作区登记与默认工作区创建 |
+| `/api/workspaces`、`/api/default-cwd` | 任意已有本地目录的工作区登记与默认工作区创建；`POST /api/workspaces/pick` 供 Web 打开系统目录选择器 |
 
 ### 一键配置 DeepSeek
 

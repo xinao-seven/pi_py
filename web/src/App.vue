@@ -1,6 +1,6 @@
 <!-- 根组件：组装三栏布局（侧栏/聊天/文件），管理会话列表、配置弹窗与主题声音。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import AppShell from "@/components/AppShell.vue";
@@ -33,6 +33,8 @@ const appError = ref<string | null>(null);
 const modelsRevision = ref(0);
 const workspaceSwitcherOpen = ref(false);
 const agentRunning = ref(false);
+let sessionsRefreshing = false;
+let sessionRetryTimer: ReturnType<typeof setInterval> | undefined;
 // 当前工作区：历史会话的 cwd 或新会话选中的目录
 const selectedWorkspace = computed(
   () =>
@@ -43,14 +45,30 @@ const selectedWorkspace = computed(
 
 async function refreshSessions(): Promise<void> {
   // 刷新侧栏会话列表
+  if (sessionsRefreshing) return;
+  sessionsRefreshing = true;
   try {
     sessions.value = await listSessions();
     appError.value = null;
+    stopSessionRecovery();
   } catch (cause) {
     appError.value = cause instanceof Error ? cause.message : "无法加载会话";
+    startSessionRecovery();
   } finally {
     sessionsLoading.value = false;
+    sessionsRefreshing = false;
   }
+}
+
+function startSessionRecovery(): void {
+  if (sessionRetryTimer !== undefined) return;
+  sessionRetryTimer = setInterval(() => void refreshSessions(), 2_000);
+}
+
+function stopSessionRecovery(): void {
+  if (sessionRetryTimer === undefined) return;
+  clearInterval(sessionRetryTimer);
+  sessionRetryTimer = undefined;
 }
 
 function startNewSession(): void {
@@ -116,6 +134,8 @@ onMounted(() => {
   store.initializePreferences();
   void refreshSessions();
 });
+
+onBeforeUnmount(stopSessionRecovery);
 </script>
 
 <template>

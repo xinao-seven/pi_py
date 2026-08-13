@@ -54,6 +54,8 @@ export function useAgentSession(options: AgentSessionOptions) {
   const retryInfo = ref<RetryInfo | null>(null);
   let eventSource: EventSource | null = null;
   let loadSequence = 0;
+  let catalogRetryTimer: ReturnType<typeof setInterval> | undefined;
+  let pendingSyncTimer: ReturnType<typeof setInterval> | undefined;
 
   const isNew = computed(
     // 是否处于“新会话”模式（无历史会话且已选工作区）
@@ -76,6 +78,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     stream.phase = next.phase;
     stream.streamingMessage = next.streamingMessage;
     stream.error = next.error;
+    stream.pendingToolCall = next.pendingToolCall;
   }
 
   async function loadSession(sessionId: string, showLoading = false): Promise<void> {
@@ -94,6 +97,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       contextUsage.value = state.state?.contextUsage ?? null;
       thinkingLevel.value = state.state?.thinkingLevel ?? nextDetail.context.thinkingLevel;
       if (state.state?.activeTools) activeTools.value = state.state.activeTools;
+      applyPendingToolCall(state.state?.pendingToolCall);
       if (state.running && state.state?.isStreaming) {
         stream.running = true;
         stream.phase = "waiting";
@@ -117,6 +121,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     closeEvents();
     const source = new EventSource(agentEventsUrl(sessionId));
     eventSource = source;
+    startPendingSync(sessionId);
     source.onmessage = (messageEvent) => {
       if (eventSource !== source || activeSessionId.value !== sessionId) return;
       try {
@@ -140,6 +145,33 @@ export function useAgentSession(options: AgentSessionOptions) {
   function closeEvents(): void {
     eventSource?.close();
     eventSource = null;
+    stopPendingSync();
+  }
+
+  function applyPendingToolCall(pending: AgentStreamState["pendingToolCall"] | undefined): void {
+    if (!pending) return;
+    stream.pendingToolCall = pending;
+    stream.running = true;
+    stream.phase = "tool";
+  }
+
+  function startPendingSync(sessionId: string): void {
+    if (pendingSyncTimer !== undefined) return;
+    pendingSyncTimer = setInterval(() => {
+      if (!stream.running) {
+        stopPendingSync();
+        return;
+      }
+      void getAgentState(sessionId)
+        .then((response) => applyPendingToolCall(response.state?.pendingToolCall))
+        .catch(() => undefined);
+    }, 1_000);
+  }
+
+  function stopPendingSync(): void {
+    if (pendingSyncTimer === undefined) return;
+    clearInterval(pendingSyncTimer);
+    pendingSyncTimer = undefined;
   }
 
   function handleAgentEvent(event: AgentEvent, sessionId: string): void {
@@ -177,6 +209,7 @@ export function useAgentSession(options: AgentSessionOptions) {
 
     if (event.type === "agent_end") {
       // 一轮结束：重新加载会话以同步持久化内容
+      stopPendingSync();
       void loadSession(sessionId);
       options.onAgentEnd?.();
     }
@@ -400,14 +433,31 @@ export function useAgentSession(options: AgentSessionOptions) {
     try {
       catalog.value = await getModels();
       newSessionModel.value ??= catalog.value.defaultModel;
+      stopCatalogRecovery();
+      if (error.value?.includes("模型")) error.value = null;
     } catch (cause) {
       error.value = errorMessage(cause);
+      startCatalogRecovery();
     }
+  }
+
+  function startCatalogRecovery(): void {
+    if (catalogRetryTimer !== undefined) return;
+    catalogRetryTimer = setInterval(() => void loadCatalog(), 2_000);
+  }
+
+  function stopCatalogRecovery(): void {
+    if (catalogRetryTimer === undefined) return;
+    clearInterval(catalogRetryTimer);
+    catalogRetryTimer = undefined;
   }
 
   if (options.modelsRevision) watch(options.modelsRevision, loadCatalog);
 
-  onBeforeUnmount(closeEvents);
+  onBeforeUnmount(() => {
+    closeEvents();
+    stopCatalogRecovery();
+  });
 
   return {
     activeSessionId,

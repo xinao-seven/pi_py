@@ -44,18 +44,10 @@ class WorkspaceService:
         return _key(resolved) in {_key(root) for root in self.roots()}
 
     def select(self, path: str | Path) -> Path:
-        """登记一个已有目录；必须在父目录或已知工作区内，否则拒绝。"""
+        """登记用户显式选择的任一已有本地目录为工作区。"""
         resolved = Path(path).expanduser().resolve()
         if not resolved.is_dir():
             raise ValueError(f"Workspace does not exist: {path}")
-        known_roots = self.roots()
-        if not _is_within(resolved, self.workspace_parent) and not any(
-            _is_within(resolved, root) for root in known_roots
-        ):
-            raise PermissionError(
-                "Workspace must be inside the configured parent or a registered workspace: "
-                f"{self.workspace_parent}"
-            )
         self._selected[_key(resolved)] = resolved
         self._save()
         return resolved
@@ -114,11 +106,3 @@ class WorkspaceService:
 
 def _key(path: Path) -> str:
     return str(path).casefold()
-
-
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False

@@ -112,6 +112,7 @@ export interface AgentState {
   activeTools: string[];
   contextUsage: ContextUsage | null;
   sessionStats: Record<string, unknown>;
+  pendingToolCall?: PendingToolCall | null;
 }
 
 export interface AgentStateResponse {

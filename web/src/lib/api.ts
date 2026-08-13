@@ -113,6 +113,11 @@ export async function selectWorkspace(cwd: string): Promise<string> {
   return result.cwd;
 }
 
+export async function pickWorkspaceDirectory(): Promise<string | undefined> {
+  const result = await request<{ cwd: string | null }>("/api/workspaces/pick", { method: "POST" });
+  return result.cwd ?? undefined;
+}
+
 export async function createAgent(input: {
   cwd: string;
   message: string;

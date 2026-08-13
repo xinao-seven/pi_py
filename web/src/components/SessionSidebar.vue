@@ -1,4 +1,4 @@
-<!-- 会话侧栏：品牌区、新建会话、会话列表（按 Fork 层级缩进）与底部配置入口。 -->
+<!-- 会话侧栏：按项目路径分区显示会话，Fork 在各项目内缩进。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 
@@ -20,11 +20,36 @@ interface SessionListItem {
   depth: number;
 }
 
-const visibleSessions = computed<SessionListItem[]>(() => {
-  // 把扁平会话列表按 parentSessionId 组织成树，深度用于缩进显示
-  const byId = new Map(props.sessions.map((session) => [session.id, session]));
-  const children = new Map<string, SessionInfo[]>();
+interface SessionGroup {
+  key: string;
+  label: string;
+  path: string;
+  sessions: SessionListItem[];
+}
+
+const GENERIC_HOME = "c:/users/xinao";
+
+const groupedSessions = computed<SessionGroup[]>(() => {
+  // 先按工作区归类，再在每个项目内部恢复 Fork 树，避免跨项目缩进混杂。
+  const groups = new Map<string, { label: string; path: string; source: SessionInfo[] }>();
   for (const session of props.sessions) {
+    const group = groupFor(session.cwd);
+    const current = groups.get(group.key) ?? { label: group.label, path: group.path, source: [] };
+    current.source.push(session);
+    groups.set(group.key, current);
+  }
+  return [...groups.entries()].map(([key, group]) => ({
+    key,
+    label: group.label,
+    path: group.path,
+    sessions: treeSessions(group.source),
+  }));
+});
+
+function treeSessions(sessions: SessionInfo[]): SessionListItem[] {
+  const byId = new Map(sessions.map((session) => [session.id, session]));
+  const children = new Map<string, SessionInfo[]>();
+  for (const session of sessions) {
     if (!session.parentSessionId || !byId.has(session.parentSessionId)) continue;
     const group = children.get(session.parentSessionId) ?? [];
     group.push(session);
@@ -38,12 +63,12 @@ const visibleSessions = computed<SessionListItem[]>(() => {
     result.push({ session, depth });
     for (const child of children.get(session.id) ?? []) append(child, depth + 1);
   }
-  for (const session of props.sessions) {
+  for (const session of sessions) {
     if (!session.parentSessionId || !byId.has(session.parentSessionId)) append(session, 0);
   }
-  for (const session of props.sessions) append(session, 0);
+  for (const session of sessions) append(session, 0);
   return result;
-});
+}
 
 const emit = defineEmits<{
   newSession: [];
@@ -57,6 +82,22 @@ const emit = defineEmits<{
 function sessionTitle(session: SessionInfo): string {
   // 会话标题：优先自定义名称，其次首条消息，最后兜底文案
   return session.name?.trim() || session.firstMessage?.trim() || "未命名会话";
+}
+
+function groupFor(cwd: string): { key: string; label: string; path: string } {
+  const normalized = normalizePath(cwd);
+  if (normalized === GENERIC_HOME || normalized.startsWith(`${GENERIC_HOME}/`)) {
+    return { key: "generic", label: "通用项目", path: "C:\\Users\\xinao" };
+  }
+  return { key: normalized || cwd, label: folderName(cwd), path: cwd };
+}
+
+function normalizePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\/c\//i, "c:/").replace(/\/+$/, "").toLowerCase();
+}
+
+function folderName(path: string): string {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "").split("/").at(-1) || path;
 }
 
 function relativeDate(value: string): string {
@@ -87,7 +128,7 @@ function relativeDate(value: string): string {
     </button>
 
     <div class="session-section-heading">
-      <span>最近会话</span>
+      <span>项目会话</span>
       <span v-if="sessions.length" class="session-count">{{ sessions.length }}</span>
     </div>
 
@@ -107,31 +148,38 @@ function relativeDate(value: string): string {
         <span class="session-meta">等待第一条消息</span>
       </button>
 
-      <button
-        v-for="item in visibleSessions"
-        :key="item.session.id"
-        type="button"
-        class="session-item"
-        :class="{
-          'session-item--active': selectedSessionId === item.session.id,
-          'session-item--fork': item.depth > 0,
-          'session-item--orphan': item.session.orphaned,
-        }"
-        :disabled="item.session.orphaned || agentRunning"
-        :title="item.session.orphanReason"
-        :style="{ marginLeft: `${Math.min(item.depth, 3) * 12}px`, width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)` }"
-        @click="emit('selectSession', item.session.id)"
-      >
-        <span class="session-title">
-          <span v-if="item.depth" class="session-fork-mark" aria-label="Fork Session">↳</span>
-          {{ sessionTitle(item.session) }}
-          <span v-if="item.session.orphaned" class="orphan-badge">不完整</span>
-        </span>
-        <span class="session-meta">
-          <span class="session-cwd">{{ item.session.cwd }}</span>
-          <time :datetime="item.session.modified">{{ relativeDate(item.session.modified) }}</time>
-        </span>
-      </button>
+      <section v-for="group in groupedSessions" :key="group.key" class="session-project-group">
+        <header class="session-project-heading" :title="group.path">
+          <span class="session-project-name">{{ group.label }}</span>
+          <span class="session-project-count">{{ group.sessions.length }}</span>
+          <code>{{ group.path }}</code>
+        </header>
+        <button
+          v-for="item in group.sessions"
+          :key="item.session.id"
+          type="button"
+          class="session-item"
+          :class="{
+            'session-item--active': selectedSessionId === item.session.id,
+            'session-item--fork': item.depth > 0,
+            'session-item--orphan': item.session.orphaned,
+          }"
+          :disabled="item.session.orphaned || agentRunning"
+          :title="item.session.orphanReason"
+          :style="{ marginLeft: `${Math.min(item.depth, 3) * 12}px`, width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)` }"
+          @click="emit('selectSession', item.session.id)"
+        >
+          <span class="session-title">
+            <span v-if="item.depth" class="session-fork-mark" aria-label="Fork Session">↳</span>
+            {{ sessionTitle(item.session) }}
+            <span v-if="item.session.orphaned" class="orphan-badge">不完整</span>
+          </span>
+          <span class="session-meta">
+            <span class="session-cwd">{{ item.session.cwd }}</span>
+            <time :datetime="item.session.modified">{{ relativeDate(item.session.modified) }}</time>
+          </span>
+        </button>
+      </section>
     </div>
 
     <div class="sidebar-footer">
