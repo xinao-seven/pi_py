@@ -125,6 +125,9 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "Content-Type": "text/event-stream; charset=utf-8",
+      // hijack + writeHead 会绕过 @fastify/cors 的响应头，SSE 需手动补 CORS
+      // （EventSource 为简单请求，无预检，此头即可放行跨域流）。
+      "Access-Control-Allow-Origin": "*",
     });
     const unsubscribe = options.registry.subscribe(request.params.sessionId, lastEventId, (event) => sendSse(reply, event));
     const heartbeat = setInterval(() => reply.raw.write(": heartbeat\n\n"), 15_000);

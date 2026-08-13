@@ -19,6 +19,7 @@ const {
   selectedSessionId,
   newSessionCwd,
   sidebarOpen,
+  sidebarCollapsed,
   filePanelOpen,
   fileTabs,
   activeFilePath,
@@ -87,6 +88,12 @@ function switchWorkspace(cwd: string): void {
   appError.value = null;
 }
 
+function openSidebar(): void {
+  // 展开侧栏：桌面端取消折叠，窄屏打开遮罩侧栏
+  sidebarOpen.value = true;
+  store.setSidebarCollapsed(false);
+}
+
 function sessionCreated(sessionId: string): void {
   store.selectSession(sessionId);
   void refreshSessions();
@@ -139,7 +146,11 @@ onBeforeUnmount(stopSessionRecovery);
 </script>
 
 <template>
-  <AppShell v-model:sidebar-open="sidebarOpen" :file-panel-open="filePanelOpen && !!selectedWorkspace">
+  <AppShell
+    v-model:sidebar-open="sidebarOpen"
+    :sidebar-collapsed="sidebarCollapsed"
+    :file-panel-open="filePanelOpen && !!selectedWorkspace"
+  >
     <template #sidebar>
       <SessionSidebar
         :sessions="sessions"
@@ -156,6 +167,7 @@ onBeforeUnmount(stopSessionRecovery);
         @open-skills="skillsConfigOpen = true"
         @toggle-theme="store.toggleTheme"
         @toggle-sound="toggleSound"
+        @collapse-sidebar="store.setSidebarCollapsed(true)"
       />
     </template>
 
@@ -182,10 +194,11 @@ onBeforeUnmount(stopSessionRecovery);
       :new-session-cwd="newSessionCwd"
       :sessions="sessions"
       :models-revision="modelsRevision"
+      :sidebar-collapsed="sidebarCollapsed"
       @session-created="sessionCreated"
       @session-forked="sessionForked"
       @agent-end="handleAgentEnd"
-      @open-sidebar="sidebarOpen = true"
+      @open-sidebar="openSidebar"
       @toggle-files="store.toggleFilePanel"
       @switch-workspace="openWorkspaceSwitcher"
       @running-change="agentRunning = $event"

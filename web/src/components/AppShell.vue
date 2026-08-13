@@ -2,6 +2,7 @@
 <script setup lang="ts">
 defineProps<{
   sidebarOpen: boolean;
+  sidebarCollapsed?: boolean;
   filePanelOpen?: boolean;
 }>();
 
@@ -11,7 +12,13 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'app-shell--files': filePanelOpen }">
+  <div
+    class="app-shell"
+    :class="{
+      'app-shell--files': filePanelOpen,
+      'app-shell--sidebar-collapsed': sidebarCollapsed,
+    }"
+  >
     <button
       v-if="sidebarOpen"
       class="sidebar-scrim"

@@ -1,0 +1,16 @@
+{
+  "pluginName": "Pi 桌面助手",
+  "description": "把本地 Pi coding agent 接入 uTools：流式对话、文件面板、会话管理",
+  "author": "xinao",
+  "version": "0.1.0",
+  "logo": "logo.png",
+  "main": "index.html",
+  "preload": "preload.js",
+  "features": [
+    {
+      "code": "pi",
+      "cmds": ["pi", "ai助手", "ai"],
+      "explain": "Pi 编程助手"
+    }
+  ]
+}

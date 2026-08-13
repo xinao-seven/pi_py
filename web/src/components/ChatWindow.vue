@@ -16,6 +16,7 @@ const props = defineProps<{
   newSessionCwd: string | null;
   sessions: SessionInfo[];
   modelsRevision: number;
+  sidebarCollapsed: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -155,7 +156,13 @@ watch(
 <template>
   <section class="chat-window">
     <header class="chat-header">
-      <button class="mobile-menu-button" type="button" aria-label="打开会话侧栏" @click="emit('openSidebar')">
+      <button
+        class="mobile-menu-button"
+        :class="{ 'mobile-menu-button--visible': sidebarCollapsed }"
+        type="button"
+        aria-label="打开会话侧栏"
+        @click="emit('openSidebar')"
+      >
         ☰
       </button>
       <div class="chat-heading">

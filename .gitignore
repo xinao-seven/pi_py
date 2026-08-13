@@ -8,8 +8,13 @@ htmlcov/
 .venv/
 venv/
 dist/
+dist-utools/
 build/
 node_modules/
+
+# uTools 插件内置的前端构建产物（由 pi-utools/build.ps1 生成）
+pi-utools/index.html
+pi-utools/assets/
 *.egg-info/
 
 .env

@@ -4,6 +4,7 @@
  * Fastify 插件挂载，避免 HTTP 路由直接依赖 Pi SDK 细节。
  */
 
+import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import { join } from "node:path";
 
@@ -33,6 +34,9 @@ export interface AppOptions {
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
+  // 仅监听 loopback，无鉴权；反射请求来源以允许 uTools 插件（file:// / utools://）
+  // 等跨域客户端访问，并自动处理 JSON POST 的 CORS 预检（OPTIONS）。
+  app.register(cors, { origin: true });
   const approvals = new ToolApprovalBroker();
   const registry = options.registry ?? new AgentRegistry(
     new OriginalPiSessionFactory(options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`, approvals),

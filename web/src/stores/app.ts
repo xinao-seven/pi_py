@@ -9,6 +9,7 @@ export const useAppStore = defineStore("app", () => {
   const selectedSessionId = ref<string | null>(null);
   const newSessionCwd = ref<string | null>(null);
   const sidebarOpen = ref(false);
+  const sidebarCollapsed = ref(false);
   const filePanelOpen = ref(false);
   const fileWorkspaceRoot = ref<string | null>(null);
   const fileTabs = ref<FileTab[]>([]);
@@ -24,6 +25,14 @@ export const useAppStore = defineStore("app", () => {
     theme.value = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
     soundEnabled.value = window.localStorage.getItem("pi.sound") === "true";
     applyTheme();
+  }
+
+  function toggleSidebarCollapsed(): void {
+    sidebarCollapsed.value = !sidebarCollapsed.value;
+  }
+
+  function setSidebarCollapsed(value: boolean): void {
+    sidebarCollapsed.value = value;
   }
 
   function toggleTheme(): void {
@@ -94,6 +103,7 @@ export const useAppStore = defineStore("app", () => {
     selectedSessionId,
     newSessionCwd,
     sidebarOpen,
+    sidebarCollapsed,
     filePanelOpen,
     fileWorkspaceRoot,
     fileTabs,
@@ -111,5 +121,7 @@ export const useAppStore = defineStore("app", () => {
     initializePreferences,
     toggleTheme,
     toggleSound,
+    toggleSidebarCollapsed,
+    setSidebarCollapsed,
   };
 });

@@ -118,10 +118,23 @@ select:focus-visible {
   background:
     radial-gradient(circle at 82% 0%, rgba(138, 160, 72, 0.08), transparent 27%),
     #0c0e12;
+  transition: grid-template-columns 200ms ease;
 }
 
 .app-shell--files {
   grid-template-columns: 286px minmax(420px, 1fr) clamp(430px, 42vw, 720px);
+}
+
+.app-shell--sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.app-shell--files.app-shell--sidebar-collapsed {
+  grid-template-columns: 0 minmax(420px, 1fr) clamp(430px, 42vw, 720px);
+}
+
+.app-shell--sidebar-collapsed .sidebar {
+  border-right: 0;
 }
 
 .sidebar {
@@ -180,6 +193,28 @@ select:focus-visible {
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.sidebar-collapse-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-collapse-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .new-session-button,
@@ -870,6 +905,11 @@ select:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: transparent;
+}
+
+/* 桌面端侧栏折叠后，让头部显示 ☰ 以便再次展开 */
+.mobile-menu-button--visible {
+  display: block;
 }
 
 .message-scroller {
@@ -2029,6 +2069,7 @@ textarea.composer-input:focus-visible {
 
 :root[data-theme="light"] .session-item:hover,
 :root[data-theme="light"] .sidebar-config-actions button:hover,
+:root[data-theme="light"] .sidebar-collapse-button:hover,
 :root[data-theme="light"] .files-toggle-button:hover,
 :root[data-theme="light"] .workspace-switch-button:hover,
 :root[data-theme="light"] .branch-action:hover,
@@ -2201,6 +2242,10 @@ textarea.composer-input:focus-visible {
 
   .mobile-menu-button {
     display: block;
+  }
+
+  .sidebar-collapse-button {
+    display: none;
   }
 
   .chat-header {

@@ -1,4 +1,5 @@
 // REST 客户端：封装全部后端 API，统一错误解析（ApiError）。
+import { BASE_URL } from "./config";
 import type {
   AgentStateResponse,
   FileListResponse,
@@ -35,7 +36,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // 通用请求：自动加 JSON Content-Type，非 2xx 时解析后端错误信封并抛 ApiError
-  const response = await fetch(path, {
+  const response = await fetch(BASE_URL + path, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -182,7 +183,7 @@ export async function setSkillDisabled(
 
 export function agentEventsUrl(sessionId: string): string {
   // SSE 事件流地址
-  return `/api/agent/${encodeURIComponent(sessionId)}/events`;
+  return `${BASE_URL}/api/agent/${encodeURIComponent(sessionId)}/events`;
 }
 
 export function listFiles(root: string, path = ""): Promise<FileListResponse> {
@@ -194,8 +195,8 @@ export function readFile(root: string, path: string): Promise<FileReadResponse> 
 }
 
 export function fileMediaUrl(root: string, path: string): string {
-  // 图片/音频预览地址
-  return fileAccessUrl(root, path, "media");
+  // 图片/音频预览地址（直接作为 <img>/<audio> 的 src，需带绝对前缀）
+  return BASE_URL + fileAccessUrl(root, path, "media");
 }
 
 function fileAccessUrl(

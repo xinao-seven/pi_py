@@ -77,6 +77,7 @@ const emit = defineEmits<{
   openSkills: [];
   toggleTheme: [];
   toggleSound: [];
+  collapseSidebar: [];
 }>();
 
 function sessionTitle(session: SessionInfo): string {
@@ -120,6 +121,15 @@ function relativeDate(value: string): string {
         <div class="brand-name">pi.py</div>
         <div class="brand-caption">coding agent</div>
       </div>
+      <button
+        class="sidebar-collapse-button"
+        type="button"
+        aria-label="收起会话侧栏"
+        title="收起侧栏"
+        @click="emit('collapseSidebar')"
+      >
+        «
+      </button>
     </div>
 
     <button class="new-session-button" type="button" :disabled="agentRunning" @click="emit('newSession')">
