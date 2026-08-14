@@ -428,14 +428,68 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.sidebar-branch {
+  flex: 0 0 auto;
+  margin-bottom: 4px;
+  padding: 8px 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sidebar-branch-heading {
+  padding: 0 2px 7px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sidebar-branch .branch-navigator {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.sidebar-branch .branch-field {
+  flex: 1 1 100%;
+}
+
+.sidebar-branch .branch-field select {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 24px 0 8px;
+}
+
+.sidebar-branch .branch-action {
+  flex: 1;
+  min-height: 27px;
+}
+
+.sidebar-branch .merge-menu {
+  flex: 1;
+}
+
+.sidebar-branch .merge-menu summary {
+  width: 100%;
+  min-height: 27px;
+}
+
+.sidebar-branch .merge-popover {
+  right: 0;
+  width: 232px;
+}
+
+.sidebar-branch .branch-error {
+  display: block;
+  padding: 5px 2px 0;
+  font-size: 9px;
+}
+
 .sidebar-note {
   padding: 16px 10px;
   color: var(--faint);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.sidebar-footer {
+}.sidebar-footer {
   display: grid;
   gap: 10px;
   padding: 13px 9px 2px;
@@ -506,32 +560,40 @@ select:focus-visible {
 .chat-header {
   display: flex;
   align-items: center;
-  min-height: 70px;
-  padding: 0 27px;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--line);
   background: rgba(12, 14, 18, 0.72);
   backdrop-filter: blur(18px);
 }
 
 .chat-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 
-.chat-heading h1 {
-  max-width: 580px;
-  margin: 0;
+.chat-title {
+  max-width: 340px;
   overflow: hidden;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.chat-title-dot {
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+
 .workspace-path {
-  max-width: min(580px, 52vw);
-  margin-top: 4px;
+  max-width: min(420px, 40vw);
   overflow: hidden;
   color: var(--faint);
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
@@ -552,10 +614,10 @@ select:focus-visible {
 .branch-action,
 .merge-menu summary,
 .merge-popover button {
-  min-height: 30px;
-  padding: 5px 9px;
+  min-height: 27px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.025);
   font-size: 10px;
@@ -886,9 +948,9 @@ select:focus-visible {
 
 .model-chip,
 .context-chip {
-  padding: 6px 9px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.025);
   font-size: 10px;
@@ -900,10 +962,10 @@ select:focus-visible {
 
 .mobile-menu-button {
   display: none;
-  margin-right: 12px;
-  padding: 5px 8px;
+  margin-right: 8px;
+  padding: 4px 7px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
 }
 
@@ -923,7 +985,7 @@ select:focus-visible {
 .message-list {
   width: min(100%, 820px);
   margin: 0 auto;
-  padding: 42px 32px 50px;
+  padding: 24px 22px 32px;
 }
 
 .message-row {
@@ -1184,7 +1246,7 @@ select:focus-visible {
   flex: 0 0 auto;
   width: min(100%, 820px);
   margin: 0 auto;
-  padding: 0 32px 17px;
+  padding: 0 16px 10px;
 }
 
 .image-attachments {
@@ -1692,8 +1754,8 @@ select:focus-visible {
 .agent-controls {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
+  gap: 6px;
+  margin-bottom: 5px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1769,9 +1831,9 @@ select:focus-visible {
 
 .composer {
   position: relative;
-  padding: 12px 13px 10px;
+  padding: 8px 10px 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 6px;
   background: rgba(24, 27, 34, 0.96);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
   transition: border-color 150ms ease;
@@ -1805,7 +1867,7 @@ select:focus-visible {
 .composer-input {
   display: block;
   width: 100%;
-  min-height: 30px;
+  min-height: 26px;
   max-height: 180px;
   padding: 1px 2px;
   resize: none;
@@ -1831,7 +1893,7 @@ textarea.composer-input:focus-visible {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 9px;
+  margin-top: 6px;
 }
 
 .composer-hint {
@@ -1843,9 +1905,9 @@ textarea.composer-input:focus-visible {
 .send-button,
 .abort-button,
 .queue-button {
-  min-height: 32px;
-  padding: 0 13px;
-  border-radius: 9px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
@@ -1879,9 +1941,9 @@ textarea.composer-input:focus-visible {
 }
 
 .chat-error {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   padding: 8px 11px;
-  border-radius: 9px;
+  border-radius: 6px;
   font-size: 11px;
 }
 
@@ -1901,7 +1963,7 @@ textarea.composer-input:focus-visible {
 }
 
 .welcome-state {
-  padding: 40px;
+  padding: 24px;
 }
 
 .welcome-kicker {
@@ -1946,7 +2008,7 @@ textarea.composer-input:focus-visible {
 
 .empty-conversation {
   min-height: 100%;
-  padding: 45px 28px 120px;
+  padding: 30px 20px 60px;
 }
 
 .empty-conversation h2 {

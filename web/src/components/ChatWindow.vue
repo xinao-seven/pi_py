@@ -3,12 +3,12 @@
 import { computed, nextTick, ref, toRef, watch } from "vue";
 
 import AgentControls from "@/components/AgentControls.vue";
-import BranchNavigator from "@/components/BranchNavigator.vue";
 import ChatInput from "@/components/ChatInput.vue";
 import MessageView from "@/components/MessageView.vue";
 import ToolApprovalDialog from "@/components/ToolApprovalDialog.vue";
 import { useAgentSession } from "@/composables/useAgentSession";
 import { forkSession, mergeSession } from "@/lib/api";
+import { useAppStore } from "@/stores/app";
 import type { SessionInfo } from "@/types";
 
 const props = defineProps<{
@@ -30,8 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const messagesEnd = ref<HTMLElement | null>(null);
-const branchBusy = ref(false);
-const branchError = ref<string | null>(null);
+const store = useAppStore();
 const {
   detail,
   messages,
@@ -95,45 +94,45 @@ const toolResults = computed(() =>
 
 async function navigateBranch(entryId: string): Promise<void> {
   // 切换会话树分支
-  branchBusy.value = true;
-  branchError.value = null;
+  store.setBranchBusy(true);
+  store.setBranchError(null);
   try {
     await navigateTree(entryId);
   } catch (cause) {
-    branchError.value = cause instanceof Error ? cause.message : "无法切换分支";
+    store.setBranchError(cause instanceof Error ? cause.message : "无法切换分支");
   } finally {
-    branchBusy.value = false;
+    store.setBranchBusy(false);
   }
 }
 
 async function forkBranch(entryId: string): Promise<void> {
   // 从指定节点 Fork 出独立会话
   if (!props.sessionId) return;
-  branchBusy.value = true;
-  branchError.value = null;
+  store.setBranchBusy(true);
+  store.setBranchError(null);
   try {
     const forked = await forkSession(props.sessionId, entryId);
     emit("sessionForked", forked.sessionId);
   } catch (cause) {
-    branchError.value = cause instanceof Error ? cause.message : "无法创建 Fork";
+    store.setBranchError(cause instanceof Error ? cause.message : "无法创建 Fork");
   } finally {
-    branchBusy.value = false;
+    store.setBranchBusy(false);
   }
 }
 
 async function mergeFrom(sourceSessionId: string): Promise<void> {
   // 把来源会话合并进当前会话并刷新
   if (!props.sessionId) return;
-  branchBusy.value = true;
-  branchError.value = null;
+  store.setBranchBusy(true);
+  store.setBranchError(null);
   try {
     await mergeSession(props.sessionId, sourceSessionId);
     await reloadSession();
     emit("agentEnd");
   } catch (cause) {
-    branchError.value = cause instanceof Error ? cause.message : "无法合并 Session";
+    store.setBranchError(cause instanceof Error ? cause.message : "无法合并 Session");
   } finally {
-    branchBusy.value = false;
+    store.setBranchBusy(false);
   }
 }
 
@@ -151,6 +150,14 @@ watch(
   (running) => emit("runningChange", running),
   { immediate: true },
 );
+
+watch(
+  () => detail.value,
+  (value) => store.setBranchState(value?.tree ?? [], value?.leafId ?? null),
+  { immediate: true },
+);
+
+defineExpose({ navigateBranch, forkBranch, mergeFrom });
 </script>
 
 <template>
@@ -166,8 +173,9 @@ watch(
         ☰
       </button>
       <div class="chat-heading">
-        <h1>{{ title }}</h1>
-        <div class="workspace-path" :title="workspace">{{ workspace || "选择一个工作区开始" }}</div>
+        <span class="chat-title" :title="title">{{ title }}</span>
+        <span v-if="workspace" class="chat-title-dot" aria-hidden="true">·</span>
+        <span v-if="workspace" class="workspace-path" :title="workspace">{{ workspace }}</span>
       </div>
       <div class="header-meta">
         <button
@@ -187,27 +195,13 @@ watch(
           文件
         </button>
         <span v-if="displayModel" class="model-chip">
-          {{ displayModel.provider }} / {{ displayModel.modelId }}
+          {{ displayModel.provider }}/{{ displayModel.modelId }}
         </span>
         <span v-if="contextUsage" class="context-chip">
           {{ Math.round(contextUsage.percent) }}%
         </span>
       </div>
     </header>
-
-    <div v-if="detail && sessionId" class="branch-strip">
-      <BranchNavigator
-        :tree="detail.tree"
-        :leaf-id="detail.leafId"
-        :sessions="sessions"
-        :current-session-id="sessionId"
-        :busy="branchBusy || stream.running"
-        @navigate="navigateBranch"
-        @fork="forkBranch"
-        @merge="mergeFrom"
-      />
-      <span v-if="branchError" class="branch-error" role="alert">{{ branchError }}</span>
-    </div>
 
     <div v-if="loading" class="center-state">
       <span class="loading-ring" aria-hidden="true" />
@@ -276,7 +270,6 @@ watch(
           @follow-up="followUp"
           @abort="abort"
         />
-        <div class="local-note">内容保存在本机 Session v3 文件中</div>
       </div>
     </template>
     <ToolApprovalDialog

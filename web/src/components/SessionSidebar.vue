@@ -2,9 +2,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { SessionInfo } from "@/types";
+import BranchNavigator from "@/components/BranchNavigator.vue";
+import type { SessionInfo, SessionTreeNode } from "@/types";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessions: SessionInfo[];
   loading: boolean;
   selectedSessionId: string | null;
@@ -13,7 +14,16 @@ const props = defineProps<{
   theme: "dark" | "light";
   soundEnabled: boolean;
   agentRunning: boolean;
-}>();
+  branchTree?: SessionTreeNode[];
+  branchLeafId?: string | null;
+  branchBusy?: boolean;
+  branchError?: string | null;
+}>(), {
+  branchTree: () => [],
+  branchLeafId: null,
+  branchBusy: false,
+  branchError: null,
+});
 
 interface SessionListItem {
   session: SessionInfo;
@@ -78,6 +88,9 @@ const emit = defineEmits<{
   toggleTheme: [];
   toggleSound: [];
   collapseSidebar: [];
+  navigateBranch: [entryId: string];
+  forkBranch: [entryId: string];
+  mergeFrom: [sourceSessionId: string];
 }>();
 
 function sessionTitle(session: SessionInfo): string {
@@ -136,6 +149,21 @@ function relativeDate(value: string): string {
       <span aria-hidden="true">＋</span>
       新建会话
     </button>
+
+    <div v-if="branchTree.length" class="sidebar-branch">
+      <div class="sidebar-branch-heading">会话树</div>
+      <BranchNavigator
+        :tree="branchTree"
+        :leaf-id="branchLeafId"
+        :sessions="sessions"
+        :current-session-id="selectedSessionId ?? ''"
+        :busy="branchBusy || agentRunning"
+        @navigate="emit('navigateBranch', $event)"
+        @fork="emit('forkBranch', $event)"
+        @merge="emit('mergeFrom', $event)"
+      />
+      <span v-if="branchError" class="branch-error" role="alert">{{ branchError }}</span>
+    </div>
 
     <div class="session-section-heading">
       <span>项目会话</span>

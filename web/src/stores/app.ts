@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import type { FileTab } from "@/types";
+import type { FileTab, SessionTreeNode } from "@/types";
 
 export const useAppStore = defineStore("app", () => {
   // 当前选中的历史会话；为 null 且 newSessionCwd 有值表示“新会话”模式
@@ -10,6 +10,11 @@ export const useAppStore = defineStore("app", () => {
   const newSessionCwd = ref<string | null>(null);
   const sidebarOpen = ref(false);
   const sidebarCollapsed = ref(false);
+  // 会话树（分支导航）状态：由 ChatWindow 在加载会话详情时同步，供侧栏渲染
+  const branchTree = ref<SessionTreeNode[]>([]);
+  const branchLeafId = ref<string | null>(null);
+  const branchBusy = ref(false);
+  const branchError = ref<string | null>(null);
   const filePanelOpen = ref(false);
   const fileWorkspaceRoot = ref<string | null>(null);
   const fileTabs = ref<FileTab[]>([]);
@@ -33,6 +38,19 @@ export const useAppStore = defineStore("app", () => {
 
   function setSidebarCollapsed(value: boolean): void {
     sidebarCollapsed.value = value;
+  }
+
+  function setBranchState(tree: SessionTreeNode[], leafId: string | null): void {
+    branchTree.value = tree;
+    branchLeafId.value = leafId;
+  }
+
+  function setBranchBusy(value: boolean): void {
+    branchBusy.value = value;
+  }
+
+  function setBranchError(error: string | null): void {
+    branchError.value = error;
   }
 
   function toggleTheme(): void {
@@ -104,6 +122,10 @@ export const useAppStore = defineStore("app", () => {
     newSessionCwd,
     sidebarOpen,
     sidebarCollapsed,
+    branchTree,
+    branchLeafId,
+    branchBusy,
+    branchError,
     filePanelOpen,
     fileWorkspaceRoot,
     fileTabs,
@@ -123,5 +145,8 @@ export const useAppStore = defineStore("app", () => {
     toggleSound,
     toggleSidebarCollapsed,
     setSidebarCollapsed,
+    setBranchState,
+    setBranchBusy,
+    setBranchError,
   };
 });

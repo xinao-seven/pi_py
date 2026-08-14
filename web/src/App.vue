@@ -20,6 +20,10 @@ const {
   newSessionCwd,
   sidebarOpen,
   sidebarCollapsed,
+  branchTree,
+  branchLeafId,
+  branchBusy,
+  branchError,
   filePanelOpen,
   fileTabs,
   activeFilePath,
@@ -34,6 +38,7 @@ const appError = ref<string | null>(null);
 const modelsRevision = ref(0);
 const workspaceSwitcherOpen = ref(false);
 const agentRunning = ref(false);
+const chatWindowRef = ref<InstanceType<typeof ChatWindow> | null>(null);
 let sessionsRefreshing = false;
 let sessionRetryTimer: ReturnType<typeof setInterval> | undefined;
 // 当前工作区：历史会话的 cwd 或新会话选中的目录
@@ -92,6 +97,18 @@ function openSidebar(): void {
   // 展开侧栏：桌面端取消折叠，窄屏打开遮罩侧栏
   sidebarOpen.value = true;
   store.setSidebarCollapsed(false);
+}
+
+function onNavigateBranch(entryId: string): void {
+  void chatWindowRef.value?.navigateBranch(entryId);
+}
+
+function onForkBranch(entryId: string): void {
+  void chatWindowRef.value?.forkBranch(entryId);
+}
+
+function onMergeFrom(sourceSessionId: string): void {
+  void chatWindowRef.value?.mergeFrom(sourceSessionId);
 }
 
 function sessionCreated(sessionId: string): void {
@@ -161,6 +178,10 @@ onBeforeUnmount(stopSessionRecovery);
         :theme="theme"
         :sound-enabled="soundEnabled"
         :agent-running="agentRunning"
+        :branch-tree="branchTree"
+        :branch-leaf-id="branchLeafId"
+        :branch-busy="branchBusy"
+        :branch-error="branchError"
         @new-session="startNewSession"
         @select-session="store.selectSession"
         @open-models="modelsConfigOpen = true"
@@ -168,6 +189,9 @@ onBeforeUnmount(stopSessionRecovery);
         @toggle-theme="store.toggleTheme"
         @toggle-sound="toggleSound"
         @collapse-sidebar="store.setSidebarCollapsed(true)"
+        @navigate-branch="onNavigateBranch"
+        @fork-branch="onForkBranch"
+        @merge-from="onMergeFrom"
       />
     </template>
 
@@ -190,6 +214,7 @@ onBeforeUnmount(stopSessionRecovery);
     </div>
 
     <ChatWindow
+      ref="chatWindowRef"
       :session-id="selectedSessionId"
       :new-session-cwd="newSessionCwd"
       :sessions="sessions"
