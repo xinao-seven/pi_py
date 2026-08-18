@@ -24,6 +24,7 @@ import {
     SessionManager,
     type AgentSession,
     type AgentSessionEvent,
+    type EventBus,
     type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import { readdirSync } from "node:fs";
@@ -31,7 +32,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ApiError } from "../errors.js";
-import { createApprovalExtension, ToolApprovalBroker, type PendingToolApproval } from "./tool-approval.js";
+import { ToolApprovalBroker, type PendingToolApproval } from "./tool-approval.js";
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -150,7 +151,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     /** ModelRuntime 是重量级对象（要读文件、可能起子进程），做单例缓存。 */
     private runtimePromise: Promise<ModelRuntime> | undefined;
 
-    constructor(private readonly agentDir: string, private readonly approvals: ToolApprovalBroker) { }
+    constructor(private readonly agentDir: string, private readonly eventBus: EventBus) { }
 
     /** 创建新会话（POST /api/agent/new 的底层实现）。 */
     async create(input: CreateSessionInput): Promise<PiSession> {
@@ -243,16 +244,16 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
         const loader = new DefaultResourceLoader({
             cwd,
             agentDir: this.agentDir,
-            // 关键设计：关闭扩展自动发现（noExtensions: true），只注册本 UI 自己的
-            // 审批扩展。原因：Web 后端无法渲染 Pi 终端的确认 UI；更重要的是一旦
-            // 用户级扩展在审批事件发布前拦截了工具调用，前端审批对话框就永远等不到
-            // SSE 事件。所以只保留这一个由本服务控制的扩展桥。
-            noExtensions: true,
-            // additionalExtensionPaths 不受 noExtensions 影响：把 node-pi/extensions/
-            // 下每个 .ts/.js 文件当作一个扩展模块加载；原版 pi 的 ~/.pi/agent/extensions/
-            // 与项目 .pi/extensions/ 仍被跳过，实现"本仓库扩展与原版 pi 双向隔离"。
+            // 与 TUI 平级：不设 noExtensions，走 SDK 的自动发现（与 TUI 相同的代码路径），
+            // 加载用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展，
+            // 使 Web 能实现 TUI 能做的一切。审批扩展（tool-approval.ts）通过下面的
+            // additionalExtensionPaths 作为仓库内额外来源加载，并通过 eventBus 与本服务联动。
+            // 审批扩展内部用 ctx.hasUI 守卫，只在 Web 后端（无 UI 上下文）生效，TUI/RPC
+            // 有自己的确认 UI 会直接放行——所以两边共享扩展目录也不会互相干扰。
             additionalExtensionPaths: this.discoverLocalExtensions(extensionDir),
-            extensionFactories: [{ name: "node-tool-approval", factory: createApprovalExtension(this.approvals), hidden: true }],
+            // 关键：把 app.ts 创建的事件总线传给 loader，扩展的 pi.events 与
+            // ToolApprovalBroker 订阅的是同一个实例，审批待处理/决定才能互通。
+            eventBus: this.eventBus,
         });
         await loader.reload();
         return loader;
@@ -532,6 +533,7 @@ export class AgentRegistry {
             this.approvals?.cancelSession(entry.session.sessionId);    // 拒绝所有待审批
             entry.session.dispose();                                   // 释放 SDK 资源
         }
+        this.approvals?.dispose();                                     // 退订事件总线
         this.entries.clear();
     }
 

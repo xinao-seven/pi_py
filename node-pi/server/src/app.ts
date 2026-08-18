@@ -15,6 +15,7 @@
  *   "应用关闭时"执行，适合做资源初始化和清理。
  */
 
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import { join } from "node:path";
@@ -61,7 +62,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // 工具调用审批中枢：Pi 的 bash 工具在命中危险命令规则时，会通过它
   // 挂起等待，直到前端在 SSE 流上收到 tool_call_pending 事件后做出审批。
-  const approvals = new ToolApprovalBroker();
+  // 扩展与服务器不共享模块实例（jiti 隔离），所以用同一个事件总线联动：
+  // 同一实例同时注入 OriginalPiSessionFactory（成为扩展的 pi.events）与 broker。
+  const eventBus = createEventBus();
+  const approvals = new ToolApprovalBroker(eventBus);
 
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
@@ -72,7 +76,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const registry = options.registry ?? new AgentRegistry(
     // OriginalPiSessionFactory 是 Pi SDK 的适配器，负责真正创建/打开 AgentSession；
     // agentDir 默认指向用户主目录下的 ~/.pi/agent。
-    new OriginalPiSessionFactory(options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`, approvals),
+    // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动。
+    new OriginalPiSessionFactory(options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`, eventBus),
     approvals,
   );
   const agentDir = options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`;
