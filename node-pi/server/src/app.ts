@@ -33,6 +33,7 @@ import { ModelCatalogService } from "./services/model-catalog.js";
 import { ModelConfigService } from "./services/model-config-service.js";
 import { SkillService } from "./services/skill-service.js";
 import { ToolApprovalBroker } from "./services/tool-approval.js";
+import { PlanModeService } from "./services/plan-mode-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
 
 /**
@@ -47,6 +48,7 @@ export interface AppOptions {
   workspaceService?: WorkspaceService;     // 工作区登记与持久化
   modelCatalogService?: ModelCatalogService; // 模型目录（从 Pi SDK 读取）
   modelConfigService?: ModelConfigService;   // models.json 读写
+  planService?: PlanModeService;
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -66,6 +68,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 同一实例同时注入 OriginalPiSessionFactory（成为扩展的 pi.events）与 broker。
   const eventBus = createEventBus();
   const approvals = new ToolApprovalBroker(eventBus);
+  const plans = options.planService ?? new PlanModeService(eventBus);
 
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
@@ -79,6 +82,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动。
     new OriginalPiSessionFactory(options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`, eventBus),
     approvals,
+    plans,
   );
   const agentDir = options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`;
   const workspaceService = options.workspaceService ?? new WorkspaceService(options.workspaceParent, join(agentDir, "node-server-workspaces.json"));
@@ -122,7 +126,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // onClose 钩子：服务关闭（Ctrl+C、进程退出等）时释放所有活跃 Pi 会话，
   // 包括取消事件订阅、中止还在流式输出的会话、清理待审批的工具调用。
-  app.addHook("onClose", async () => registry.close());
+  // PlanModeService 也订阅了事件总线，关闭时一并释放，避免测试/热重启遗留监听器。
+  app.addHook("onClose", async () => {
+    await registry.close();
+    plans.dispose();
+  });
 
   return app;
 }

@@ -10,6 +10,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const props = defineProps<{
   running: boolean;
   disabled?: boolean;
+  planActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -155,7 +156,7 @@ onBeforeUnmount(clearImages);
       class="composer-input"
       rows="1"
       :disabled="disabled"
-      :placeholder="running ? '输入修正指令或排队消息…' : '给 pi 发消息'"
+      :placeholder="running ? '输入修正指令或排队消息…' : planActive ? '描述需求，Agent 将先生成 Plan…' : '给 pi 发消息'"
       aria-label="消息"
       @input="resize"
       @keydown="onKeydown"

@@ -33,9 +33,32 @@ import { join } from "node:path";
 
 import { ApiError } from "../errors.js";
 import { ToolApprovalBroker, type PendingToolApproval } from "./tool-approval.js";
+import { PlanModeService, type PlanSnapshot } from "./plan-mode-service.js";
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
+
+/**
+ * 返回 Node 后端随服务发布的扩展目录。
+ *
+ * 中文说明：源码位于 server/src/services，构建产物位于 server/dist/services；两种情况下
+ * 上溯两级都恰好回到 server/。将路径计算提取为函数，避免目录重构后加载器和测试各自猜测。
+ */
+export function serverExtensionDirectory(sourceDirectory = import.meta.dirname): string {
+    return join(sourceDirectory, "..", "..", "extensions");
+}
+
+/** 扫描一个扩展目录中的直接子文件；README、子目录和非 JS/TS 文件均忽略。 */
+export function discoverLocalExtensions(directory: string): string[] {
+    try {
+        return readdirSync(directory)
+            .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
+            .sort()
+            .map((name) => join(directory, name));
+    } catch {
+        return [];
+    }
+}
 
 /** 图片附件（模型视觉输入）：base64 数据 + MIME 类型。 */
 export interface ImageAttachment {
@@ -128,7 +151,16 @@ export interface PiSessionFactory {
  */
 export interface StreamEvent {
     id: number; // 单调递增的事件序号，前端用 Last-Event-ID 断线续传
-    payload: AgentSessionEvent | { type: "agent_end"; error: string } | { type: "tool_call_pending"; toolCallId: string; toolName: string; args: Record<string, unknown>; reason: string; rule: string };
+    payload: AgentSessionEvent | { type: "agent_end"; error: string } | { type: "plan_updated"; plan: PlanSnapshot } | {
+        type: "tool_call_pending";
+        toolCallId: string;
+        toolName: string;
+        args: Record<string, unknown>;
+        reason: string;
+        rule: string;
+        risk: "medium" | "high" | "critical";
+        category: "workspace_write" | "dependency_change" | "network" | "git_remote" | "destructive" | "system";
+    };
 }
 
 /** 注册表条目：一个活跃会话 + 它的事件缓存 + 订阅者集合。 */
@@ -238,36 +270,25 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
 
     /** 创建资源加载器（工具/技能发现），并注册"工具审批"扩展。 */
     private async loader(cwd: string): Promise<DefaultResourceLoader> {
-        // 本服务自身的扩展目录：node-pi/extensions/。dev（src/services）与 prod
-        // （dist/services）都上溯 3 级落在 node-pi/ 下，扫描其中的 .ts/.js 扩展模块。
-        const extensionDir = join(import.meta.dirname, "..", "..", "..", "extensions");
+        // 本服务自身的扩展目录：node-pi/server/extensions/。dev（src/services）与 prod
+        // （dist/services）都上溯 2 级落在 server/ 下，扫描其中的 .ts/.js 扩展模块。
+        const extensionDir = serverExtensionDirectory();
         const loader = new DefaultResourceLoader({
             cwd,
             agentDir: this.agentDir,
             // 与 TUI 平级：不设 noExtensions，走 SDK 的自动发现（与 TUI 相同的代码路径），
             // 加载用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展，
-            // 使 Web 能实现 TUI 能做的一切。审批扩展（tool-approval.ts）通过下面的
+            // 使 Web 能实现 TUI 能做的一切。工具审批扩展（tool-approval.ts）通过下面的
             // additionalExtensionPaths 作为仓库内额外来源加载，并通过 eventBus 与本服务联动。
             // 审批扩展内部用 ctx.hasUI 守卫，只在 Web 后端（无 UI 上下文）生效，TUI/RPC
             // 有自己的确认 UI 会直接放行——所以两边共享扩展目录也不会互相干扰。
-            additionalExtensionPaths: this.discoverLocalExtensions(extensionDir),
+            additionalExtensionPaths: discoverLocalExtensions(extensionDir),
             // 关键：把 app.ts 创建的事件总线传给 loader，扩展的 pi.events 与
             // ToolApprovalBroker 订阅的是同一个实例，审批待处理/决定才能互通。
             eventBus: this.eventBus,
         });
         await loader.reload();
         return loader;
-    }
-
-    /** 扫描扩展目录下的 .ts/.js 扩展文件（目录不存在或为空时返回空数组）。 */
-    private discoverLocalExtensions(dir: string): string[] {
-        try {
-            return readdirSync(dir)
-                .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
-                .map((name) => join(dir, name));
-        } catch {
-            return [];
-        }
     }
 
     /** 把 SDK 的 SessionInfo 转成我们自己的 PersistedSessionInfo。 */
@@ -298,9 +319,10 @@ export class AgentRegistry {
     private readonly entries = new Map<string, RegistryEntry>();
     private readonly opening = new Map<string, Promise<RegistryEntry>>();
 
-    constructor(private readonly sessionFactory: PiSessionFactory, private readonly approvals?: ToolApprovalBroker) {
+    constructor(private readonly sessionFactory: PiSessionFactory, private readonly approvals?: ToolApprovalBroker, private readonly plans?: PlanModeService) {
         // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
         approvals?.setPendingListener((pending) => this.announceApproval(pending));
+        plans?.setListener((plan) => this.announcePlan(plan));
     }
 
     /** 创建新会话并登记。会话 id 冲突（已活跃）则 409。 */
@@ -491,6 +513,15 @@ export class AgentRegistry {
                 this.approveTool(sessionId, toolCallId, command.approved);
                 return {};
             }
+            case "plan_enable":
+            case "plan_disable":
+            case "plan_execute":
+            case "plan_refine": {
+                if (!this.plans) throw new ApiError(409, "plan_unavailable", "Plan mode is unavailable for this session");
+                const action = command.type.replace("plan_", "") as "enable" | "disable" | "execute" | "refine";
+                this.plans.command(sessionId, action, typeof command.message === "string" ? command.message : undefined);
+                return {};
+            }
             default:
                 throw new ApiError(422, "unsupported_command", `Unsupported Node Pi command: ${String(command.type)}`);
         }
@@ -520,7 +551,10 @@ export class AgentRegistry {
                 reason: pending.reason,
                 rule: pending.rule,
                 args: pending.args,
+                risk: pending.risk,
+                category: pending.category,
             },
+            plan: this.planState(sessionId),
         };
     }
 
@@ -549,6 +583,7 @@ export class AgentRegistry {
         entry.unsubscribe();
         entry.subscribers.clear();
         this.approvals?.cancelSession(sessionId);
+        this.plans?.remove(sessionId);
         if (entry.session.isStreaming) await entry.session.abort();
         entry.session.dispose();
         this.entries.delete(sessionId);
@@ -573,6 +608,10 @@ export class AgentRegistry {
     approveTool(sessionId: string, toolCallId: string, approved: boolean): void {
         if (!this.approvals) throw new ApiError(409, "approval_unavailable", "Tool approval is unavailable for this session");
         this.approvals.decide(sessionId, toolCallId, approved);
+    }
+
+    planState(sessionId: string): PlanSnapshot {
+        return this.plans?.state(sessionId) ?? { sessionId, mode: "normal", todos: [], awaitingConfirmation: false };
     }
 
     /** 取活跃条目，不存在抛 404（区别于 open 的自动恢复语义）。 */
@@ -638,6 +677,13 @@ export class AgentRegistry {
             args: pending.args,
             reason: pending.reason,
             rule: pending.rule,
+            risk: pending.risk,
+            category: pending.category,
         });
+    }
+
+    private announcePlan(plan: PlanSnapshot): void {
+        const entry = this.entries.get(plan.sessionId);
+        if (entry) this.publish(entry, { type: "plan_updated", plan });
     }
 }

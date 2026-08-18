@@ -211,13 +211,20 @@ export type AgentPhase = "idle" | "waiting" | "responding" | "tool";
 // Agent 阶段：空闲 / 等待模型 / 正在生成 / 正在执行工具
 
 export interface PendingToolCall {
-  // 等待人工确认的危险工具调用（来自 tool_call_pending 事件）
+  // 等待人工确认的有副作用工具调用（来自 tool_call_pending 事件）
   toolCallId: string;
   toolName: string;
   reason: string;
   rule: string;
+  risk: "medium" | "high" | "critical";
+  category: "workspace_write" | "dependency_change" | "network" | "git_remote" | "destructive" | "system";
   args: Record<string, unknown>;
 }
+
+export type PlanMode = "normal" | "planning" | "executing";
+export interface PlanTodo { step: number; text: string; completed: boolean; }
+export interface PlanSnapshot { sessionId: string; mode: PlanMode; todos: PlanTodo[]; awaitingConfirmation: boolean; }
+
 
 export interface AgentStreamState {
   // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误与待确认工具调用

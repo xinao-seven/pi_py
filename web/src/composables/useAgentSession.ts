@@ -8,6 +8,7 @@ import {
   createAgent,
   getAgentState,
   getModels,
+  getPlan,
   getSession,
   sendAgentCommand,
 } from "@/lib/api";
@@ -20,6 +21,7 @@ import type {
   ContextUsage,
   ModelCatalog,
   ModelRef,
+  PlanSnapshot,
   RetryInfo,
   SessionDetail,
 } from "@/types";
@@ -43,6 +45,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   const entryIds = ref<string[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
+  const plan = ref<PlanSnapshot | null>(null);
   const stream = reactive<AgentStreamState>({ ...INITIAL_STREAM_STATE });
   const contextUsage = ref<ContextUsage | null>(null);
   const catalog = ref<ModelCatalog | null>(null);
@@ -86,12 +89,14 @@ export function useAgentSession(options: AgentSessionOptions) {
     const sequence = ++loadSequence;
     if (showLoading) loading.value = true;
     try {
-      const [nextDetail, state] = await Promise.all([
+      const [nextDetail, state, planSnapshot] = await Promise.all([
         getSession(sessionId),
         getAgentState(sessionId),
+        getPlan(sessionId).then((response) => response.plan).catch(() => null),
       ]);
       if (sequence !== loadSequence || activeSessionId.value !== sessionId) return;
       detail.value = nextDetail;
+      plan.value = planSnapshot;
       messages.value = nextDetail.context.messages;
       entryIds.value = nextDetail.context.entryIds;
       contextUsage.value = state.state?.contextUsage ?? null;
@@ -179,7 +184,9 @@ export function useAgentSession(options: AgentSessionOptions) {
     assignStream(reduceAgentEvent(stream, event));
     if (event.contextUsage !== undefined) contextUsage.value = event.contextUsage ?? null;
 
-    if (event.type === "auto_retry_start") {
+    if (event.type === "plan_updated" && event.plan) {
+      plan.value = event.plan as PlanSnapshot;
+    } else if (event.type === "auto_retry_start") {
       retryInfo.value = {
         attempt: event.attempt ?? 0,
         maxAttempts: event.maxAttempts ?? 0,
@@ -398,6 +405,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       closeEvents();
       assignStream({ ...INITIAL_STREAM_STATE });
       detail.value = null;
+      plan.value = null;
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = "off";
@@ -415,6 +423,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (options.sessionId.value === null) {
       activeSessionId.value = null;
       detail.value = null;
+      plan.value = null;
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = "off";
@@ -466,6 +475,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     entryIds,
     loading,
     error,
+    plan,
     stream,
     contextUsage,
     catalog,

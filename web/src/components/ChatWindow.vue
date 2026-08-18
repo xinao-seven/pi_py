@@ -5,9 +5,10 @@ import { computed, nextTick, ref, toRef, watch } from "vue";
 import AgentControls from "@/components/AgentControls.vue";
 import ChatInput from "@/components/ChatInput.vue";
 import MessageView from "@/components/MessageView.vue";
+import PlanProgress from "@/components/PlanProgress.vue";
 import ToolApprovalDialog from "@/components/ToolApprovalDialog.vue";
 import { useAgentSession } from "@/composables/useAgentSession";
-import { forkSession, mergeSession } from "@/lib/api";
+import { forkSession, mergeSession, sendPlanCommand } from "@/lib/api";
 import { useAppStore } from "@/stores/app";
 import type { SessionInfo } from "@/types";
 
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 }>();
 
 const messagesEnd = ref<HTMLElement | null>(null);
+const planBusy = ref(false);
 const store = useAppStore();
 const {
   detail,
@@ -37,6 +39,7 @@ const {
   entryIds,
   loading,
   error,
+  plan,
   stream,
   contextUsage,
   catalog,
@@ -83,6 +86,7 @@ const title = computed(() => {
   return detail.value?.info.name || detail.value?.info.firstMessage || "pi 会话";
 });
 const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? "");
+const planActive = computed(() => plan.value?.mode === "planning" || plan.value?.mode === "executing");
 const toolResults = computed(() =>
   // toolCallId -> toolResult 消息 的映射，供工具调用块展示结果
   Object.fromEntries(
@@ -134,6 +138,51 @@ async function mergeFrom(sourceSessionId: string): Promise<void> {
   } finally {
     store.setBranchBusy(false);
   }
+}
+
+async function actPlan(
+  action: "enable" | "disable" | "execute" | "refine",
+  message?: string,
+): Promise<void> {
+  // 发送 Plan 命令并乐观更新面板状态；随后 SSE plan_updated 会校正权威状态。
+  if (!props.sessionId) return;
+  planBusy.value = true;
+  error.value = null;
+  try {
+    await sendPlanCommand(props.sessionId, action, message);
+    const current = plan.value;
+    if (action === "enable") {
+      plan.value = { sessionId: props.sessionId, mode: "planning", todos: current?.todos ?? [], awaitingConfirmation: false };
+    } else if (action === "disable") {
+      plan.value = { sessionId: props.sessionId, mode: "normal", todos: [], awaitingConfirmation: false };
+    } else if (action === "execute") {
+      plan.value = { sessionId: props.sessionId, mode: "executing", todos: current?.todos ?? [], awaitingConfirmation: false };
+    } else if (action === "refine") {
+      plan.value = { sessionId: props.sessionId, mode: "planning", todos: current?.todos ?? [], awaitingConfirmation: false };
+    }
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "Plan 操作失败";
+  } finally {
+    planBusy.value = false;
+  }
+}
+
+async function togglePlan(): Promise<void> {
+  // 新会话尚未有 Session JSONL，必须先发送首条普通消息创建会话。
+  if (!props.sessionId) {
+    error.value = "请先发送首条消息创建会话，再开启 Plan 模式。";
+    return;
+  }
+  if (planActive.value) {
+    // 激活后开关即退出键；执行中退出会中断计划，先确认避免误退。
+    if (plan.value?.mode === "executing") {
+      const ok = window.confirm("执行中退出会中断当前计划，确定退出 Plan 模式吗？");
+      if (!ok) return;
+    }
+    await actPlan("disable");
+    return;
+  }
+  await actPlan("enable");
 }
 
 watch(
@@ -249,6 +298,14 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         <div v-if="error || stream.error || compactionError" class="chat-error" role="alert">
           {{ error || stream.error || compactionError }}
         </div>
+        <PlanProgress
+          :plan="plan"
+          :session-id="sessionId"
+          :busy="planBusy"
+          @disable="actPlan('disable')"
+          @execute="actPlan('execute')"
+          @refine="(message) => actPlan('refine', message)"
+        />
         <AgentControls
           :catalog="catalog"
           :model="displayModel"
@@ -263,8 +320,23 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           @tools-change="changeTools"
           @compact="compact"
         />
+        <div class="plan-composer-bar">
+          <button
+            class="plan-composer-toggle"
+            :class="{ 'plan-composer-toggle--active': planActive }"
+            type="button"
+            :disabled="planBusy || stream.running"
+            :title="sessionId ? undefined : '先发送首条消息创建会话'"
+            @click="togglePlan"
+          >
+            {{ planActive ? '退出 Plan 模式' : '开启 Plan 模式' }}
+          </button>
+          <span>{{ planActive ? '当前回复只会用于调查、讨论和生成计划。' : '开启后，下一条消息将作为规划需求发送给 Agent。' }}</span>
+        </div>
         <ChatInput
           :running="stream.running"
+          :disabled="planBusy"
+          :plan-active="planActive"
           @send="send"
           @steer="steer"
           @follow-up="followUp"

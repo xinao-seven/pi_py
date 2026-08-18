@@ -35,6 +35,8 @@ describe("reduceAgentEvent", () => {
       toolName: "bash",
       reason: "递归/强制删除文件或目录",
       rule: "recursive-delete",
+      risk: "critical",
+      category: "destructive",
       args: { command: "rm -rf ./build" },
     });
 
@@ -44,6 +46,8 @@ describe("reduceAgentEvent", () => {
       toolName: "bash",
       reason: "递归/强制删除文件或目录",
       rule: "recursive-delete",
+      risk: "critical",
+      category: "destructive",
       args: { command: "rm -rf ./build" },
     });
 
@@ -61,6 +65,8 @@ describe("reduceAgentEvent", () => {
       toolCallId: "call-1",
       toolName: "bash",
       reason: "格式化磁盘",
+      risk: "critical",
+      category: "system",
       args: { command: "format c:" },
     });
     const executed = reduceAgentEvent(pending, {
@@ -75,6 +81,8 @@ describe("reduceAgentEvent", () => {
       toolCallId: "call-2",
       toolName: "bash",
       reason: "关机",
+      risk: "critical",
+      category: "system",
       args: { command: "shutdown /s" },
     });
     const ended = reduceAgentEvent(again, { type: "agent_end", error: null });

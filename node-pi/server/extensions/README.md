@@ -72,12 +72,29 @@ Web 后端默认走与原版 pi 相同的扩展自动发现（`~/.pi/agent/exten
 | `pi:tool_approval:decide` | 后端 → 扩展 | `{ sessionId, toolCallId, approved }`（前端审批、决策超时、会话取消都会发） |
 | `pi:tool_approval:aborted` | 扩展 → 后端 | `{ sessionId, toolCallId }`（工具调用被 AbortSignal 中止） |
 
-通道名两端各有一份常量（`node-pi/extensions/tool-approval.ts` 与
+通道名两端各有一份常量（`node-pi/server/extensions/tool-approval.ts` 与
 `node-pi/server/src/services/tool-approval.ts`），测试里有断言保证它们一致。
 
 服务端对应实现见 `node-pi/server/src/services/tool-approval.ts`（`ToolApprovalBroker`）；
 规则集与 Python 学习后端（`pi-python/server/services/tool_approval.py`）保持一致，
 保证两个后端的审批策略相同。
+
+## 内置扩展：Web Plan 模式（plan-mode.ts）
+
+Plan 部分移植自原版 Pi 的 `examples/extensions/plan-mode`，但把 TUI 的确认选择改为 Web 的 REST/SSE
+交互。用户开启 Plan 模式后，`edit` 与 `write` 会从活动工具移除，`bash` 只能执行只读白名单命令；
+Agent 在调查和讨论后必须输出 `Plan:` 编号步骤。用户确认前不能执行修改。
+
+确认执行后扩展恢复原工具集，用隐藏 follow-up 要求 Agent 顺序完成步骤，并仅在完成并验证后报告
+`[DONE:n]`。扩展使用 session JSONL custom entry 恢复模式、待办和进度。详细的 Agent 生命周期、
+接口、SSE 载荷与接入方式见 [`../../../docs/node-web-plan-mode.md`](../../../docs/node-web-plan-mode.md)。
+
+事件总线契约：
+
+| 通道 | 方向 | 载荷 |
+| --- | --- | --- |
+| `pi:plan-mode:set` | 服务端 → 扩展 | `{ sessionId, action: "enable" | "disable" | "refine" | "execute", message? }` |
+| `pi:plan-mode:state` | 扩展 → 服务端 | `{ sessionId, mode, todos, awaitingConfirmation }` |
 
 ## 说明
 

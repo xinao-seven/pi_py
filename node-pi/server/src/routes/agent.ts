@@ -169,6 +169,11 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
         return { running: true, state };
     });
 
+    app.get<{ Params: { sessionId: string } }>("/:sessionId/plan", async (request) => {
+        await options.registry.open(request.params.sessionId);
+        return { plan: options.registry.planState(request.params.sessionId) };
+    });
+
     // GET /api/agent/:sessionId/events —— SSE 实时事件流。
     //
     // 中文说明：这是本后端与前端交互的核心通道。Vue 用 EventSource 连接此端点，

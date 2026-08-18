@@ -10,7 +10,7 @@ pi_py/
 ├── web/                    # Vue 3 前端（两后端共用，VITE_BACKEND_URL 切换后端）
 ├── node-pi/               # 【Node 版·生产】原版 pi 能力
 │   ├── server/           # Fastify + @earendil-works/pi-coding-agent 后端（端口 8001）
-│   ├── extensions/       # ★ 扩展目录：放进 .ts/.js 扩展即被后端自动加载
+│   │   └── extensions/   # ★ 扩展目录：放进 .ts/.js 扩展即被后端自动加载
 │   └── utools/           # uTools 桌面插件（拉起 node-pi/server + 加载 web 构建）
 ├── pi-python/            # 【Python 版·复刻】三层内核 + FastAPI 后端
 │   ├── src/             # pi_ai → pi_agent → pi_coding_agent 三层内核
@@ -74,12 +74,13 @@ Python 版详细说明见 [`pi-python/README.md`](pi-python/README.md)。
 
 ## 扩展（给 Node 版加能力）
 
-`node-pi/extensions/` 是给 Node 版后端添加工具/钩子的地方。放一个 `.ts` 文件
+`node-pi/server/extensions/` 是给 Node 版后端添加工具/钩子的地方。放一个 `.ts` 文件
 （default export `ExtensionFactory`，用 `pi.registerTool()` / `pi.on(...)`），后端启动时自动扫描加载。
 
-- 本目录的扩展只在本仓库加载；原版 pi（TUI）的 `~/.pi/agent/extensions/` 与项目
-  `.pi/extensions/` 不会被本后端加载，两边隔离。
-- 示例与格式说明见 [`node-pi/extensions/README.md`](node-pi/extensions/README.md)。
+- 本目录是服务额外加载的来源；原版 pi（TUI）的 `~/.pi/agent/extensions/` 与项目
+  `.pi/extensions/` 仍由 SDK 自动发现。
+- 示例与格式说明见 [`node-pi/server/extensions/README.md`](node-pi/server/extensions/README.md)，
+  加载机制见 [`docs/node-extension-system.md`](docs/node-extension-system.md)。
 
 ## 测试
 
@@ -98,4 +99,7 @@ cd pi-python && python -m pytest
 | [`pi-python/README.md`](pi-python/README.md) | Python 版项目文档（配置、API、安全） |
 | [`docs/three-layer-architecture.md`](docs/three-layer-architecture.md) | Python 三层包结构与依赖规则 |
 | [`docs/node-pi-backend.md`](docs/node-pi-backend.md) | Node 版后端说明 |
+| [`docs/node-extension-system.md`](docs/node-extension-system.md) | Node 扩展发现与接入 |
+| [`docs/node-command-approval.md`](docs/node-command-approval.md) | 命令风险分级与审批事件链路 |
+| [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | Web Plan 模式的 Agent 约束、确认执行与接口契约 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

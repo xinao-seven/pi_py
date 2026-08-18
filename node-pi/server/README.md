@@ -11,4 +11,6 @@ npm install
 npm run dev
 ```
 
-本项目的扩展放在 `../extensions/`（即 `node-pi/extensions/`），服务启动时会自动扫描加载。
+本项目的扩展放在 `extensions/`（即 `node-pi/server/extensions/`），服务为每个 Pi Session
+创建资源加载器时会自动扫描加载。接入说明见
+[`docs/node-extension-system.md`](../../docs/node-extension-system.md)。

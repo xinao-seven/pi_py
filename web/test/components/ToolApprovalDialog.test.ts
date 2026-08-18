@@ -8,6 +8,8 @@ const PENDING: PendingToolCall = {
   toolName: "bash",
   reason: "递归/强制删除文件或目录，可能造成不可恢复的数据丢失",
   rule: "recursive-delete",
+  risk: "critical",
+  category: "destructive",
   args: { command: "Remove-Item -Recurse -Force C:/work/build" },
 };
 
@@ -15,10 +17,12 @@ describe("ToolApprovalDialog", () => {
   it("shows the dangerous command and reasons", () => {
     const wrapper = mount(ToolApprovalDialog, { props: { pending: PENDING } });
 
-    expect(wrapper.text()).toContain("确认执行危险命令");
+    expect(wrapper.text()).toContain("确认执行需要授权的命令");
     expect(wrapper.text()).toContain(PENDING.reason);
     expect(wrapper.text()).toContain("工具：bash");
     expect(wrapper.text()).toContain("规则：recursive-delete");
+    expect(wrapper.text()).toContain("风险：critical");
+    expect(wrapper.text()).toContain("范围：destructive");
     expect(wrapper.text()).toContain(PENDING.args.command);
   });
 

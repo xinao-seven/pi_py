@@ -11,6 +11,7 @@ import type {
   SessionDetail,
   SessionInfo,
   SkillsResponse,
+  PlanSnapshot,
 } from "@/types";
 
 interface ErrorEnvelope {
@@ -179,6 +180,14 @@ export async function setSkillDisabled(
     method: "PATCH",
     body: JSON.stringify({ filePath, disableModelInvocation }),
   });
+}
+
+export function getPlan(sessionId: string): Promise<{ plan: PlanSnapshot }> {
+  return request(`/api/agent/${encodeURIComponent(sessionId)}/plan`);
+}
+
+export async function sendPlanCommand(sessionId: string, action: "enable" | "disable" | "execute" | "refine", message?: string): Promise<void> {
+  await sendAgentCommand(sessionId, { type: `plan_${action}`, ...(message ? { message } : {}) });
 }
 
 export function agentEventsUrl(sessionId: string): string {

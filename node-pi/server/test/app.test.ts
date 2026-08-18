@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createEventBus } from "@earendil-works/pi-coding-agent";
+
 import { createApp } from "../src/app.js";
 import { AgentRegistry, type PiSession, type PiSessionFactory } from "../src/services/agent-registry.js";
+import { PLAN_CHANNEL_STATE, PlanModeService } from "../src/services/plan-mode-service.js";
 
 class FakePiSession implements PiSession {
   readonly sessionId = "node-test-session";
@@ -86,5 +89,27 @@ describe("Fastify application", () => {
     });
     expect(modelChange.statusCode).toBe(200);
     expect(registry.state("node-test-session")).toMatchObject({ model: { provider: "next", modelId: "model" } });
+  });
+
+  it("exposes the session Plan snapshot through the agent API", async () => {
+    const events = createEventBus();
+    const plans = new PlanModeService(events);
+    const registry = new AgentRegistry(new FakePiSessionFactory(), undefined, plans);
+    const app = createApp({ registry, planService: plans });
+    apps.push(app);
+    await app.inject({ method: "POST", url: "/api/agent/new", payload: { cwd: process.cwd(), message: "hello" } });
+    events.emit(PLAN_CHANNEL_STATE, {
+      sessionId: "node-test-session",
+      mode: "planning",
+      todos: [{ step: 1, text: "Inspect the API", completed: false }],
+      awaitingConfirmation: true,
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/agent/node-test-session/plan" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      plan: { mode: "planning", awaitingConfirmation: true, todos: [{ text: "Inspect the API" }] },
+    });
   });
 });

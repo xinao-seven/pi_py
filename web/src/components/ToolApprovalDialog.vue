@@ -1,4 +1,4 @@
-<!-- 危险命令确认弹窗：模型请求执行危险命令时弹出，由用户允许/拒绝。 -->
+<!-- 命令确认弹窗：模型请求执行有副作用命令时弹出，由用户允许/拒绝。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 
@@ -37,8 +37,8 @@ function choose(approved: boolean): void {
     >
       <header class="config-header">
         <div>
-          <div class="welcome-kicker">DANGEROUS COMMAND</div>
-          <h2 id="approval-title">确认执行危险命令</h2>
+          <div class="welcome-kicker">{{ pending.risk.toUpperCase() }} COMMAND</div>
+          <h2 id="approval-title">确认执行需要授权的命令</h2>
         </div>
       </header>
 
@@ -49,12 +49,14 @@ function choose(approved: boolean): void {
         <div class="approval-meta">
           <span class="approval-chip">工具：{{ pending.toolName }}</span>
           <span v-if="pending.rule" class="approval-chip">规则：{{ pending.rule }}</span>
+          <span class="approval-chip">风险：{{ pending.risk }}</span>
+          <span class="approval-chip">范围：{{ pending.category }}</span>
         </div>
         <div class="tool-section">
           <div class="tool-label">命令内容</div>
           <pre>{{ commandText }}</pre>
         </div>
-        <p class="approval-hint">不确认时命令不会执行；60 秒内未操作将自动拒绝。</p>
+        <p class="approval-hint">不确认时命令不会执行；30 秒内未操作将自动拒绝。</p>
       </div>
 
       <footer class="config-footer approval-footer">

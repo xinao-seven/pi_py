@@ -21,6 +21,13 @@
 
 Node 后端通过原版 Pi 的 inline extension 在 Bash 命令命中高风险规则时拦截执行（例如递归删除、格式化磁盘、关机、强制 Git 推送或远程脚本直管道执行）。`find`、`ls`、`git log` 等普通检查命令不会中断。服务向 SSE 推送 `tool_call_pending`，Vue 已有确认弹窗会通过 `approve_tool` 决定是否执行。审批 30 秒后超时拒绝；拒绝、会话中止和服务关闭也都会拒绝。该服务默认仅监听 loopback；若要部署到网络环境，仍须在反向代理前配置鉴权与限流。
 
+## Plan 模式
+
+聊天输入框上方的 **开启 Plan 模式** 可把当前会话切换到只读规划期；用户接着在同一个输入框发送需求，
+Agent 只能调查和讨论，生成 `Plan:` 后必须由用户确认才会恢复写入能力并顺序执行。步骤进度由 Agent 的
+`[DONE:n]` 标记驱动，模式与步骤随会话 JSONL 恢复。接口为 `GET /api/agent/:sessionId/plan` 和统一 Agent 命令中的 `plan_*`，状态也会以
+`plan_updated` SSE 推送。详见 [`node-web-plan-mode.md`](node-web-plan-mode.md)。
+
 ## 启动
 
 ```powershell

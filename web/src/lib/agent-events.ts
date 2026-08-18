@@ -41,6 +41,12 @@ export function reduceAgentEvent(
           toolName: String(event.toolName ?? "bash"),
           reason: String(event.reason ?? "危险命令"),
           rule: String(event.rule ?? ""),
+          risk: event.risk === "medium" || event.risk === "high" || event.risk === "critical" ? event.risk : "critical",
+          category: event.category === "workspace_write" || event.category === "dependency_change"
+            || event.category === "network" || event.category === "git_remote"
+            || event.category === "destructive" || event.category === "system"
+            ? event.category
+            : "destructive",
           args: (event.args ?? {}) as Record<string, unknown>,
         } satisfies PendingToolCall,
       };

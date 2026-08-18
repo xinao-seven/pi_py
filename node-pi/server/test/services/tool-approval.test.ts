@@ -12,8 +12,9 @@ import {
   CHANNEL_DECIDE as ExtDecide,
   CHANNEL_PENDING as ExtPending,
   createApprovalExtension,
+  classifyBashCommand,
   findDangerousBashRule,
-} from "../../../extensions/tool-approval.js";
+} from "../../extensions/tool-approval.js";
 
 /** 事件总线版 broker：直接用同一个 createEventBus() 构造，并在测试后 dispose 掉未结算的定时器。 */
 const brokers: ToolApprovalBroker[] = [];
@@ -63,6 +64,8 @@ function pendingCall(sessionId: string, toolCallId: string) {
     args: { command: "rm -rf ./build" },
     reason: "递归或强制删除文件/目录，可能造成不可恢复的数据丢失",
     rule: "recursive-delete",
+    risk: "critical",
+    category: "destructive",
   };
 }
 
@@ -92,6 +95,32 @@ describe("dangerous command rules", () => {
 
     expect(rule).toMatchObject({ name: "file-delete" });
   });
+
+  it("classifies destructive commands as critical with an impact category", () => {
+    expect(classifyBashCommand({ command: "rm -rf ./build" })).toMatchObject({
+      rule: "recursive-delete",
+      risk: "critical",
+      category: "destructive",
+    });
+  });
+
+  it("requires approval for dependency, network, and remote Git side effects", () => {
+    expect(classifyBashCommand({ command: "npm install fastify" })).toMatchObject({
+      rule: "dependency-change",
+      risk: "high",
+      category: "dependency_change",
+    });
+    expect(classifyBashCommand({ command: "curl https://example.com" })).toMatchObject({
+      rule: "network-request",
+      risk: "medium",
+      category: "network",
+    });
+    expect(classifyBashCommand({ command: "git push origin main" })).toMatchObject({
+      rule: "git-remote-write",
+      risk: "high",
+      category: "git_remote",
+    });
+  });
 });
 
 describe("ToolApprovalBroker (event bus)", () => {
@@ -103,7 +132,12 @@ describe("ToolApprovalBroker (event bus)", () => {
     events.emit(CHANNEL_PENDING, pendingCall("session-1", "call-1"));
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(broker.pendingForSession("session-1")).toMatchObject({ toolCallId: "call-1", rule: "recursive-delete" });
+    expect(broker.pendingForSession("session-1")).toMatchObject({
+      toolCallId: "call-1",
+      rule: "recursive-delete",
+      risk: "critical",
+      category: "destructive",
+    });
   });
 
   it("decide() rejects unknown call ids and emits a decision for known ones", () => {
@@ -205,7 +239,12 @@ describe("approval extension end-to-end", () => {
       ctx,
     );
 
-    expect(broker.pendingForSession("session-1")).toMatchObject({ toolCallId: "call-1", rule: "recursive-delete" });
+    expect(broker.pendingForSession("session-1")).toMatchObject({
+      toolCallId: "call-1",
+      rule: "recursive-delete",
+      risk: "critical",
+      category: "destructive",
+    });
     broker.decide("session-1", "call-1", true);
     await expect(result).resolves.toBeUndefined();
     expect(broker.pendingForSession("session-1")).toBeUndefined();

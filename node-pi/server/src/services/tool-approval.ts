@@ -1,7 +1,7 @@
 /**
- * 工具调用审批的服务端中枢（事件总线版）。
+ * 工具调用审批的 Web 桥接层（事件总线版）。
  *
- * 中文说明：审批逻辑的拦截点仍在扩展（node-pi/extensions/tool-approval.ts，
+ * 中文说明：审批逻辑的拦截点仍在扩展（node-pi/server/extensions/tool-approval.ts，
  * 通过 tool_call 钩子），本模块是"有状态"的那一半——挂起队列、决策超时、
  * 快照都由这里维护，是唯一真相源：
  * - 订阅 pi:tool_approval:pending：扩展命中危险规则时发布，本类创建挂起项
@@ -28,9 +28,11 @@ export interface PendingToolApproval {
   args: Record<string, unknown>;
   reason: string; // 人类可读的危险原因
   rule: string;   // 命中的规则名
+  risk: "medium" | "high" | "critical";
+  category: "workspace_write" | "dependency_change" | "network" | "git_remote" | "destructive" | "system";
 }
 
-/** 事件通道名契约：与 node-pi/extensions/tool-approval.ts 保持一致。 */
+/** 事件通道名契约：与 node-pi/server/extensions/tool-approval.ts 保持一致。 */
 export const CHANNEL_PENDING = "pi:tool_approval:pending";
 export const CHANNEL_DECIDE = "pi:tool_approval:decide";
 export const CHANNEL_ABORTED = "pi:tool_approval:aborted";
