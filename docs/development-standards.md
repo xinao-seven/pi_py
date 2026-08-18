@@ -14,25 +14,28 @@
   [`docs/implementation-plan.md`](implementation-plan.md)）。参考仓库更新时，
   先记录新提交号与兼容差异，再决定是否跟进，避免基线漂移。
 - 分层与依赖方向见 [`docs/three-layer-architecture.md`](three-layer-architecture.md)，
-  这是**硬性约束**，由 `test/unit/test_architecture.py` 校验：
+  这是**硬性约束**，由 `pi-python/tests/unit/test_architecture.py` 校验：
   - `pi_ai` 不得导入 `pi_agent` / `pi_coding_agent`
   - `pi_agent` 不得导入 `pi_coding_agent`
-  - FastAPI（`server/`）与 Vue（`web/`）位于 `pi_coding_agent` 之上
+  - FastAPI（`pi-python/server/`）与 Vue（`web/`）位于 `pi_coding_agent` 之上
 
 ## 2. 目录结构
 
+> 以下 Python 目录（`src/`、`server/`、`tests/`）均位于仓库的 `pi-python/` 项目内；
+> `web/`、`scripts/`、`docs/` 在仓库根。
+
 ```text
-src/pi_ai/            # 底层：模型原子类型、Provider（anthropic/openai/deepseek/fake）
-src/pi_agent/         # 中层：通用 Agent loop、事件、工具抽象
-src/pi_coding_agent/  # 顶层：Session v3、Coding Agent 组装、资源加载、工具实现
-server/               # FastAPI 应用层：routes（薄）→ services（逻辑）→ errors（统一错误）
-web/                  # Vue 3 + Vite + Pinia 前端
-test/                 # unit（纯逻辑）/ integration（ASGI 全链路）/ compat（pi fixture）
-scripts/              # 启动与验证脚本（.ps1 / .bat / .py）
-docs/                 # 架构、计划、实施状态等文档
+pi-python/src/pi_ai/            # 底层：模型原子类型、Provider（anthropic/openai/deepseek/fake）
+pi-python/src/pi_agent/         # 中层：通用 Agent loop、事件、工具抽象
+pi-python/src/pi_coding_agent/  # 顶层：Session v3、Coding Agent 组装、资源加载、工具实现
+pi-python/server/               # FastAPI 应用层：routes（薄）→ services（逻辑）→ errors（统一错误）
+web/                            # Vue 3 + Vite + Pinia 前端
+pi-python/tests/                # unit（纯逻辑）/ integration（ASGI 全链路）/ compat（pi fixture）
+scripts/                        # 启动与验证脚本（.ps1 / .bat / .py）
+docs/                           # 架构、计划、实施状态等文档
 ```
 
-新增代码按职责落入对应层；**禁止**在 `server/routes/` 中堆业务逻辑。
+新增代码按职责落入对应层；**禁止**在 `pi-python/server/routes/` 中堆业务逻辑。
 
 ## 3. 编码规范
 
@@ -42,7 +45,7 @@ docs/                 # 架构、计划、实施状态等文档
   也保留这一模式，中文注释解释“为什么”，代码本身表达“是什么”。
 - 使用 `from __future__ import annotations` 与完整类型注解；优先 `dataclass`；
   只读数据结构加 `frozen=True, slots=True`。
-- 服务层类放在 `server/services/`，每个文件一个核心类；路由通过
+- 服务层类放在 `pi-python/server/services/`，每个文件一个核心类；路由通过
   `Depends(request.app.state.xxx)` 取服务，保持薄路由。
 - 业务错误抛 `server.errors.APIError(status, code, message)`（机器码用 snake_case）；
   配置/输入类错误用 `ValueError` 子类，由路由统一转 APIError。
@@ -69,7 +72,7 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 | `models-store.json` | 内置模型缓存目录 | `PiConfig.read_models_store()` |
 
 - 密钥与 pi 的设置**不通过环境变量获取**；部署覆盖只允许纯 infra 变量
-  （会话目录、CORS、超时、静态前端目录等，见 `server/config.py`）。
+  （会话目录、CORS、超时、静态前端目录等，见 `pi-python/server/config.py`）。
 - 模型目录合并顺序：`models-store.json` → pi `models.json` → pi.py 自身覆盖，
   Provider 级字段后者覆盖前者，模型按 `id` 合并（见 `ModelConfigService._merged_providers`）。
 
@@ -89,13 +92,13 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 
 ### 4.4 危险命令人工确认
 
-- 所有 `bash` 工具调用在**执行前**经过 `ToolApprovalGate`（`server/services/tool_approval.py`）：
+- 所有 `bash` 工具调用在**执行前**经过 `ToolApprovalGate`（`pi-python/server/services/tool_approval.py`）：
   命中 `DANGEROUS_RULES` 黑名单（递归删除、格式化、关机、提权删除、强制推送、
   批量卸载、远程脚本管道执行等）时广播 `tool_call_pending` 事件并**挂起**执行，
   等待 `approve_tool` 命令给出允许/拒绝。
 - 拒绝/超时（默认 60 秒）按“拒绝”处理，工具不执行，结果归一化为 `isError` 的
   toolResult 交给模型；Agent 被中止或注册项关闭时未确认项一律按拒绝清理。
-- 新增危险规则必须同步 `DANGEROUS_RULES` 与 `test/unit/test_tool_approval.py` 的
+- 新增危险规则必须同步 `DANGEROUS_RULES` 与 `pi-python/tests/unit/test_tool_approval.py` 的
   命中/放行用例；集成测试用 `FakeProvider` + 真实 `Remove-Item` 验证允许/拒绝两侧。
 - 前端收到 `tool_call_pending` 弹出 `ToolApprovalDialog`（`web/src/components/`），
   允许/拒绝通过 `approve_tool` 命令下发；事件流保持 `pi_agent` 层的
@@ -103,7 +106,7 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 
 ## 5. 测试规范
 
-- 后端：`test/unit/`（纯逻辑）+ `test/integration/`（ASGI 全链路，注入
+- 后端：`pi-python/tests/unit/`（纯逻辑）+ `pi-python/tests/integration/`（ASGI 全链路，注入
   `FakeProvider`，绝不访问网络）。
 - 前端：`web/src/**/*.test.ts`（vitest）+ typecheck + lint + build。
 - **改动必须附带测试**；集成测试的 `ServerSettings` 必须隔离 `agent_dir` /
@@ -111,7 +114,8 @@ pi.py 直接复用原版 pi 的用户配置，**一律只读，绝不创建/改�
 - 提交前必须全部通过：
 
 ```powershell
-# 后端（项目根目录）
+# 后端（pi-python/ 目录）
+cd pi-python
 python -m pytest
 
 # 前端（web/ 目录）

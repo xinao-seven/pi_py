@@ -4,6 +4,8 @@
 本地 `E:\code\pi\packages` 源码，以及
 [三层架构解析](https://dg-ai-notes.pages.dev/modules/ch02-three-layer-arch/)。
 
+> 本文描述的 Python 目录（`src/`、`server/`、`tests/`）均位于仓库的 `pi-python/` 项目内。
+
 ## 依赖方向
 
 ```text
@@ -88,10 +90,10 @@ system prompt、Skills、compaction、重试、配置和 FastAPI bridge 等编�
 
 ## FastAPI 应用层
 
-`server` 位于三层核心之上，只负责 HTTP DTO、生命周期和安全边界：
+`pi-python/server` 位于三层核心之上，只负责 HTTP DTO、生命周期和安全边界：
 
 ```text
-server/
+pi-python/server/
 ├── main.py                    # application factory 与依赖装配
 ├── config.py / errors.py      # 环境配置和统一错误 envelope
 ├── routes/                    # sessions、agent、files、models、skills、workspaces

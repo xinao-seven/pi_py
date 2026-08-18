@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $webRoot = Join-Path $projectRoot "web"
+$pythonRoot = Join-Path $projectRoot "pi-python"
 
 if (-not $SkipBuild) {
     if (-not (Test-Path (Join-Path $webRoot "node_modules"))) {
@@ -21,5 +22,5 @@ if (-not $SkipBuild) {
     }
 }
 
-Set-Location $projectRoot
+Set-Location $pythonRoot
 & python -m uvicorn server.main:app --host 127.0.0.1 --port $Port

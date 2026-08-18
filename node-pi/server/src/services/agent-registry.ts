@@ -26,6 +26,7 @@ import {
     type AgentSessionEvent,
     type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
+import { readdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -236,6 +237,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
 
     /** 创建资源加载器（工具/技能发现），并注册"工具审批"扩展。 */
     private async loader(cwd: string): Promise<DefaultResourceLoader> {
+        // 本服务自身的扩展目录：node-pi/extensions/。dev（src/services）与 prod
+        // （dist/services）都上溯 3 级落在 node-pi/ 下，扫描其中的 .ts/.js 扩展模块。
+        const extensionDir = join(import.meta.dirname, "..", "..", "..", "extensions");
         const loader = new DefaultResourceLoader({
             cwd,
             agentDir: this.agentDir,
@@ -244,10 +248,25 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
             // 用户级扩展在审批事件发布前拦截了工具调用，前端审批对话框就永远等不到
             // SSE 事件。所以只保留这一个由本服务控制的扩展桥。
             noExtensions: true,
+            // additionalExtensionPaths 不受 noExtensions 影响：把 node-pi/extensions/
+            // 下每个 .ts/.js 文件当作一个扩展模块加载；原版 pi 的 ~/.pi/agent/extensions/
+            // 与项目 .pi/extensions/ 仍被跳过，实现"本仓库扩展与原版 pi 双向隔离"。
+            additionalExtensionPaths: this.discoverLocalExtensions(extensionDir),
             extensionFactories: [{ name: "node-tool-approval", factory: createApprovalExtension(this.approvals), hidden: true }],
         });
         await loader.reload();
         return loader;
+    }
+
+    /** 扫描扩展目录下的 .ts/.js 扩展文件（目录不存在或为空时返回空数组）。 */
+    private discoverLocalExtensions(dir: string): string[] {
+        try {
+            return readdirSync(dir)
+                .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
+                .map((name) => join(dir, name));
+        } catch {
+            return [];
+        }
     }
 
     /** 把 SDK 的 SessionInfo 转成我们自己的 PersistedSessionInfo。 */

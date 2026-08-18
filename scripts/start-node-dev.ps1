@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $webRoot = Join-Path $projectRoot "web"
-$nodeServerRoot = Join-Path $projectRoot "node-server"
+$nodeServerRoot = Join-Path $projectRoot "node-pi\server"
 
 if (-not (Test-Path (Join-Path $webRoot "node_modules"))) {
     throw "Frontend dependencies are missing. Run npm install in $webRoot first."

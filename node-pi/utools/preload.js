@@ -1,5 +1,5 @@
 // Pi 桌面助手（uTools 插件）预加载脚本
-// 职责：同步注入后端地址，异步确保 node-server 运行。
+// 职责：同步注入后端地址，异步确保 node-pi/server 运行。
 // 仅使用 Node 内置模块，代码保持可读（uTools preload 规范）。
 
 const { spawn } = require("node:child_process");
@@ -12,8 +12,8 @@ const path = require("node:path");
 const CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "utools-config.json");
 
 const DEFAULTS = {
-  // node-server 目录（需已 `npm install` 且 `npm run build` 产出 dist/server.js）
-  serverDir: process.env.PI_UTOOLS_SERVER_DIR || "D:/code/pi_py/node-server",
+  // node-pi/server 目录（需已 `npm install` 且 `npm run build` 产出 dist/server.js）
+  serverDir: process.env.PI_UTOOLS_SERVER_DIR || "D:/code/pi_py/node-pi/server",
   port: 8001,
 };
 
@@ -50,8 +50,8 @@ function healthCheck(port, timeoutMs) {
 function startServer(config) {
   const entry = path.join(config.serverDir, "dist", "server.js");
   if (!fs.existsSync(entry)) {
-    console.error("[pi-utools] 未找到 node-server 构建产物:", entry);
-    console.error("[pi-utools] 请先执行: cd node-server && npm run build");
+    console.error("[pi-utools] 未找到 node-pi/server 构建产物:", entry);
+    console.error("[pi-utools] 请先执行: cd node-pi/server && npm run build");
     return false;
   }
   const child = spawn("node", [entry], {

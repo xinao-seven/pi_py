@@ -8,8 +8,10 @@ from pathlib import Path
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_PROJECT = PROJECT_ROOT / "pi-python"
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PYTHON_PROJECT))
+sys.path.insert(0, str(PYTHON_PROJECT / "src"))
 
 from server.config import ServerSettings  # noqa: E402
 from server.services.agent_registry import ProviderConfigurationError  # noqa: E402

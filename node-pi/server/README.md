@@ -6,7 +6,9 @@
 `VITE_BACKEND_URL=http://127.0.0.1:8001` 切换至该服务。
 
 ```powershell
-cd node-server
+cd node-pi/server
 npm install
 npm run dev
 ```
+
+本项目的扩展放在 `../extensions/`（即 `node-pi/extensions/`），服务启动时会自动扫描加载。

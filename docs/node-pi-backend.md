@@ -1,6 +1,6 @@
 # Node.js + 原版 Pi 后端
 
-`node-server/` 使用 Fastify 与原版 `@earendil-works/pi-coding-agent` SDK，作为实际使用的后端。现有 Python/FastAPI 后端继续保留为复刻与学习实现；两者通过同一套 `/api` REST/SSE 协议服务 Vue 前端。
+`node-pi/server/` 使用 Fastify 与原版 `@earendil-works/pi-coding-agent` SDK，作为实际使用的后端。现有 Python/FastAPI 后端（`pi-python/`）继续保留为复刻与学习实现；两者通过同一套 `/api` REST/SSE 协议服务 Vue 前端。
 
 ## 已实现
 
@@ -24,7 +24,7 @@ Node 后端通过原版 Pi 的 inline extension 在 Bash 命令命中高风险�
 ## 启动
 
 ```powershell
-cd node-server
+cd node-pi/server
 npm install --ignore-scripts
 npm run typecheck
 npm run test

@@ -36,7 +36,7 @@ class ServerSettings:
     default_model: str = "claude-sonnet-4-6"
     default_thinking_level: str = "off"
     web_dist_dir: Path | None = field(
-        default_factory=lambda: Path(__file__).resolve().parents[1] / "web" / "dist"
+        default_factory=lambda: Path(__file__).resolve().parents[2] / "web" / "dist"
     )
 
     @classmethod
@@ -76,7 +76,7 @@ class ServerSettings:
                 else (
                     None
                     if web_dist_value == ""
-                    else Path(__file__).resolve().parents[1] / "web" / "dist"
+                    else Path(__file__).resolve().parents[2] / "web" / "dist"
                 )
             ),
         )
