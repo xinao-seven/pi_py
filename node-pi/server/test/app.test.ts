@@ -75,6 +75,16 @@ describe('Fastify application', () => {
     expect(response.json()).toEqual({ status: 'ok' });
   });
 
+  it('logs incoming requests when a logger is enabled', async () => {
+    const lines: string[] = [];
+    const app = createApp({ logger: { level: 'info', stream: { write: (msg: string) => lines.push(msg) } } });
+    apps.push(app);
+
+    await app.inject({ method: 'GET', url: '/api/health' });
+
+    expect(lines.some((line) => line.includes('"/api/health"'))).toBe(true);
+  });
+
   it('creates an original-Pi-compatible agent session', async () => {
     const registry = new AgentRegistry(new FakePiSessionFactory());
     const app = createApp({ registry });

@@ -14,3 +14,7 @@ npm run dev
 本项目的扩展放在 `extensions/`（即 `node-pi/server/extensions/`），服务为每个 Pi Session
 创建资源加载器时会自动扫描加载。接入说明见
 [`docs/node-extension-system.md`](../../docs/node-extension-system.md)。
+
+日志输出到 stdout，采用人类可读（pino-pretty）格式，包含请求、错误与启动日志；
+级别用环境变量 `PI_NODE_LOG_LEVEL` 控制（`trace|debug|info|warn|error|fatal`，默认 `info`；
+`warn` 及以上会屏蔽请求日志）。

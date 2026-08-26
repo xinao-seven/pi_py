@@ -17,7 +17,7 @@
 
 import { createEventBus } from '@earendil-works/pi-coding-agent';
 import cors from '@fastify/cors';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { join } from 'node:path';
 
 import { ApiError, errorPayload } from './errors.js';
@@ -53,13 +53,14 @@ export interface AppOptions {
   modelConfigService?: ModelConfigService; // models.json 读写
   planService?: PlanModeService;
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
+  logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
-  // Fastify({ logger: false }) 创建应用实例；这里关闭内置日志（开发启动器自行打印）。
-  // 注意：app 同时也是一个"根插件封装"，后面所有 register 都挂在它下面，
-  // 形成一个封装树（Fastify 的 Encapsulation 机制）。
-  const app = Fastify({ logger: false });
+  // Fastify 内置 Pino 日志器：生产入口（server.ts）传入 logger 配置启用请求/错误日志；
+  // 默认 false 保持测试（app.inject()）静默。app 同时也是一个"根插件封装"，
+  // 后面所有 register 都挂在它下面，形成一个封装树（Fastify 的 Encapsulation 机制）。
+  const app = Fastify({ logger: options.logger ?? false });
 
   // 注册 @fastify/cors 插件：origin: true 表示"反射请求来源"（即允许任意来源）。
   // 原因：uTools 插件以 file:// 或 utools:// 协议发起请求，没有标准 Origin 头；

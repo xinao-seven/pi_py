@@ -10,12 +10,16 @@
 
 import { homedir } from 'node:os';
 
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
 /** 服务运行配置的完整结构。 */
 export interface ServerConfig {
   host: string; // 监听地址（默认仅本机 127.0.0.1）
   port: number; // 监听端口（默认 8001，与 Python 后端一致）
   agentDir: string; // Pi 的 agent 数据目录，内含 auth.json / models.json / sessions/
   workspaceParent: string; // 默认工作区父目录：未选择工作区时，在此目录下按日期创建
+  logLevel: LogLevel; // 日志级别（默认 info；warn 起会屏蔽请求日志）
 }
 
 /**
@@ -28,10 +32,15 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('PI_NODE_SERVER_PORT must be an integer from 1 to 65535');
   }
+  const logLevelText = env.PI_NODE_LOG_LEVEL ?? 'info';
+  if (!LOG_LEVELS.includes(logLevelText as LogLevel)) {
+    throw new Error(`PI_NODE_LOG_LEVEL must be one of: ${LOG_LEVELS.join(', ')}`);
+  }
   return {
     host: env.PI_NODE_SERVER_HOST ?? '127.0.0.1',
     port,
     agentDir: env.PI_NODE_AGENT_DIR ?? `${homedir()}/.pi/agent`,
     workspaceParent: env.PI_NODE_WORKSPACE_PARENT ?? homedir(),
+    logLevel: logLevelText as LogLevel,
   };
 }
