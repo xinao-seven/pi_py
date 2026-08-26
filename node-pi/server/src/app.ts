@@ -17,7 +17,9 @@
 
 import { createEventBus } from '@earendil-works/pi-coding-agent';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ApiError, errorPayload } from './errors.js';
@@ -54,6 +56,7 @@ export interface AppOptions {
   planService?: PlanModeService;
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
+  webDistDir?: string; // 前端构建产物目录；提供且存在时托管静态页面（SPA 回退），否则仅 API
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -145,6 +148,27 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
   app.register(skillRoutes, { service: skillService, registry });
   app.register(mcpRoutes, { prefix: '/api/mcp', service: mcpService, registry });
+
+  // 前端静态托管：web 构建产物（默认 ../../web/dist）。显式 /api 路由优先于
+  // @fastify/static 的 wildcard 路由，故不影响 API；找不到文件会触发下面的
+  // setNotFoundHandler：非 /api 的 GET 回退到 index.html（SPA 客户端路由），
+  // 其余路径保持 Fastify 默认的 404 JSON 响应。
+  if (options.webDistDir) {
+    if (existsSync(options.webDistDir)) {
+      app.register(fastifyStatic, { root: options.webDistDir });
+      app.setNotFoundHandler((request, reply) => {
+        if (request.method === 'GET' && !request.url.startsWith('/api/')) {
+          return reply.type('text/html').sendFile('index.html');
+        }
+        return reply
+          .code(404)
+          .type('application/json')
+          .send({ message: `Route ${request.method}:${request.url} not found` });
+      });
+    } else {
+      app.log.warn(`web dist not found at ${options.webDistDir}; serving API only`);
+    }
+  }
 
   // onClose 钩子：服务关闭（Ctrl+C、进程退出等）时释放所有活跃 Pi 会话，
   // 包括取消事件订阅、中止还在流式输出的会话、清理待审批的工具调用。

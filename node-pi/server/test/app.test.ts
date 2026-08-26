@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createEventBus } from '@earendil-works/pi-coding-agent';
 
@@ -73,6 +76,42 @@ describe('Fastify application', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('serves the built frontend and falls back to index.html for SPA routes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pi-web-dist-'));
+    try {
+      await mkdir(join(dir, 'assets'), { recursive: true });
+      await writeFile(join(dir, 'index.html'), '<!doctype html><title>pi test ui</title>', 'utf8');
+      await writeFile(join(dir, 'assets', 'app.js'), 'console.log("app")', 'utf8');
+
+      const app = createApp({ webDistDir: dir });
+      apps.push(app);
+
+      const home = await app.inject({ method: 'GET', url: '/' });
+      expect(home.statusCode).toBe(200);
+      expect(home.headers['content-type']).toContain('text/html');
+      expect(home.body).toContain('pi test ui');
+
+      const asset = await app.inject({ method: 'GET', url: '/assets/app.js' });
+      expect(asset.statusCode).toBe(200);
+      expect(asset.body).toBe('console.log("app")');
+
+      // SPA 客户端路由：未匹配到文件的 GET 回退到 index.html
+      const spa = await app.inject({ method: 'GET', url: '/some/client/route' });
+      expect(spa.statusCode).toBe(200);
+      expect(spa.body).toContain('pi test ui');
+
+      // /api 不受静态托管影响：显式路由正常，未命中路径返回 404 JSON 而非 index.html
+      const health = await app.inject({ method: 'GET', url: '/api/health' });
+      expect(health.statusCode).toBe(200);
+
+      const missing = await app.inject({ method: 'GET', url: '/api/nonexistent' });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.body).not.toContain('pi test ui');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('logs incoming requests when a logger is enabled', async () => {

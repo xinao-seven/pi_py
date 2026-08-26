@@ -18,6 +18,7 @@ const config = readServerConfig();
 const app = createApp({
   agentDir: config.agentDir,
   workspaceParent: config.workspaceParent,
+  webDistDir: config.webDistDir,
   logger: {
     level: config.logLevel,
     transport: {

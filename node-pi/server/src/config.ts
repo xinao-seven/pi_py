@@ -9,9 +9,16 @@
  */
 
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
+
+// server 包根目录（源码 src/ 与构建产物 dist/ 下的 config 模块都只深一层），
+// web 构建产物位于仓库根 web/dist，即 server 包的上一层再上一层。
+const serverRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const defaultWebDistDir = join(serverRoot, '..', '..', 'web', 'dist');
 
 /** 服务运行配置的完整结构。 */
 export interface ServerConfig {
@@ -20,6 +27,7 @@ export interface ServerConfig {
   agentDir: string; // Pi 的 agent 数据目录，内含 auth.json / models.json / sessions/
   workspaceParent: string; // 默认工作区父目录：未选择工作区时，在此目录下按日期创建
   logLevel: LogLevel; // 日志级别（默认 info；warn 起会屏蔽请求日志）
+  webDistDir: string; // 前端构建产物目录（默认 ../../web/dist；不存在则仅提供 API）
 }
 
 /**
@@ -42,5 +50,6 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     agentDir: env.PI_NODE_AGENT_DIR ?? `${homedir()}/.pi/agent`,
     workspaceParent: env.PI_NODE_WORKSPACE_PARENT ?? homedir(),
     logLevel: logLevelText as LogLevel,
+    webDistDir: env.PI_NODE_WEB_DIST_DIR ?? defaultWebDistDir,
   };
 }
