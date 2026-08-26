@@ -177,15 +177,15 @@ node-pi/server/
 
 效果：会话里出现 `mcp__filesystem__read_file`、`mcp__filesystem__write_file` 等工具。
 
-### 示例 2：远程 streamable-http GitHub server（带审批）
+### 示例 2：远程 streamable-http server（带审批）
 
 ```json
 {
   "servers": {
-    "github": {
+    "my-remote-mcp": {
       "transport": "streamable-http",
-      "url": "https://api.githubcopilot.com/mcp/",
-      "headers": { "Authorization": "Bearer $GITHUB_TOKEN" },
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer $MCP_TOKEN" },
       "enabled": true,
       "approval": "required"
     }
@@ -195,6 +195,11 @@ node-pi/server/
 
 `approval: "required"` 使该 server 的每次工具调用都先在 Web 端弹审批框（复用既有审批流程），
 适合有外部副作用的 server。
+
+> **注意：当前只支持"静态请求头"鉴权（Bearer token / API Key）。** 需要 OAuth 交互授权的
+> server（如 GitHub Copilot MCP `https://api.githubcopilot.com/mcp/`）连接会报
+> `Authorization header is badly formatted` 或 401——请改用接受静态 Bearer / PAT 的 server
+> （如自建或社区实现）。OAuth 支持在后续版本计划中。
 
 ### 示例 3：工作区级（项目私有）
 
@@ -239,11 +244,17 @@ node-pi/server/
 - **测试连接**：配置页里对每个 server 点「测试」，成功会返回发现的工具数，失败会显示具体报错。
 - **状态徽标**：`已连接` 正常；`连接失败` 展开可看错误信息（命令不存在、握手超时、URL 不可达等）；
   `已禁用` 表示该 server 被关掉了。
-- **工具没出现？** 确认 server 状态为「已连接」、`enabled: true`，然后让会话 `reload_resources`
-  （或重新开一个会话）；若会话是用 `toolNames` 白名单创建的，需把 MCP 工具加进白名单。
+- **"模型看不到 MCP 工具"？** 先确认两点：① server 状态为「已连接」且 `enabled: true`；② **会话的工作区
+  （cwd）与配置 MCP 的工作区一致**——MCP 是按工作区生效的，在 A 工作区配的 server 不会出现在 B 工作区的
+  会话里。满足后：
+  - 工具会出现在会话的工具列表（`getActiveTools`，`mcp__<server>__<tool>`）和系统提示词的
+    **Available tools** 区（`mcp__<server>__<tool>: <描述> (MCP server: <server>)`）；
+  - 先建会话、后配 MCP 也没问题——配置保存会自动让会话 reload，无需重开。
 - **调用被拦？** 规划（Plan）模式会拦截所有 `mcp__` 工具；配了 `approval` 的 server 需要前端审批。
 - **stdio 起不来？** 检查 `command`/`args`（如 `npx` 是否可用、路径是否正确）、子进程输出只在 stderr
   （MCP 走 stdout 传 JSON-RPC，server 不能往 stdout 打日志）。
+- **远程连不上？** 若报 `Authorization header is badly formatted` / 401，多半是该 server 要求 OAuth
+  交互授权（如 GitHub Copilot MCP），当前仅支持静态 Bearer/API Key 头。
 - **超时**：连接握手默认 15 秒超时；远程 server 慢可以看错误里的耗时信息。
 
 ---

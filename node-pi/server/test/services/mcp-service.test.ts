@@ -50,6 +50,8 @@ describe("McpService（stdio 集成）", () => {
 
       // 工具定义可直接执行（走 execute → service.callTool）
       const echo = tools.find((tool) => tool.name === "mcp__test_server__echo")!;
+      // promptSnippet 让工具出现在系统提示词的 Available tools 区
+      expect(echo.promptSnippet).toContain("MCP server: test-server");
       const result = await echo.execute("call-1", { text: "hello" }, undefined, undefined, undefined as never);
       expect(result.content).toEqual([{ type: "text", text: "hello" }]);
 

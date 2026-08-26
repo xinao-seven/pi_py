@@ -100,6 +100,9 @@ node-pi/server/
 
 - **命名**：`mcp__<server>__<tool>`（server/tool 名做 `[^\w] → _` 清洗；冲突追加短哈希）。
   前缀 `mcp__` 避开内置工具（read/bash/edit/write）。
+- **promptSnippet**：每个 MCP 工具附带一行 snippet（描述首行 + `(MCP server: <server>)`），使其出现在
+  系统提示词的 **Available tools** 区——自定义工具若不设 `promptSnippet` 不会枚举在提示词里
+  （工具仍以 API tool definitions 传给模型、可被调用），加上它对模型发现工具与人工排查都有帮助。
 - **参数 schema**：MCP `input_schema`（JSON Schema）转 TypeBox `TSchema`（`ToolDefinition.parameters`）。
   实现 `jsonSchemaToTypeBox()` 覆盖 object/string/number/integer/boolean/array/enum/oneOf/anyOf/nullable，
   未知结构回退 `Type.Unsafe({ ...raw })`（宽松校验，避免误拒调用）。
@@ -148,6 +151,9 @@ node-pi/server/
 - **输入校验**：`/api/mcp/*` 路由校验 `cwd` 必须是已存在目录（对齐 `POST /api/agent/new`），
   `parseServerConfig` 对传输类型必填字段（stdio 的 command、http 的 url）做 422 校验；
   配置读取会防御性跳过非对象条目（防手改文件崩溃）。
+- **已知限制**：客户端只支持静态请求头鉴权（Bearer / API Key）。需要 **OAuth 交互授权** 的
+  streamable-http server（如 GitHub Copilot MCP）当前无法连接（报 `Authorization header is badly
+  formatted` / 401），OAuth 支持列为后续计划。
 - **输出截断**：MCP 工具文本输出经 `truncateTail` 截断（2000 行 / 50KB，对齐 bash 约定），附
   `[Truncated: ...]` 标记，防超长结果撑爆上下文；工具描述里也注明该限制。
 - **资源占用**：连接的 stdio 子进程随服务生命周期管理，配置变更/服务关闭时确保 `close()`（处理 EPIPE/超时）；

@@ -143,9 +143,20 @@ export function buildMcpToolDefinition(options: {
     label: `${options.toolName} (${options.serverName})`,
     // 追加截断说明，让模型知道超长输出会被截断。
     description: `${options.tool.description ?? `MCP tool ${options.serverName}:${options.toolName}`} Output is truncated to the last ${MAX_OUTPUT_LINES} lines or ${Math.round(MAX_OUTPUT_BYTES / 1024)}KB.`,
+    // 一行 snippet：让工具出现在系统提示词的 "Available tools" 区。
+    // 自定义工具若不设 promptSnippet 不会枚举在提示词里（虽仍以 API tool definitions 传给模型），
+    // 加了它对模型发现工具和人肉排查都有帮助。
+    promptSnippet: snippetOf(options.tool.description, options.serverName, options.toolName),
     parameters: jsonSchemaToTypeBox(options.tool.inputSchema as unknown as Record<string, unknown>),
     async execute(_toolCallId, params, signal) {
       return options.callTool((params ?? {}) as Record<string, unknown>, signal ?? undefined);
     },
   };
+}
+
+/** 从 MCP 工具描述取第一行作为 promptSnippet，并标注来源 server。 */
+function snippetOf(description: string | undefined, serverName: string, toolName: string): string {
+  const line = (description ?? toolName).split(/\r?\n/)[0].trim();
+  const head = line.length > 80 ? `${line.slice(0, 77)}…` : line;
+  return head ? `${head} (MCP server: ${serverName})` : toolName;
 }
