@@ -85,6 +85,7 @@ const emit = defineEmits<{
   selectSession: [sessionId: string];
   openModels: [];
   openSkills: [];
+  openMcp: [];
   toggleTheme: [];
   toggleSound: [];
   collapseSidebar: [];
@@ -224,6 +225,7 @@ function relativeDate(value: string): string {
       <div class="sidebar-config-actions">
         <button type="button" @click="emit('openModels')">模型</button>
         <button type="button" :disabled="!skillsAvailable" @click="emit('openSkills')">Skills</button>
+        <button type="button" :disabled="!skillsAvailable" @click="emit('openMcp')">MCP</button>
         <button type="button" :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="emit('toggleTheme')">
           {{ theme === "dark" ? "浅色" : "深色" }}
         </button>

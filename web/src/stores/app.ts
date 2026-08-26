@@ -21,6 +21,7 @@ export const useAppStore = defineStore("app", () => {
   const activeFilePath = ref<string | null>(null);
   const modelsConfigOpen = ref(false);
   const skillsConfigOpen = ref(false);
+  const mcpConfigOpen = ref(false);
   const theme = ref<"dark" | "light">("light");
   const soundEnabled = ref(false);
 
@@ -132,6 +133,7 @@ export const useAppStore = defineStore("app", () => {
     activeFilePath,
     modelsConfigOpen,
     skillsConfigOpen,
+    mcpConfigOpen,
     theme,
     soundEnabled,
     selectSession,

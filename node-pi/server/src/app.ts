@@ -35,6 +35,9 @@ import { SkillService } from "./services/skill-service.js";
 import { ToolApprovalBroker } from "./services/tool-approval.js";
 import { PlanModeService } from "./services/plan-mode-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
+import { McpService } from "./services/mcp/mcp-service.js";
+import { McpConfig } from "./services/mcp/mcp-config.js";
+import { mcpRoutes } from "./routes/mcp.js";
 
 /**
  * createApp 的可选依赖注入参数。
@@ -49,6 +52,7 @@ export interface AppOptions {
   modelCatalogService?: ModelCatalogService; // 模型目录（从 Pi SDK 读取）
   modelConfigService?: ModelConfigService;   // models.json 读写
   planService?: PlanModeService;
+  mcpService?: McpService;                // MCP server 配置与连接池（测试可注入 mock）
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -70,6 +74,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const approvals = new ToolApprovalBroker(eventBus);
   const plans = options.planService ?? new PlanModeService(eventBus);
 
+  const agentDir = options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`;
+
+  // MCP 服务：进程级单例，持有 MCP server 配置读写 + 连接池（多个会话共享连接）。
+  // 注入给 OriginalPiSessionFactory，其 loader() 会把它包装成内联扩展注入每个会话。
+  const mcpService = options.mcpService ?? new McpService(new McpConfig(agentDir));
+
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
   // - WorkspaceService：工作区登记与 JSON 持久化；
@@ -79,12 +89,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const registry = options.registry ?? new AgentRegistry(
     // OriginalPiSessionFactory 是 Pi SDK 的适配器，负责真正创建/打开 AgentSession；
     // agentDir 默认指向用户主目录下的 ~/.pi/agent。
-    // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动。
-    new OriginalPiSessionFactory(options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`, eventBus),
+    // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动；
+    // 传入 mcpService，MCP 内联扩展才能注入会话并共享连接。
+    new OriginalPiSessionFactory(agentDir, eventBus, mcpService),
     approvals,
     plans,
   );
-  const agentDir = options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`;
   const workspaceService = options.workspaceService ?? new WorkspaceService(options.workspaceParent, join(agentDir, "node-server-workspaces.json"));
   const modelCatalogService = options.modelCatalogService ?? new ModelCatalogService(agentDir, process.cwd());
   const modelConfigService = options.modelConfigService ?? new ModelConfigService(agentDir);
@@ -123,6 +133,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.register(workspaceRoutes, { service: workspaceService });
   app.register(modelRoutes, { service: modelCatalogService, configService: modelConfigService, registry });
   app.register(skillRoutes, { service: skillService, registry });
+  app.register(mcpRoutes, { prefix: "/api/mcp", service: mcpService, registry });
 
   // onClose 钩子：服务关闭（Ctrl+C、进程退出等）时释放所有活跃 Pi 会话，
   // 包括取消事件订阅、中止还在流式输出的会话、清理待审批的工具调用。
@@ -130,6 +141,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.addHook("onClose", async () => {
     await registry.close();
     plans.dispose();
+    await mcpService.dispose();
   });
 
   return app;

@@ -34,6 +34,8 @@ import { join } from "node:path";
 import { ApiError } from "../errors.js";
 import { ToolApprovalBroker, type PendingToolApproval } from "./tool-approval.js";
 import { PlanModeService, type PlanSnapshot } from "./plan-mode-service.js";
+import { buildMcpExtension } from "./mcp/mcp-extension.js";
+import type { McpService } from "./mcp/mcp-service.js";
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -183,7 +185,11 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     /** ModelRuntime 是重量级对象（要读文件、可能起子进程），做单例缓存。 */
     private runtimePromise: Promise<ModelRuntime> | undefined;
 
-    constructor(private readonly agentDir: string, private readonly eventBus: EventBus) { }
+    constructor(
+        private readonly agentDir: string,
+        private readonly eventBus: EventBus,
+        private readonly mcpService?: McpService,
+    ) { }
 
     /** 创建新会话（POST /api/agent/new 的底层实现）。 */
     async create(input: CreateSessionInput): Promise<PiSession> {
@@ -283,6 +289,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
             // 审批扩展内部用 ctx.hasUI 守卫，只在 Web 后端（无 UI 上下文）生效，TUI/RPC
             // 有自己的确认 UI 会直接放行——所以两边共享扩展目录也不会互相干扰。
             additionalExtensionPaths: discoverLocalExtensions(extensionDir),
+            // MCP 内联扩展：不走 jiti、闭包直连 McpService 单例，使多个会话共享同一连接；
+            // 工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）。
+            extensionFactories: this.mcpService ? [buildMcpExtension(this.mcpService, cwd)] : [],
             // 关键：把 app.ts 创建的事件总线传给 loader，扩展的 pi.events 与
             // ToolApprovalBroker 订阅的是同一个实例，审批待处理/决定才能互通。
             eventBus: this.eventBus,

@@ -91,6 +91,21 @@ describe("web plan-mode extension", () => {
     expect(snapshots.at(-1)).toMatchObject({ mode: "executing", todos: [{ step: 1, completed: true }, { step: 2, completed: false }] });
   });
 
+  it("blocks MCP tools during planning and allows them after disable", () => {
+    const events = createEventBus();
+    const pi = makeFakePi(events);
+    planModeExtension(pi as never);
+
+    pi.handlers.get("session_start")!({}, sessionContext());
+    events.emit(PLAN_CHANNEL_SET, { sessionId: "session-1", action: "enable" });
+
+    const mcpTool = { toolName: "mcp__github__create_issue", input: { title: "x" } };
+    expect(pi.handlers.get("tool_call")!(mcpTool)).toMatchObject({ block: true });
+
+    events.emit(PLAN_CHANNEL_SET, { sessionId: "session-1", action: "disable" });
+    expect(pi.handlers.get("tool_call")!(mcpTool)).toBeUndefined();
+  });
+
   it("parses bullet/Chinese plans and finds the plan on a non-final assistant message", () => {
     const events = createEventBus();
     const pi = makeFakePi(events);

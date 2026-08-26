@@ -8,6 +8,7 @@ import ChatWindow from "@/components/ChatWindow.vue";
 import FileWorkspacePanel from "@/components/FileWorkspacePanel.vue";
 import ModelsConfig from "@/components/ModelsConfig.vue";
 import SkillsConfig from "@/components/SkillsConfig.vue";
+import McpConfig from "@/components/McpConfig.vue";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher.vue";
 import SessionSidebar from "@/components/SessionSidebar.vue";
 import { listSessions } from "@/lib/api";
@@ -29,6 +30,7 @@ const {
   activeFilePath,
   modelsConfigOpen,
   skillsConfigOpen,
+  mcpConfigOpen,
   theme,
   soundEnabled,
 } = storeToRefs(store);
@@ -186,6 +188,7 @@ onBeforeUnmount(stopSessionRecovery);
         @select-session="store.selectSession"
         @open-models="modelsConfigOpen = true"
         @open-skills="skillsConfigOpen = true"
+        @open-mcp="mcpConfigOpen = true"
         @toggle-theme="store.toggleTheme"
         @toggle-sound="toggleSound"
         @collapse-sidebar="store.setSidebarCollapsed(true)"
@@ -239,6 +242,11 @@ onBeforeUnmount(stopSessionRecovery);
     v-if="skillsConfigOpen && selectedWorkspace"
     :cwd="selectedWorkspace"
     @close="skillsConfigOpen = false"
+  />
+  <McpConfig
+    v-if="mcpConfigOpen && selectedWorkspace"
+    :cwd="selectedWorkspace"
+    @close="mcpConfigOpen = false"
   />
   <WorkspaceSwitcher
     v-if="workspaceSwitcherOpen"

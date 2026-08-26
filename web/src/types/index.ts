@@ -183,6 +183,66 @@ export interface SkillsResponse {
   diagnostics: SkillDiagnostic[];
 }
 
+export type McpTransport = "stdio" | "streamable-http";
+export type McpScope = "user" | "workspace";
+export type McpServerStatus = "connected" | "connecting" | "error" | "disabled";
+
+export interface McpServerTool {
+  name: string;
+  description?: string;
+}
+
+export interface McpServerView {
+  // MCP server 的 REST 视图：配置 + 实时连接状态 + 工具清单
+  name: string;
+  scope: McpScope;
+  enabled: boolean;
+  status: McpServerStatus;
+  error?: string;
+  toolCount: number;
+  tools: McpServerTool[];
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  approval?: "required";
+}
+
+export interface McpServersResponse {
+  servers: McpServerView[];
+}
+
+export interface McpTestResult {
+  success: boolean;
+  error?: string;
+  toolCount: number;
+  tools: McpServerTool[];
+}
+
+/** 写入用的 server 配置（POST/PATCH 请求里 server 键的内容）。 */
+export interface McpServerConfigInput {
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  approval?: "required";
+}
+
+/** POST/PATCH 请求体：cwd 为工作区，server 为嵌套的配置。 */
+export interface McpServerInput {
+  name?: string;
+  cwd: string;
+  scope?: McpScope;
+  server: McpServerConfigInput;
+}
+
 export interface AttachedImage {
   // 待发送的图片：base64 数据 + MIME + 本地预览 URL
   data: string;

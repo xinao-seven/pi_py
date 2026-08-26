@@ -11,6 +11,9 @@ const PLAN_CHANNEL_SET = "pi:plan-mode:set";
 const PLAN_CHANNEL_STATE = "pi:plan-mode:state";
 const PLAN_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
 const PLAN_DISABLED_TOOLS = new Set(["edit", "write"]);
+// MCP 工具统一前缀（与 src/services/mcp/mcp-tools.ts 的命名约定一致）。
+// 规划期无法证明 MCP 工具只读，保守全部拦截。
+const MCP_TOOL_PREFIX = "mcp__";
 interface Todo { step: number; text: string; completed: boolean; }
 interface StoredState { enabled: boolean; executing: boolean; todos: Todo[]; toolsBeforePlanMode?: string[]; awaitingConfirmation?: boolean; }
 interface AssistantLike { role: "assistant"; content: Array<{ type?: unknown; text?: unknown }>; }
@@ -75,6 +78,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("tool_call", (event) => {
     if (!planning) return undefined;
     if (event.toolName === "edit" || event.toolName === "write") return { block: true, reason: "Plan mode is read-only. Confirm execution or disable Plan mode before editing files." };
+    // MCP 工具可能修改外部状态，无法证明只读，规划期一律拦截。
+    if (event.toolName.startsWith(MCP_TOOL_PREFIX)) return { block: true, reason: "Plan mode is read-only. MCP tools may modify external state; confirm execution or disable Plan mode before calling them." };
     if (event.toolName === "bash") { const command = (event.input as { command?: unknown }).command; if (typeof command !== "string" || !isSafePlanCommand(command)) return { block: true, reason: "Plan mode only permits allowlisted local read-only bash commands." }; }
     return undefined;
   });

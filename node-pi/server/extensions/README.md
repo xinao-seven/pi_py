@@ -96,6 +96,19 @@ Agent 在调查和讨论后必须输出 `Plan:` 编号步骤。用户确认前�
 | `pi:plan-mode:set` | 服务端 → 扩展 | `{ sessionId, action: "enable" | "disable" | "refine" | "execute", message? }` |
 | `pi:plan-mode:state` | 扩展 → 服务端 | `{ sessionId, mode, todos, awaitingConfirmation }` |
 
+## MCP 支持（内联扩展，不在本目录）
+
+MCP 工具不是文件扩展，而是由服务端 `src/services/mcp/mcp-extension.ts` 的
+`buildMcpExtension()` 通过 SDK 的 `DefaultResourceLoader.extensionFactories` 注入每个会话。
+原因是 MCP 连接必须**进程级共享**（多个会话复用同一连接），而 jiti 文件扩展是隔离加载的，
+无法共享服务端单例；内联扩展的闭包可直接引用 `McpService`。
+
+- 工具命名 `mcp__<server>__<tool>`，注册后出现在 `getActiveTools()`，可被 `set_tools` 开关；
+- 配置在 `~/.pi/agent/mcp.json`（用户级）与 `{cwd}/.pi/mcp.json`（工作区级），REST 见
+  `/api/mcp/*`（`src/routes/mcp.ts`）；
+- `approval: "required"` 的 server 其工具调用复用工具审批的事件通道；
+- 详细设计见 [`../../../docs/node-mcp-support.md`](../../../docs/node-mcp-support.md)。
+
 ## 说明
 
 - 依赖解析：扩展通过 jiti 加载，可直接 import `@earendil-works/pi-coding-agent`、

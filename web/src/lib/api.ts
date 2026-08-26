@@ -5,6 +5,11 @@ import type {
   FileListResponse,
   FileReadResponse,
   ForkSessionResponse,
+  McpScope,
+  McpServerInput,
+  McpServerTool,
+  McpServersResponse,
+  McpTestResult,
   MergeSessionResponse,
   ModelCatalog,
   ModelsConfigValue,
@@ -188,6 +193,41 @@ export function getPlan(sessionId: string): Promise<{ plan: PlanSnapshot }> {
 
 export async function sendPlanCommand(sessionId: string, action: "enable" | "disable" | "execute" | "refine", message?: string): Promise<void> {
   await sendAgentCommand(sessionId, { type: `plan_${action}`, ...(message ? { message } : {}) });
+}
+
+export async function getMcpServers(cwd: string): Promise<McpServersResponse> {
+  const query = new URLSearchParams({ cwd });
+  return request(`/api/mcp/servers?${query.toString()}`);
+}
+
+export async function upsertMcpServer(input: McpServerInput): Promise<void> {
+  await request("/api/mcp/servers", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateMcpServer(name: string, input: Omit<McpServerInput, "name">): Promise<void> {
+  await request(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteMcpServer(name: string, cwd: string, scope: McpScope): Promise<void> {
+  const query = new URLSearchParams({ cwd, scope });
+  await request(`/api/mcp/servers/${encodeURIComponent(name)}?${query.toString()}`, { method: "DELETE" });
+}
+
+export async function testMcpServer(
+  name: string,
+  cwd: string,
+  scope: McpScope,
+  server?: McpServerInput["server"],
+): Promise<McpTestResult> {
+  const body: Record<string, unknown> = { cwd, scope };
+  if (server) body.server = server;
+  return request(`/api/mcp/servers/${encodeURIComponent(name)}/test`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function agentEventsUrl(sessionId: string): string {
