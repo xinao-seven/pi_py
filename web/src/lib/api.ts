@@ -1,5 +1,6 @@
 // REST 客户端：封装全部后端 API，统一错误解析（ApiError）。
 import { BASE_URL } from './config';
+import { appendToken, clearToken, fireUnauthorized, getToken, setToken } from './session';
 import type {
   AgentStateResponse,
   FileListResponse,
@@ -40,25 +41,62 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  // 通用请求：自动加 JSON Content-Type，非 2xx 时解析后端错误信封并抛 ApiError
+  // 通用请求：自动加 JSON Content-Type；有访问令牌时带 Authorization: Bearer。
+  // 非 2xx 时解析后端错误信封并抛 ApiError；鉴权失败（401 unauthorized）通知 auth store。
+  const token = getToken();
   const response = await fetch(BASE_URL + path, {
     ...init,
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   });
   const body = (await response.json().catch(() => null)) as T | ErrorEnvelope | null;
   if (!response.ok) {
     const error = (body as ErrorEnvelope | null)?.error;
-    throw new ApiError(
+    const apiError = new ApiError(
       error?.message ?? `请求失败（${response.status}）`,
       response.status,
       error?.code,
       error?.details,
     );
+    if (response.status === 401 && error?.code === 'unauthorized') {
+      fireUnauthorized();
+    }
+    throw apiError;
   }
   return body as T;
+}
+
+// ---- 访问密码锁 --------------------------------------------------------------
+
+export interface AuthStatus {
+  enabled: boolean;
+  authenticated?: boolean;
+}
+
+/** 登录：校验密码并保存令牌（存 localStorage，刷新保持登录）。 */
+export async function login(password: string): Promise<void> {
+  const result = await request<{ token: string }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  setToken(result.token);
+}
+
+/** 登出：吊销服务端会话并清除本地令牌。 */
+export async function logout(): Promise<void> {
+  try {
+    await request('/api/auth/logout', { method: 'POST' });
+  } finally {
+    clearToken();
+  }
+}
+
+/** 探测密码锁状态：未启用返回 enabled:false；启用后反映当前是否已认证。 */
+export function getAuthStatus(): Promise<AuthStatus> {
+  return request('/api/auth/status');
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
@@ -239,8 +277,8 @@ export async function testMcpServer(
 }
 
 export function agentEventsUrl(sessionId: string): string {
-  // SSE 事件流地址
-  return `${BASE_URL}/api/agent/${encodeURIComponent(sessionId)}/events`;
+  // SSE 事件流地址（EventSource 无法带 Authorization 头，令牌走查询参数）
+  return appendToken(`${BASE_URL}/api/agent/${encodeURIComponent(sessionId)}/events`);
 }
 
 export function listFiles(root: string, path = ''): Promise<FileListResponse> {
@@ -252,8 +290,9 @@ export function readFile(root: string, path: string): Promise<FileReadResponse> 
 }
 
 export function fileMediaUrl(root: string, path: string): string {
-  // 图片/音频预览地址（直接作为 <img>/<audio> 的 src，需带绝对前缀）
-  return BASE_URL + fileAccessUrl(root, path, 'media');
+  // 图片/音频预览地址（直接作为 <img>/<audio> 的 src，需带绝对前缀；
+  // <img> 无法带 Authorization 头，令牌走查询参数）
+  return appendToken(BASE_URL + fileAccessUrl(root, path, 'media'));
 }
 
 function fileAccessUrl(root: string, path: string, type: 'list' | 'read' | 'media'): string {

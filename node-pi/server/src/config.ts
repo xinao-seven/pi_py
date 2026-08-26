@@ -28,6 +28,7 @@ export interface ServerConfig {
   workspaceParent: string; // 默认工作区父目录：未选择工作区时，在此目录下按日期创建
   logLevel: LogLevel; // 日志级别（默认 info；warn 起会屏蔽请求日志）
   webDistDir: string; // 前端构建产物目录（默认 ../../web/dist；不存在则仅提供 API）
+  accessPassword: string; // 访问密码（默认空=不启用密码锁；设置后 /api 需登录令牌）
 }
 
 /**
@@ -51,5 +52,6 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     workspaceParent: env.PI_NODE_WORKSPACE_PARENT ?? homedir(),
     logLevel: logLevelText as LogLevel,
     webDistDir: env.PI_NODE_WEB_DIST_DIR ?? defaultWebDistDir,
+    accessPassword: env.PI_NODE_ACCESS_PASSWORD ?? '',
   };
 }

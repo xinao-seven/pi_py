@@ -5,8 +5,11 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import McpConfig from '@/components/McpConfig.vue';
 import ModelsConfig from '@/components/ModelsConfig.vue';
 import SkillsConfig from '@/components/SkillsConfig.vue';
+import { useAuthStore } from '@/stores/auth';
 
 type SettingsSection = 'general' | 'models' | 'skills' | 'mcp';
+
+const auth = useAuthStore();
 
 const props = defineProps<{
   cwd: string | null;
@@ -39,7 +42,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 <template>
   <div class="settings-backdrop">
     <button class="settings-scrim" type="button" aria-label="关闭设置" @click="emit('close')" />
-    <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <section
+      class="settings-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+    >
       <header class="settings-header">
         <h2 id="settings-title">设置</h2>
         <button type="button" aria-label="关闭设置" autofocus @click="emit('close')">×</button>
@@ -115,6 +123,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                 <strong>当前工作区</strong>
                 <span>{{ cwd || '尚未选择工作区，Skills 与 MCP 暂不可用。' }}</span>
               </div>
+            </div>
+            <div v-if="auth.status === 'ok'" class="settings-row">
+              <div>
+                <strong>访问密码锁</strong>
+                <span>退出登录后需要重新输入访问密码才能继续。</span>
+              </div>
+              <button type="button" @click="auth.logout()">退出登录</button>
             </div>
           </section>
 

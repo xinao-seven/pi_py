@@ -23,3 +23,7 @@ npm run dev
 `http://127.0.0.1:8001/` 即可打开同源界面，非 `/api` 的 GET 会回退到 `index.html`（SPA）；
 该目录不存在时仅提供 API。目录可用 `PI_NODE_WEB_DIST_DIR` 覆盖。要开放给局域网其他设备，
 启动时设置 `PI_NODE_SERVER_HOST=0.0.0.0` 并放行防火墙端口即可。
+
+**访问密码锁**：设置 `PI_NODE_ACCESS_PASSWORD=<密码>` 后，`/api` 除登录/状态/健康检查外
+都需要先登录。前端会弹出密码输入框；登录令牌持久化到 localStorage（刷新保持登录），
+可直接构造 URL 访问 API 会被服务端 401 拒绝。未设置该变量则不启用，本地开发不受影响。

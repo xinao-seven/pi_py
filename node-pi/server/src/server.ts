@@ -19,6 +19,7 @@ const app = createApp({
   agentDir: config.agentDir,
   workspaceParent: config.workspaceParent,
   webDistDir: config.webDistDir,
+  accessPassword: config.accessPassword,
   logger: {
     level: config.logLevel,
     transport: {

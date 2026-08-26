@@ -19,10 +19,12 @@ import { createEventBus } from '@earendil-works/pi-coding-agent';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ApiError, errorPayload } from './errors.js';
+import { authRoutes } from './routes/auth.js';
 import { agentRoutes } from './routes/agent.js';
 import { fileRoutes } from './routes/files.js';
 import { modelRoutes } from './routes/models.js';
@@ -39,6 +41,7 @@ import { PlanModeService } from './services/plan-mode-service.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { McpService } from './services/mcp/mcp-service.js';
 import { McpConfig } from './services/mcp/mcp-config.js';
+import { SessionService } from './services/session-service.js';
 import { mcpRoutes } from './routes/mcp.js';
 
 /**
@@ -57,6 +60,7 @@ export interface AppOptions {
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
   webDistDir?: string; // 前端构建产物目录；提供且存在时托管静态页面（SPA 回退），否则仅 API
+  accessPassword?: string; // 访问密码；非空时启用密码锁，/api 需登录令牌
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -69,6 +73,41 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 原因：uTools 插件以 file:// 或 utools:// 协议发起请求，没有标准 Origin 头；
   // 反射模式能放行这类客户端，并自动处理 JSON POST 的 CORS 预检（OPTIONS 请求）。
   app.register(cors, { origin: true });
+
+  // 访问密码锁：/api/auth/status 始终存在（未启用时返回 enabled:false），
+  // login/logout 仅启用时注册。配置了 PI_NODE_ACCESS_PASSWORD 后，/api 除公开
+  // 端点外都需携带登录令牌（Authorization: Bearer 或 ?access_token=）。
+  // 用 onRequest 而非 preHandler：未匹配的路由（404）与 SSE hijack 也会被拦，
+  // 避免泄露路由存在性。
+  const sessions = new SessionService();
+  app.register(authRoutes, {
+    prefix: '/api/auth',
+    enabled: Boolean(options.accessPassword),
+    passwordHash: options.accessPassword
+      ? createHash('sha256').update(options.accessPassword).digest()
+      : undefined,
+    sessions,
+  });
+  if (options.accessPassword) {
+    // 公开端点：登录/登出/状态探测，以及健康检查（uTools preload 的 healthCheck 依赖它）。
+    const PUBLIC = new Set([
+      '/api/auth/login',
+      '/api/auth/logout',
+      '/api/auth/status',
+      '/api/health',
+    ]);
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.method === 'OPTIONS') return;
+      const [pathname, query = ''] = request.url.split('?');
+      if (!pathname.startsWith('/api/') || PUBLIC.has(pathname)) return;
+      const auth = request.headers.authorization;
+      const token = auth?.startsWith('Bearer ')
+        ? auth.slice('Bearer '.length)
+        : (new URLSearchParams(query).get('access_token') ?? undefined);
+      if (token && sessions.validate(token)) return;
+      return reply.code(401).send(errorPayload('unauthorized', 'Authentication required'));
+    });
+  }
 
   // 工具调用审批中枢：Pi 的 bash 工具在命中危险命令规则时，会通过它
   // 挂起等待，直到前端在 SSE 流上收到 tool_call_pending 事件后做出审批。

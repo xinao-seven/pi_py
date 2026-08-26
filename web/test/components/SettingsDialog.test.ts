@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils';
+import { createPinia } from 'pinia';
 
 import SettingsDialog from '@/components/SettingsDialog.vue';
 
@@ -10,6 +11,7 @@ describe('SettingsDialog', () => {
         theme: 'light',
         soundEnabled: false,
       },
+      global: { plugins: [createPinia()] },
     });
 
     const navButtons = wrapper.findAll('.settings-nav button');

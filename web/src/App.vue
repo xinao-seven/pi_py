@@ -6,14 +6,18 @@ import { storeToRefs } from 'pinia';
 import AppShell from '@/components/AppShell.vue';
 import ChatWindow from '@/components/ChatWindow.vue';
 import FileWorkspacePanel from '@/components/FileWorkspacePanel.vue';
+import LoginDialog from '@/components/LoginDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher.vue';
 import SessionSidebar from '@/components/SessionSidebar.vue';
 import { listSessions } from '@/lib/api';
+import { setUnauthorizedHandler } from '@/lib/session';
+import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
 import type { SessionInfo } from '@/types';
 
 const store = useAppStore();
+const auth = useAuthStore();
 const {
   selectedSessionId,
   newSessionCwd,
@@ -139,84 +143,105 @@ function playCompletionTone(volume: number): void {
   }
 }
 
-watch(selectedWorkspace, (root) => store.setFileWorkspace(root));
+function onUnauthorized(): void {
+  // 全局 401（令牌失效/被吊销）：上锁并停下会话列表重试，弹回登录框。
+  auth.markLocked();
+  stopSessionRecovery();
+  appError.value = null;
+}
 
-onMounted(() => {
+async function boot(): Promise<void> {
   store.initializePreferences();
-  void refreshSessions();
-});
+  setUnauthorizedHandler(onUnauthorized);
+  await auth.checkStatus();
+  if (auth.status !== 'locked') void refreshSessions();
+}
+
+// 登录成功后（从 locked 变为 ok）再拉取会话列表。
+watch(
+  () => auth.status,
+  (status, prev) => {
+    if (status === 'ok' && prev === 'locked') void refreshSessions();
+  },
+);
+
+onMounted(() => void boot());
 
 onBeforeUnmount(stopSessionRecovery);
 </script>
 
 <template>
-  <AppShell
-    v-model:sidebar-open="sidebarOpen"
-    :sidebar-collapsed="sidebarCollapsed"
-    :file-panel-open="filePanelOpen && !!selectedWorkspace"
-  >
-    <template #sidebar>
-      <SessionSidebar
-        :sessions="sessions"
-        :loading="sessionsLoading"
-        :selected-session-id="selectedSessionId"
-        :new-session-active="newSessionCwd !== null"
-        :agent-running="agentRunning"
-        @new-session="startNewSession"
-        @select-session="store.selectSession"
-        @open-settings="settingsOpen = true"
-        @collapse-sidebar="collapseSidebar"
-      />
-    </template>
+  <LoginDialog v-if="auth.status === 'locked'" />
 
-    <template #files>
-      <FileWorkspacePanel
-        v-if="selectedWorkspace"
-        :root="selectedWorkspace"
-        :tabs="fileTabs"
-        :active-path="activeFilePath"
-        @open="store.openFile"
-        @select="activeFilePath = $event"
-        @close="store.closeFile"
-        @close-panel="filePanelOpen = false"
-      />
-    </template>
-
-    <div v-if="appError" class="app-alert" role="alert">
-      {{ appError }}
-      <button type="button" aria-label="关闭错误提示" @click="appError = null">×</button>
-    </div>
-
-    <ChatWindow
-      :session-id="selectedSessionId"
-      :new-session-cwd="newSessionCwd"
-      :sessions="sessions"
-      :models-revision="modelsRevision"
+  <template v-else-if="auth.status !== 'unknown'">
+    <AppShell
+      v-model:sidebar-open="sidebarOpen"
       :sidebar-collapsed="sidebarCollapsed"
-      @session-created="sessionCreated"
-      @session-forked="sessionForked"
-      @agent-end="handleAgentEnd"
-      @open-sidebar="openSidebar"
-      @toggle-files="store.toggleFilePanel"
-      @switch-workspace="openWorkspaceSwitcher"
-      @running-change="agentRunning = $event"
-    />
-  </AppShell>
+      :file-panel-open="filePanelOpen && !!selectedWorkspace"
+    >
+      <template #sidebar>
+        <SessionSidebar
+          :sessions="sessions"
+          :loading="sessionsLoading"
+          :selected-session-id="selectedSessionId"
+          :new-session-active="newSessionCwd !== null"
+          :agent-running="agentRunning"
+          @new-session="startNewSession"
+          @select-session="store.selectSession"
+          @open-settings="settingsOpen = true"
+          @collapse-sidebar="collapseSidebar"
+        />
+      </template>
 
-  <SettingsDialog
-    v-if="settingsOpen"
-    :cwd="selectedWorkspace"
-    :theme="theme"
-    :sound-enabled="soundEnabled"
-    @close="settingsOpen = false"
-    @models-saved="modelsRevision += 1"
-    @toggle-theme="store.toggleTheme"
-    @toggle-sound="toggleSound"
-  />
-  <WorkspaceSwitcher
-    v-if="workspaceSwitcherOpen"
-    :current-cwd="selectedWorkspace"
-    @close="workspaceSwitcherOpen = false"
-    @selected="switchWorkspace"
-  />
+      <template #files>
+        <FileWorkspacePanel
+          v-if="selectedWorkspace"
+          :root="selectedWorkspace"
+          :tabs="fileTabs"
+          :active-path="activeFilePath"
+          @open="store.openFile"
+          @select="activeFilePath = $event"
+          @close="store.closeFile"
+          @close-panel="filePanelOpen = false"
+        />
+      </template>
+
+      <div v-if="appError" class="app-alert" role="alert">
+        {{ appError }}
+        <button type="button" aria-label="关闭错误提示" @click="appError = null">×</button>
+      </div>
+
+      <ChatWindow
+        :session-id="selectedSessionId"
+        :new-session-cwd="newSessionCwd"
+        :sessions="sessions"
+        :models-revision="modelsRevision"
+        :sidebar-collapsed="sidebarCollapsed"
+        @session-created="sessionCreated"
+        @session-forked="sessionForked"
+        @agent-end="handleAgentEnd"
+        @open-sidebar="openSidebar"
+        @toggle-files="store.toggleFilePanel"
+        @switch-workspace="openWorkspaceSwitcher"
+        @running-change="agentRunning = $event"
+      />
+    </AppShell>
+
+    <SettingsDialog
+      v-if="settingsOpen"
+      :cwd="selectedWorkspace"
+      :theme="theme"
+      :sound-enabled="soundEnabled"
+      @close="settingsOpen = false"
+      @models-saved="modelsRevision += 1"
+      @toggle-theme="store.toggleTheme"
+      @toggle-sound="toggleSound"
+    />
+    <WorkspaceSwitcher
+      v-if="workspaceSwitcherOpen"
+      :current-cwd="selectedWorkspace"
+      @close="workspaceSwitcherOpen = false"
+      @selected="switchWorkspace"
+    />
+  </template>
 </template>
