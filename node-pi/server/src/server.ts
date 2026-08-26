@@ -23,7 +23,7 @@ const app = createApp({
     level: config.logLevel,
     transport: {
       target: 'pino-pretty',
-      options: { translateTime: 'SYS:HH:MM:ss', ignore: 'pid,hostname' },
+      options: { translateTime: 'SYS:HH:MM:ss', ignore: 'pid,hostname', singleLine: true },
     },
   },
 });
