@@ -13,6 +13,8 @@ const props = defineProps<{
   running: boolean;
   retryInfo: RetryInfo | null;
   contextUsage: ContextUsage | null;
+  planActive: boolean;
+  planBusy: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -20,6 +22,7 @@ const emit = defineEmits<{
   thinkingChange: [level: string];
   toolsChange: [toolNames: string[]];
   compact: [];
+  togglePlan: [];
 }>();
 
 const modelKey = computed(() =>
@@ -99,6 +102,17 @@ function changeTools(event: Event): void {
         <option value="full">完整</option>
       </select>
     </label>
+
+    <button
+      class="compact-button"
+      :class="{ 'compact-button--active': planActive }"
+      type="button"
+      :disabled="running || planBusy"
+      :aria-pressed="planActive"
+      @click="emit('togglePlan')"
+    >
+      Plan
+    </button>
 
     <button
       class="compact-button"

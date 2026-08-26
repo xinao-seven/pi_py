@@ -18,7 +18,7 @@ function session(id: string, cwd: string, parentSessionId: string | null = null)
 }
 
 describe('SessionSidebar', () => {
-  it('groups sessions by project and puts the user home under generic projects', () => {
+  it('groups sessions by collapsible project folders and keeps generic sessions last', async () => {
     const wrapper = mount(SessionSidebar, {
       props: {
         sessions: [
@@ -29,16 +29,18 @@ describe('SessionSidebar', () => {
         loading: false,
         selectedSessionId: null,
         newSessionActive: false,
-        skillsAvailable: false,
-        theme: 'dark',
-        soundEnabled: false,
         agentRunning: false,
       },
     });
 
     expect(wrapper.findAll('.session-project-group')).toHaveLength(2);
-    expect(wrapper.text()).toContain('通用项目');
+    expect(wrapper.text()).toContain('通用会话');
     expect(wrapper.text()).toContain('pi_py');
     expect(wrapper.findAll('.session-item--fork')).toHaveLength(1);
+    const groups = wrapper.findAll('.session-project-group');
+    expect(groups.at(-1)?.text()).toContain('通用会话');
+
+    await groups[0].get('.session-project-heading').trigger('click');
+    expect(groups[0].get('.session-project-heading').attributes('aria-expanded')).toBe('false');
   });
 });

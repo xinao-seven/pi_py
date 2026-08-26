@@ -5,6 +5,8 @@ import { onMounted, ref } from 'vue';
 import { getModelsConfig, saveModelsConfig } from '@/lib/api';
 import type { ModelDefinition, ModelsConfigValue } from '@/types';
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+
 interface ProviderForm {
   name: string;
   api: string;
@@ -137,7 +139,7 @@ async function save(): Promise<void> {
   try {
     await saveModelsConfig(value);
     emit('saved');
-    emit('close');
+    if (!props.embedded) emit('close');
   } catch (cause) {
     error.value = messageOf(cause);
   } finally {
@@ -151,14 +153,19 @@ function messageOf(cause: unknown): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
+  <div
+    :class="props.embedded ? 'settings-embedded-panel' : 'modal-backdrop'"
+    @click.self="!props.embedded && emit('close')"
+    @keydown.esc="!props.embedded && emit('close')"
+  >
     <section
       class="config-dialog config-dialog--wide"
-      role="dialog"
-      aria-modal="true"
+      :class="{ 'config-dialog--embedded': props.embedded }"
+      :role="props.embedded ? undefined : 'dialog'"
+      :aria-modal="props.embedded ? undefined : 'true'"
       aria-labelledby="models-title"
     >
-      <header class="config-header">
+      <header v-if="!props.embedded" class="config-header">
         <div>
           <div class="welcome-kicker">LOCAL MODEL CATALOG</div>
           <h2 id="models-title">模型配置</h2>
@@ -238,7 +245,7 @@ function messageOf(cause: unknown): string {
 
       <div v-if="error" class="config-error" role="alert">{{ error }}</div>
       <footer class="config-footer">
-        <button type="button" @click="emit('close')">取消</button>
+        <button v-if="!props.embedded" type="button" @click="emit('close')">取消</button>
         <button type="button" class="primary-action" :disabled="loading || saving" @click="save">
           {{ saving ? '保存中…' : '保存配置' }}
         </button>

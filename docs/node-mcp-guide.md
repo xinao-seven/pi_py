@@ -264,6 +264,7 @@ node-pi/server/
 | 文档 | 内容 |
 |---|---|
 | [`docs/node-mcp-support.md`](node-mcp-support.md) | MCP 功能的设计与实现细节（架构、事件通道、安全边界） |
+| [`docs/node-mcp-implementation.md`](node-mcp-implementation.md) | MCP 实现详解（逐文件代码走读） |
 | [`docs/node-web-plan-mode.md`](node-web-plan-mode.md) | Plan 模式（MCP 工具在规划期被拦截） |
 | [`docs/node-command-approval.md`](node-command-approval.md) | 工具审批（MCP `approval` 复用的流程） |
 | [MCP 官网](https://modelcontextprotocol.io/) | 协议规范与生态 |

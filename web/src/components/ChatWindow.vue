@@ -3,6 +3,7 @@
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 
 import AgentControls from '@/components/AgentControls.vue';
+import BranchNavigator from '@/components/BranchNavigator.vue';
 import ChatInput from '@/components/ChatInput.vue';
 import MessageView from '@/components/MessageView.vue';
 import PlanProgress from '@/components/PlanProgress.vue';
@@ -10,7 +11,7 @@ import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
 import { forkSession, mergeSession, sendPlanCommand } from '@/lib/api';
 import { useAppStore } from '@/stores/app';
-import type { SessionInfo } from '@/types';
+import type { SessionInfo, SessionTreeNode } from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 
 const messagesEnd = ref<HTMLElement | null>(null);
 const planBusy = ref(false);
+const branchExpanded = ref(false);
 const store = useAppStore();
 const {
   detail,
@@ -89,6 +91,7 @@ const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?
 const planActive = computed(
   () => plan.value?.mode === 'planning' || plan.value?.mode === 'executing',
 );
+const branchNodeCount = computed(() => countTreeNodes(detail.value?.tree ?? []));
 const toolResults = computed(() =>
   // toolCallId -> toolResult 消息 的映射，供工具调用块展示结果
   Object.fromEntries(
@@ -97,6 +100,10 @@ const toolResults = computed(() =>
       .map((message) => [message.toolCallId as string, message]),
   ),
 );
+
+function countTreeNodes(nodes: SessionTreeNode[]): number {
+  return nodes.reduce((total, node) => total + 1 + countTreeNodes(node.children), 0);
+}
 
 async function navigateBranch(entryId: string): Promise<void> {
   // 切换会话树分支
@@ -274,6 +281,39 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
       </div>
     </header>
 
+    <section
+      v-if="detail?.tree.length"
+      class="branch-strip"
+      :class="{ 'branch-strip--expanded': branchExpanded }"
+    >
+      <button
+        class="branch-strip-toggle"
+        type="button"
+        :aria-expanded="branchExpanded"
+        @click="branchExpanded = !branchExpanded"
+      >
+        <span class="branch-strip-icon" aria-hidden="true">⑂</span>
+        <strong>会话分支</strong>
+        <span>{{ branchNodeCount }} 个节点</span>
+        <span class="branch-strip-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div v-show="branchExpanded" class="branch-strip-content">
+        <BranchNavigator
+          :tree="detail.tree"
+          :leaf-id="detail.leafId"
+          :sessions="sessions"
+          :current-session-id="sessionId ?? ''"
+          :busy="store.branchBusy || stream.running"
+          @navigate="navigateBranch"
+          @fork="forkBranch"
+          @merge="mergeFrom"
+        />
+        <span v-if="store.branchError" class="branch-error" role="alert">
+          {{ store.branchError }}
+        </span>
+      </div>
+    </section>
+
     <div v-if="loading" class="center-state">
       <span class="loading-ring" aria-hidden="true" />
       正在恢复会话…
@@ -339,28 +379,14 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           :running="stream.running"
           :retry-info="retryInfo"
           :context-usage="contextUsage"
+          :plan-active="planActive"
+          :plan-busy="planBusy"
           @model-change="changeModel"
           @thinking-change="changeThinkingLevel"
           @tools-change="changeTools"
           @compact="compact"
+          @toggle-plan="togglePlan"
         />
-        <div class="plan-composer-bar">
-          <button
-            class="plan-composer-toggle"
-            :class="{ 'plan-composer-toggle--active': planActive }"
-            type="button"
-            :disabled="planBusy || stream.running"
-            :title="sessionId ? undefined : '先发送首条消息创建会话'"
-            @click="togglePlan"
-          >
-            {{ planActive ? '退出 Plan 模式' : '开启 Plan 模式' }}
-          </button>
-          <span>{{
-            planActive
-              ? '当前回复只会用于调查、讨论和生成计划。'
-              : '开启后，下一条消息将作为规划需求发送给 Agent。'
-          }}</span>
-        </div>
         <ChatInput
           :running="stream.running"
           :disabled="planBusy"

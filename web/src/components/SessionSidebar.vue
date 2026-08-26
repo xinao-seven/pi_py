@@ -1,9 +1,8 @@
-<!-- 会话侧栏：按项目路径分区显示会话，Fork 在各项目内缩进。 -->
+<!-- 会话侧栏：按工作区文件夹折叠分组，Fork 在组内缩进，通用会话固定置底。 -->
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
-import BranchNavigator from '@/components/BranchNavigator.vue';
-import type { SessionInfo, SessionTreeNode } from '@/types';
+import type { SessionInfo } from '@/types';
 
 const props = withDefaults(
   defineProps<{
@@ -11,21 +10,9 @@ const props = withDefaults(
     loading: boolean;
     selectedSessionId: string | null;
     newSessionActive: boolean;
-    skillsAvailable: boolean;
-    theme: 'dark' | 'light';
-    soundEnabled: boolean;
     agentRunning: boolean;
-    branchTree?: SessionTreeNode[];
-    branchLeafId?: string | null;
-    branchBusy?: boolean;
-    branchError?: string | null;
   }>(),
-  {
-    branchTree: () => [],
-    branchLeafId: null,
-    branchBusy: false,
-    branchError: null,
-  },
+  {},
 );
 
 interface SessionListItem {
@@ -41,6 +28,7 @@ interface SessionGroup {
 }
 
 const GENERIC_HOME = 'c:/users/xinao';
+const collapsedGroups = ref(new Set<string>());
 
 const groupedSessions = computed<SessionGroup[]>(() => {
   // 先按工作区归类，再在每个项目内部恢复 Fork 树，避免跨项目缩进混杂。
@@ -51,12 +39,18 @@ const groupedSessions = computed<SessionGroup[]>(() => {
     current.source.push(session);
     groups.set(group.key, current);
   }
-  return [...groups.entries()].map(([key, group]) => ({
-    key,
-    label: group.label,
-    path: group.path,
-    sessions: treeSessions(group.source),
-  }));
+  return [...groups.entries()]
+    .map(([key, group]) => ({
+      key,
+      label: group.label,
+      path: group.path,
+      sessions: treeSessions(group.source),
+    }))
+    .sort((left, right) => {
+      if (left.key === 'generic') return 1;
+      if (right.key === 'generic') return -1;
+      return left.label.localeCompare(right.label, 'zh-CN');
+    });
 });
 
 function treeSessions(sessions: SessionInfo[]): SessionListItem[] {
@@ -86,16 +80,20 @@ function treeSessions(sessions: SessionInfo[]): SessionListItem[] {
 const emit = defineEmits<{
   newSession: [];
   selectSession: [sessionId: string];
-  openModels: [];
-  openSkills: [];
-  openMcp: [];
-  toggleTheme: [];
-  toggleSound: [];
+  openSettings: [];
   collapseSidebar: [];
-  navigateBranch: [entryId: string];
-  forkBranch: [entryId: string];
-  mergeFrom: [sourceSessionId: string];
 }>();
+
+function toggleGroup(key: string): void {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedGroups.value = next;
+}
+
+function groupExpanded(key: string): boolean {
+  return !collapsedGroups.value.has(key);
+}
 
 function sessionTitle(session: SessionInfo): string {
   // 会话标题：优先自定义名称，其次首条消息，最后兜底文案
@@ -105,7 +103,7 @@ function sessionTitle(session: SessionInfo): string {
 function groupFor(cwd: string): { key: string; label: string; path: string } {
   const normalized = normalizePath(cwd);
   if (normalized === GENERIC_HOME || normalized.startsWith(`${GENERIC_HOME}/`)) {
-    return { key: 'generic', label: '通用项目', path: 'C:\\Users\\xinao' };
+    return { key: 'generic', label: '通用会话', path: 'C:\\Users\\xinao' };
   }
   return { key: normalized || cwd, label: folderName(cwd), path: cwd };
 }
@@ -163,23 +161,8 @@ function relativeDate(value: string): string {
       新建会话
     </button>
 
-    <div v-if="branchTree.length" class="sidebar-branch">
-      <div class="sidebar-branch-heading">会话树</div>
-      <BranchNavigator
-        :tree="branchTree"
-        :leaf-id="branchLeafId"
-        :sessions="sessions"
-        :current-session-id="selectedSessionId ?? ''"
-        :busy="branchBusy || agentRunning"
-        @navigate="emit('navigateBranch', $event)"
-        @fork="emit('forkBranch', $event)"
-        @merge="emit('mergeFrom', $event)"
-      />
-      <span v-if="branchError" class="branch-error" role="alert">{{ branchError }}</span>
-    </div>
-
     <div class="session-section-heading">
-      <span>项目会话</span>
+      <span>会话记录</span>
       <span v-if="sessions.length" class="session-count">{{ sessions.length }}</span>
     </div>
 
@@ -199,64 +182,65 @@ function relativeDate(value: string): string {
         <span class="session-meta">等待第一条消息</span>
       </button>
 
-      <section v-for="group in groupedSessions" :key="group.key" class="session-project-group">
-        <header class="session-project-heading" :title="group.path">
+      <section
+        v-for="group in groupedSessions"
+        :key="group.key"
+        class="session-project-group"
+        :class="{ 'session-project-group--generic': group.key === 'generic' }"
+      >
+        <button
+          class="session-project-heading"
+          type="button"
+          :title="group.path"
+          :aria-expanded="groupExpanded(group.key)"
+          @click="toggleGroup(group.key)"
+        >
+          <span class="session-project-chevron" aria-hidden="true">›</span>
+          <span class="session-project-icon" aria-hidden="true">□</span>
           <span class="session-project-name">{{ group.label }}</span>
           <span class="session-project-count">{{ group.sessions.length }}</span>
-          <code>{{ group.path }}</code>
-        </header>
-        <button
-          v-for="item in group.sessions"
-          :key="item.session.id"
-          type="button"
-          class="session-item"
-          :class="{
-            'session-item--active': selectedSessionId === item.session.id,
-            'session-item--fork': item.depth > 0,
-            'session-item--orphan': item.session.orphaned,
-          }"
-          :disabled="item.session.orphaned || agentRunning"
-          :title="item.session.orphanReason"
-          :style="{
-            marginLeft: `${Math.min(item.depth, 3) * 12}px`,
-            width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)`,
-          }"
-          @click="emit('selectSession', item.session.id)"
-        >
-          <span class="session-title">
-            <span v-if="item.depth" class="session-fork-mark" aria-label="Fork Session">↳</span>
-            {{ sessionTitle(item.session) }}
-            <span v-if="item.session.orphaned" class="orphan-badge">不完整</span>
-          </span>
-          <span class="session-meta">
-            <span class="session-cwd">{{ item.session.cwd }}</span>
-            <time :datetime="item.session.modified">{{ relativeDate(item.session.modified) }}</time>
-          </span>
         </button>
+        <div v-show="groupExpanded(group.key)" class="session-project-body">
+          <button
+            v-for="item in group.sessions"
+            :key="item.session.id"
+            type="button"
+            class="session-item"
+            :class="{
+              'session-item--active': selectedSessionId === item.session.id,
+              'session-item--fork': item.depth > 0,
+              'session-item--orphan': item.session.orphaned,
+            }"
+            :disabled="item.session.orphaned || agentRunning"
+            :title="item.session.orphanReason"
+            :style="{
+              marginLeft: `${Math.min(item.depth, 3) * 12}px`,
+              width: `calc(100% - ${Math.min(item.depth, 3) * 12}px)`,
+            }"
+            @click="emit('selectSession', item.session.id)"
+          >
+            <span class="session-title">
+              <span v-if="item.depth" class="session-fork-mark" aria-label="Fork Session">└</span>
+              {{ sessionTitle(item.session) }}
+              <span v-if="item.session.orphaned" class="orphan-badge">不完整</span>
+            </span>
+            <span class="session-meta">
+              <span class="session-cwd">{{ item.session.cwd }}</span>
+              <time :datetime="item.session.modified">{{ relativeDate(item.session.modified) }}</time>
+            </span>
+          </button>
+        </div>
       </section>
     </div>
 
     <div class="sidebar-footer">
-      <div class="sidebar-config-actions">
-        <button type="button" @click="emit('openModels')">模型</button>
-        <button type="button" :disabled="!skillsAvailable" @click="emit('openSkills')">
-          Skills
-        </button>
-        <button type="button" :disabled="!skillsAvailable" @click="emit('openMcp')">MCP</button>
-        <button
-          type="button"
-          :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
-          @click="emit('toggleTheme')"
-        >
-          {{ theme === 'dark' ? '浅色' : '深色' }}
-        </button>
-        <button type="button" :aria-pressed="soundEnabled" @click="emit('toggleSound')">
-          {{ soundEnabled ? '声音开' : '声音关' }}
-        </button>
-      </div>
       <div class="sidebar-service">
         <span class="status-dot" aria-hidden="true" />本地 FastAPI 服务
       </div>
+      <button class="sidebar-settings-button" type="button" @click="emit('openSettings')">
+        <span aria-hidden="true">⚙</span>
+        设置
+      </button>
     </div>
   </div>
 </template>

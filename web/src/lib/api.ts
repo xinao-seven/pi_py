@@ -7,7 +7,6 @@ import type {
   ForkSessionResponse,
   McpScope,
   McpServerInput,
-  McpServerTool,
   McpServersResponse,
   McpTestResult,
   MergeSessionResponse,

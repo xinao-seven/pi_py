@@ -11,7 +11,7 @@ import {
 } from '@/lib/api';
 import type { McpScope, McpServerConfigInput, McpServerView, McpTransport } from '@/types';
 
-const props = defineProps<{ cwd: string }>();
+const props = withDefaults(defineProps<{ cwd: string; embedded?: boolean }>(), { embedded: false });
 const emit = defineEmits<{ close: [] }>();
 
 interface McpDraft {
@@ -257,14 +257,19 @@ function messageOf(cause: unknown): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
+  <div
+    :class="props.embedded ? 'settings-embedded-panel' : 'modal-backdrop'"
+    @click.self="!props.embedded && emit('close')"
+    @keydown.esc="!props.embedded && emit('close')"
+  >
     <section
       class="config-dialog config-dialog--wide"
-      role="dialog"
-      aria-modal="true"
+      :class="{ 'config-dialog--embedded': props.embedded }"
+      :role="props.embedded ? undefined : 'dialog'"
+      :aria-modal="props.embedded ? undefined : 'true'"
       aria-labelledby="mcp-title"
     >
-      <header class="config-header">
+      <header v-if="!props.embedded" class="config-header">
         <div>
           <div class="welcome-kicker">MODEL CONTEXT PROTOCOL</div>
           <h2 id="mcp-title">MCP Servers</h2>
@@ -443,7 +448,13 @@ function messageOf(cause: unknown): string {
       </p>
       <div v-if="error" class="config-error" role="alert">{{ error }}</div>
       <footer class="config-footer">
-        <button type="button" @click="emit('close')">{{ formOpen ? '关闭' : '完成' }}</button>
+        <button
+          v-if="formOpen || !props.embedded"
+          type="button"
+          @click="formOpen ? cancelForm() : emit('close')"
+        >
+          {{ formOpen ? '返回列表' : '完成' }}
+        </button>
         <button
           v-if="formOpen"
           type="button"
@@ -472,7 +483,7 @@ function messageOf(cause: unknown): string {
   gap: 5px;
   padding: 1px 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 5px;
   color: var(--muted);
   font-size: 9px;
 }
@@ -558,7 +569,7 @@ function messageOf(cause: unknown): string {
 .mcp-actions button {
   padding: 3px 9px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 5px;
   color: var(--muted);
   background: transparent;
   font-size: 10px;
@@ -602,7 +613,7 @@ function messageOf(cause: unknown): string {
   min-width: 0;
   padding: 7px 9px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text);
   background: #0e1014;
   font-size: 11px;

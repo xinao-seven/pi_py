@@ -104,4 +104,5 @@ cd pi-python && python -m pytest
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | Web Plan 模式的 Agent 约束、确认执行与接口契约 |
 | [`docs/node-mcp-guide.md`](docs/node-mcp-guide.md) | MCP 支持总结（原理、实现、配置方法与示例） |
 | [`docs/node-mcp-support.md`](docs/node-mcp-support.md) | MCP 功能的设计与实现细节 |
+| [`docs/node-mcp-implementation.md`](docs/node-mcp-implementation.md) | MCP 实现详解（代码走读） |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

@@ -6,9 +6,7 @@ import { storeToRefs } from 'pinia';
 import AppShell from '@/components/AppShell.vue';
 import ChatWindow from '@/components/ChatWindow.vue';
 import FileWorkspacePanel from '@/components/FileWorkspacePanel.vue';
-import ModelsConfig from '@/components/ModelsConfig.vue';
-import SkillsConfig from '@/components/SkillsConfig.vue';
-import McpConfig from '@/components/McpConfig.vue';
+import SettingsDialog from '@/components/SettingsDialog.vue';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher.vue';
 import SessionSidebar from '@/components/SessionSidebar.vue';
 import { listSessions } from '@/lib/api';
@@ -21,16 +19,9 @@ const {
   newSessionCwd,
   sidebarOpen,
   sidebarCollapsed,
-  branchTree,
-  branchLeafId,
-  branchBusy,
-  branchError,
   filePanelOpen,
   fileTabs,
   activeFilePath,
-  modelsConfigOpen,
-  skillsConfigOpen,
-  mcpConfigOpen,
   theme,
   soundEnabled,
 } = storeToRefs(store);
@@ -39,8 +30,8 @@ const sessionsLoading = ref(true);
 const appError = ref<string | null>(null);
 const modelsRevision = ref(0);
 const workspaceSwitcherOpen = ref(false);
+const settingsOpen = ref(false);
 const agentRunning = ref(false);
-const chatWindowRef = ref<InstanceType<typeof ChatWindow> | null>(null);
 let sessionsRefreshing = false;
 let sessionRetryTimer: ReturnType<typeof setInterval> | undefined;
 // 当前工作区：历史会话的 cwd 或新会话选中的目录
@@ -101,16 +92,10 @@ function openSidebar(): void {
   store.setSidebarCollapsed(false);
 }
 
-function onNavigateBranch(entryId: string): void {
-  void chatWindowRef.value?.navigateBranch(entryId);
-}
-
-function onForkBranch(entryId: string): void {
-  void chatWindowRef.value?.forkBranch(entryId);
-}
-
-function onMergeFrom(sourceSessionId: string): void {
-  void chatWindowRef.value?.mergeFrom(sourceSessionId);
+function collapseSidebar(): void {
+  // 收起时同步关闭窄屏抽屉状态，避免 sidebarOpen 继续让侧栏保持可见。
+  sidebarOpen.value = false;
+  store.setSidebarCollapsed(true);
 }
 
 function sessionCreated(sessionId: string): void {
@@ -176,25 +161,11 @@ onBeforeUnmount(stopSessionRecovery);
         :loading="sessionsLoading"
         :selected-session-id="selectedSessionId"
         :new-session-active="newSessionCwd !== null"
-        :skills-available="!!selectedWorkspace"
-        :theme="theme"
-        :sound-enabled="soundEnabled"
         :agent-running="agentRunning"
-        :branch-tree="branchTree"
-        :branch-leaf-id="branchLeafId"
-        :branch-busy="branchBusy"
-        :branch-error="branchError"
         @new-session="startNewSession"
         @select-session="store.selectSession"
-        @open-models="modelsConfigOpen = true"
-        @open-skills="skillsConfigOpen = true"
-        @open-mcp="mcpConfigOpen = true"
-        @toggle-theme="store.toggleTheme"
-        @toggle-sound="toggleSound"
-        @collapse-sidebar="store.setSidebarCollapsed(true)"
-        @navigate-branch="onNavigateBranch"
-        @fork-branch="onForkBranch"
-        @merge-from="onMergeFrom"
+        @open-settings="settingsOpen = true"
+        @collapse-sidebar="collapseSidebar"
       />
     </template>
 
@@ -217,7 +188,6 @@ onBeforeUnmount(stopSessionRecovery);
     </div>
 
     <ChatWindow
-      ref="chatWindowRef"
       :session-id="selectedSessionId"
       :new-session-cwd="newSessionCwd"
       :sessions="sessions"
@@ -233,20 +203,15 @@ onBeforeUnmount(stopSessionRecovery);
     />
   </AppShell>
 
-  <ModelsConfig
-    v-if="modelsConfigOpen"
-    @close="modelsConfigOpen = false"
-    @saved="modelsRevision += 1"
-  />
-  <SkillsConfig
-    v-if="skillsConfigOpen && selectedWorkspace"
+  <SettingsDialog
+    v-if="settingsOpen"
     :cwd="selectedWorkspace"
-    @close="skillsConfigOpen = false"
-  />
-  <McpConfig
-    v-if="mcpConfigOpen && selectedWorkspace"
-    :cwd="selectedWorkspace"
-    @close="mcpConfigOpen = false"
+    :theme="theme"
+    :sound-enabled="soundEnabled"
+    @close="settingsOpen = false"
+    @models-saved="modelsRevision += 1"
+    @toggle-theme="store.toggleTheme"
+    @toggle-sound="toggleSound"
   />
   <WorkspaceSwitcher
     v-if="workspaceSwitcherOpen"

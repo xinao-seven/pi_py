@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 import { getSkills, setSkillDisabled } from '@/lib/api';
 import type { SkillDiagnostic, SkillInfo } from '@/types';
 
-const props = defineProps<{ cwd: string }>();
+const props = withDefaults(defineProps<{ cwd: string; embedded?: boolean }>(), { embedded: false });
 const emit = defineEmits<{ close: [] }>();
 
 const skills = ref<SkillInfo[]>([]);
@@ -56,9 +56,19 @@ function messageOf(cause: unknown): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
-    <section class="config-dialog" role="dialog" aria-modal="true" aria-labelledby="skills-title">
-      <header class="config-header">
+  <div
+    :class="props.embedded ? 'settings-embedded-panel' : 'modal-backdrop'"
+    @click.self="!props.embedded && emit('close')"
+    @keydown.esc="!props.embedded && emit('close')"
+  >
+    <section
+      class="config-dialog"
+      :class="{ 'config-dialog--embedded': props.embedded }"
+      :role="props.embedded ? undefined : 'dialog'"
+      :aria-modal="props.embedded ? undefined : 'true'"
+      aria-labelledby="skills-title"
+    >
+      <header v-if="!props.embedded" class="config-header">
         <div>
           <div class="welcome-kicker">PROJECT + USER SKILLS</div>
           <h2 id="skills-title">Skills</h2>
@@ -101,7 +111,14 @@ function messageOf(cause: unknown): string {
       <div v-if="error" class="config-error" role="alert">{{ error }}</div>
       <footer class="config-footer">
         <button type="button" @click="load">刷新</button>
-        <button type="button" class="primary-action" @click="emit('close')">完成</button>
+        <button
+          v-if="!props.embedded"
+          type="button"
+          class="primary-action"
+          @click="emit('close')"
+        >
+          完成
+        </button>
       </footer>
     </section>
   </div>

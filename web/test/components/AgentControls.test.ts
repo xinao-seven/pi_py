@@ -25,6 +25,8 @@ describe('AgentControls', () => {
         running: false,
         retryInfo: null,
         contextUsage: null,
+        planActive: false,
+        planBusy: false,
       },
     });
     const selects = wrapper.findAll('select');
