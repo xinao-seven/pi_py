@@ -1,6 +1,6 @@
 # 重新构建 uTools 插件：构建 web 的 uTools 变体并拷贝产物到本目录
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot   # pi_py/
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)   # pi_py/
 $web = Join-Path $root "web"
 $dest = $PSScriptRoot
 
