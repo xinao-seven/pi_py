@@ -1,9 +1,9 @@
 <!-- 文件面板外壳：文件树 + 已打开标签 + 预览区。 -->
 <script setup lang="ts">
-import FileExplorer from "@/components/FileExplorer.vue";
-import FileViewer from "@/components/FileViewer.vue";
-import TabBar from "@/components/TabBar.vue";
-import type { FileTab } from "@/types";
+import FileExplorer from '@/components/FileExplorer.vue';
+import FileViewer from '@/components/FileViewer.vue';
+import TabBar from '@/components/TabBar.vue';
+import type { FileTab } from '@/types';
 
 defineProps<{
   root: string;

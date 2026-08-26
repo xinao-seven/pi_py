@@ -1,8 +1,8 @@
 <!-- 命令确认弹窗：模型请求执行有副作用命令时弹出，由用户允许/拒绝。 -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed } from 'vue';
 
-import type { PendingToolCall } from "@/types";
+import type { PendingToolCall } from '@/types';
 
 const props = defineProps<{
   pending: PendingToolCall;
@@ -15,14 +15,14 @@ const emit = defineEmits<{
 
 const commandText = computed(() =>
   // 展示触发确认的命令（优先 bash 的 command 参数）
-  typeof props.pending.args.command === "string"
+  typeof props.pending.args.command === 'string'
     ? props.pending.args.command
     : JSON.stringify(props.pending.args, null, 2),
 );
 
 function choose(approved: boolean): void {
   if (props.busy) return;
-  emit("approve", approved);
+  emit('approve', approved);
 }
 </script>
 

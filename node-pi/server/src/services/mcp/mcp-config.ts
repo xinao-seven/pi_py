@@ -10,15 +10,15 @@
  * 更新/删除时写回哪个文件。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-import { ApiError } from "../../errors.js";
+import { ApiError } from '../../errors.js';
 
 /** MCP 传输类型：stdio（本地子进程）或 streamable-http（远程）。 */
-export type McpTransport = "stdio" | "streamable-http";
+export type McpTransport = 'stdio' | 'streamable-http';
 /** 配置作用域：用户级还是工作区级。 */
-export type McpScope = "user" | "workspace";
+export type McpScope = 'user' | 'workspace';
 
 /** 单个 MCP server 的配置（对应配置文件里的一个条目）。 */
 export interface McpServerConfig {
@@ -38,7 +38,7 @@ export interface McpServerConfig {
   /** 是否启用；缺省视为启用。 */
   enabled?: boolean;
   /** 可选：该 server 的所有工具调用都需人工审批。 */
-  approval?: "required";
+  approval?: 'required';
 }
 
 /** 合并后带作用域信息的 server 条目（REST 层用）。 */
@@ -47,7 +47,7 @@ export interface ResolvedServer extends McpServerConfig {
   scope: McpScope;
 }
 
-const FILE_NAME = "mcp.json";
+const FILE_NAME = 'mcp.json';
 
 /**
  * 配置存取。每次读取都直接从磁盘加载（配置量小，避免引入缓存一致性复杂度），
@@ -61,15 +61,20 @@ export class McpConfig {
   }
 
   workspacePath(cwd: string): string {
-    return join(cwd, ".pi", FILE_NAME);
+    return join(cwd, '.pi', FILE_NAME);
   }
 
   /** 读取单个配置文件；文件缺失或 JSON 损坏时返回空表（不抛错，防御性）。 */
   read(path: string): Record<string, McpServerConfig> {
     try {
-      const raw = readFileSync(path, "utf8");
+      const raw = readFileSync(path, 'utf8');
       const parsed = JSON.parse(raw) as { servers?: unknown };
-      if (parsed && typeof parsed === "object" && typeof parsed.servers === "object" && parsed.servers !== null) {
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        typeof parsed.servers === 'object' &&
+        parsed.servers !== null
+      ) {
         return parsed.servers as Record<string, McpServerConfig>;
       }
       return {};
@@ -85,17 +90,17 @@ export class McpConfig {
     const byName = new Map<string, ResolvedServer>();
     // 配置文件可能被手工编辑，防御性跳过非对象条目，避免下游崩溃。
     for (const [name, config] of Object.entries(user)) {
-      if (isServerConfig(config)) byName.set(name, { ...config, name, scope: "user" });
+      if (isServerConfig(config)) byName.set(name, { ...config, name, scope: 'user' });
     }
     for (const [name, config] of Object.entries(workspace)) {
-      if (isServerConfig(config)) byName.set(name, { ...config, name, scope: "workspace" });
+      if (isServerConfig(config)) byName.set(name, { ...config, name, scope: 'workspace' });
     }
     return [...byName.values()];
   }
 
   /** 写入/更新一个 server 到指定作用域的文件（读-改-写）。 */
   upsert(cwd: string, scope: McpScope, name: string, server: McpServerConfig): void {
-    const path = scope === "workspace" ? this.workspacePath(cwd) : this.userPath();
+    const path = scope === 'workspace' ? this.workspacePath(cwd) : this.userPath();
     const servers = this.read(path);
     servers[name] = server;
     this.write(path, servers);
@@ -103,7 +108,7 @@ export class McpConfig {
 
   /** 从指定作用域的文件删除一个 server。 */
   remove(cwd: string, scope: McpScope, name: string): void {
-    const path = scope === "workspace" ? this.workspacePath(cwd) : this.userPath();
+    const path = scope === 'workspace' ? this.workspacePath(cwd) : this.userPath();
     const servers = this.read(path);
     if (name in servers) {
       delete servers[name];
@@ -113,7 +118,7 @@ export class McpConfig {
 
   private write(path: string, servers: Record<string, McpServerConfig>): void {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify({ servers }, null, 2) + "\n", "utf8");
+    writeFileSync(path, JSON.stringify({ servers }, null, 2) + '\n', 'utf8');
   }
 }
 
@@ -123,72 +128,76 @@ export class McpConfig {
  * 其余字段按类型检查，非法即 422。
  */
 export function parseServerConfig(input: unknown): McpServerConfig {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new ApiError(422, "validation_error", "MCP server config must be an object");
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ApiError(422, 'validation_error', 'MCP server config must be an object');
   }
   const raw = input as Record<string, unknown>;
   const transport = raw.transport;
-  if (transport !== "stdio" && transport !== "streamable-http") {
-    throw new ApiError(422, "validation_error", "transport must be \"stdio\" or \"streamable-http\"");
+  if (transport !== 'stdio' && transport !== 'streamable-http') {
+    throw new ApiError(422, 'validation_error', 'transport must be "stdio" or "streamable-http"');
   }
   const config: McpServerConfig = { transport };
 
-  if (transport === "stdio") {
-    if (typeof raw.command !== "string" || !raw.command.trim()) {
-      throw new ApiError(422, "validation_error", "stdio transport requires a non-empty command");
+  if (transport === 'stdio') {
+    if (typeof raw.command !== 'string' || !raw.command.trim()) {
+      throw new ApiError(422, 'validation_error', 'stdio transport requires a non-empty command');
     }
     config.command = raw.command.trim();
-    config.args = optionalStringArray(raw.args, "args");
-    config.env = optionalStringMap(raw.env, "env");
+    config.args = optionalStringArray(raw.args, 'args');
+    config.env = optionalStringMap(raw.env, 'env');
     if (raw.cwd !== undefined) {
-      if (typeof raw.cwd !== "string") throw new ApiError(422, "validation_error", "cwd must be a string");
+      if (typeof raw.cwd !== 'string')
+        throw new ApiError(422, 'validation_error', 'cwd must be a string');
       config.cwd = raw.cwd;
     }
   } else {
-    if (typeof raw.url !== "string" || !raw.url.trim()) {
-      throw new ApiError(422, "validation_error", "streamable-http transport requires a url");
+    if (typeof raw.url !== 'string' || !raw.url.trim()) {
+      throw new ApiError(422, 'validation_error', 'streamable-http transport requires a url');
     }
     try {
       config.url = new URL(raw.url.trim()).toString();
     } catch {
-      throw new ApiError(422, "validation_error", "url must be a valid URL");
+      throw new ApiError(422, 'validation_error', 'url must be a valid URL');
     }
-    config.headers = optionalStringMap(raw.headers, "headers");
+    config.headers = optionalStringMap(raw.headers, 'headers');
   }
 
   if (raw.enabled !== undefined) {
-    if (typeof raw.enabled !== "boolean") throw new ApiError(422, "validation_error", "enabled must be a boolean");
+    if (typeof raw.enabled !== 'boolean')
+      throw new ApiError(422, 'validation_error', 'enabled must be a boolean');
     config.enabled = raw.enabled;
   }
   if (raw.approval !== undefined) {
-    if (raw.approval !== "required") throw new ApiError(422, "validation_error", "approval must be \"required\"");
+    if (raw.approval !== 'required')
+      throw new ApiError(422, 'validation_error', 'approval must be "required"');
     config.approval = raw.approval;
   }
   return config;
 }
 
 function isServerConfig(value: unknown): value is McpServerConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const transport = (value as { transport?: unknown }).transport;
-  return transport === "stdio" || transport === "streamable-http";
+  return transport === 'stdio' || transport === 'streamable-http';
 }
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new ApiError(422, "validation_error", `${field} must be an array of strings`);
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new ApiError(422, 'validation_error', `${field} must be an array of strings`);
   }
   return value;
 }
 
 function optionalStringMap(value: unknown, field: string): Record<string, string> | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new ApiError(422, "validation_error", `${field} must be an object of string values`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(422, 'validation_error', `${field} must be an object of string values`);
   }
   const out: Record<string, string> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof item !== "string") throw new ApiError(422, "validation_error", `${field}.${key} must be a string`);
+    if (typeof item !== 'string')
+      throw new ApiError(422, 'validation_error', `${field}.${key} must be a string`);
     out[key] = item;
   }
   return out;

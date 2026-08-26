@@ -11,7 +11,7 @@ declare global {
   }
 }
 
-const injected = typeof window !== "undefined" ? window.piBackend?.baseUrl : undefined;
+const injected = typeof window !== 'undefined' ? window.piBackend?.baseUrl : undefined;
 const fromEnv = import.meta.env.VITE_BACKEND_URL as string | undefined;
 
-export const BASE_URL = (injected ?? fromEnv ?? "").trim().replace(/\/+$/, "");
+export const BASE_URL = (injected ?? fromEnv ?? '').trim().replace(/\/+$/, '');

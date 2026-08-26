@@ -7,7 +7,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  "update:sidebarOpen": [value: boolean];
+  'update:sidebarOpen': [value: boolean];
 }>();
 </script>
 

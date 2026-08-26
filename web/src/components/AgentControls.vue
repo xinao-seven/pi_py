@@ -1,8 +1,8 @@
 <!-- Agent 控制条：模型 / 推理档位 / 工具预设选择、压缩按钮、上下文占用条与重试指示。 -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed } from 'vue';
 
-import type { ContextUsage, ModelCatalog, ModelRef, RetryInfo } from "@/types";
+import type { ContextUsage, ModelCatalog, ModelRef, RetryInfo } from '@/types';
 
 const props = defineProps<{
   catalog: ModelCatalog | null;
@@ -23,40 +23,42 @@ const emit = defineEmits<{
 }>();
 
 const modelKey = computed(() =>
-  props.model ? `${props.model.provider}:${props.model.modelId}` : "",
+  props.model ? `${props.model.provider}:${props.model.modelId}` : '',
 );
 const availableThinkingLevels = computed(() =>
   // 当前模型支持的思考档位（来自模型目录）
   props.model
-    ? props.catalog?.thinkingLevels[`${props.model.provider}:${props.model.modelId}`] ?? ["off"]
-    : ["off"],
+    ? (props.catalog?.thinkingLevels[`${props.model.provider}:${props.model.modelId}`] ?? ['off'])
+    : ['off'],
 );
 const toolPreset = computed(() => {
   // 由当前激活工具集合推导预设：空=none，全部=full，否则=default
-  if (props.activeTools.length === 0) return "none";
-  if (["read", "bash", "edit", "write", "grep", "find", "ls"].every((name) => props.activeTools.includes(name))) {
-    return "full";
+  if (props.activeTools.length === 0) return 'none';
+  if (
+    ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'].every((name) =>
+      props.activeTools.includes(name),
+    )
+  ) {
+    return 'full';
   }
-  return "default";
+  return 'default';
 });
 
 function changeModel(event: Event): void {
   // 根据下拉值（provider:model）触发模型切换
   const value = (event.target as HTMLSelectElement).value;
-  const model = props.catalog?.modelList.find(
-    (item) => `${item.provider}:${item.id}` === value,
-  );
-  if (model) emit("modelChange", { provider: model.provider, modelId: model.id });
+  const model = props.catalog?.modelList.find((item) => `${item.provider}:${item.id}` === value);
+  if (model) emit('modelChange', { provider: model.provider, modelId: model.id });
 }
 
 function changeTools(event: Event): void {
   // 按预设切换工具集合
   const preset = (event.target as HTMLSelectElement).value;
-  if (preset === "none") emit("toolsChange", []);
-  else if (preset === "full") {
-    emit("toolsChange", ["read", "bash", "edit", "write", "grep", "find", "ls"]);
+  if (preset === 'none') emit('toolsChange', []);
+  else if (preset === 'full') {
+    emit('toolsChange', ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']);
   } else {
-    emit("toolsChange", ["read", "bash", "edit", "write"]);
+    emit('toolsChange', ['read', 'bash', 'edit', 'write']);
   }
 }
 </script>
@@ -104,7 +106,7 @@ function changeTools(event: Event): void {
       :disabled="running || compacting"
       @click="emit('compact')"
     >
-      {{ compacting ? "压缩中…" : "压缩上下文" }}
+      {{ compacting ? '压缩中…' : '压缩上下文' }}
     </button>
 
     <div v-if="retryInfo" class="retry-indicator" role="status">

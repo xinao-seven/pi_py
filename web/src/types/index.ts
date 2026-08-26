@@ -1,12 +1,7 @@
 // 统一的前端数据类型：与后端 API 的 JSON 结构一一对应。
 // 消息角色：用户 / 助手 / 工具结果 / 自定义 / 压缩摘要 / 分支摘要
 export type MessageRole =
-  | "user"
-  | "assistant"
-  | "toolResult"
-  | "custom"
-  | "compactionSummary"
-  | "branchSummary";
+  'user' | 'assistant' | 'toolResult' | 'custom' | 'compactionSummary' | 'branchSummary';
 
 export interface ContentBlock {
   // 消息内容块：文本、思考、图片或工具调用，按 type 区分
@@ -165,7 +160,7 @@ export interface SkillInfo {
   source: string;
   sourceInfo: {
     source: string;
-    scope: "project" | "user";
+    scope: 'project' | 'user';
     path: string;
     baseDir: string;
   };
@@ -183,9 +178,9 @@ export interface SkillsResponse {
   diagnostics: SkillDiagnostic[];
 }
 
-export type McpTransport = "stdio" | "streamable-http";
-export type McpScope = "user" | "workspace";
-export type McpServerStatus = "connected" | "connecting" | "error" | "disabled";
+export type McpTransport = 'stdio' | 'streamable-http';
+export type McpScope = 'user' | 'workspace';
+export type McpServerStatus = 'connected' | 'connecting' | 'error' | 'disabled';
 
 export interface McpServerTool {
   name: string;
@@ -208,7 +203,7 @@ export interface McpServerView {
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
-  approval?: "required";
+  approval?: 'required';
 }
 
 export interface McpServersResponse {
@@ -232,7 +227,7 @@ export interface McpServerConfigInput {
   url?: string;
   headers?: Record<string, string>;
   enabled?: boolean;
-  approval?: "required";
+  approval?: 'required';
 }
 
 /** POST/PATCH 请求体：cwd 为工作区，server 为嵌套的配置。 */
@@ -267,7 +262,7 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 
-export type AgentPhase = "idle" | "waiting" | "responding" | "tool";
+export type AgentPhase = 'idle' | 'waiting' | 'responding' | 'tool';
 // Agent 阶段：空闲 / 等待模型 / 正在生成 / 正在执行工具
 
 export interface PendingToolCall {
@@ -276,15 +271,24 @@ export interface PendingToolCall {
   toolName: string;
   reason: string;
   rule: string;
-  risk: "medium" | "high" | "critical";
-  category: "workspace_write" | "dependency_change" | "network" | "git_remote" | "destructive" | "system";
+  risk: 'medium' | 'high' | 'critical';
+  category:
+    'workspace_write' | 'dependency_change' | 'network' | 'git_remote' | 'destructive' | 'system';
   args: Record<string, unknown>;
 }
 
-export type PlanMode = "normal" | "planning" | "executing";
-export interface PlanTodo { step: number; text: string; completed: boolean; }
-export interface PlanSnapshot { sessionId: string; mode: PlanMode; todos: PlanTodo[]; awaitingConfirmation: boolean; }
-
+export type PlanMode = 'normal' | 'planning' | 'executing';
+export interface PlanTodo {
+  step: number;
+  text: string;
+  completed: boolean;
+}
+export interface PlanSnapshot {
+  sessionId: string;
+  mode: PlanMode;
+  todos: PlanTodo[];
+  awaitingConfirmation: boolean;
+}
 
 export interface AgentStreamState {
   // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误与待确认工具调用

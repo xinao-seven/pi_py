@@ -1,6 +1,6 @@
 <!-- 项目切换弹窗：列出已登记/历史工作区，也可输入任意已有本地目录。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref } from 'vue';
 
 import {
   createDefaultWorkspace,
@@ -8,7 +8,7 @@ import {
   listWorkspaces,
   pickWorkspaceDirectory,
   selectWorkspace,
-} from "@/lib/api";
+} from '@/lib/api';
 
 const props = defineProps<{ currentCwd: string | null }>();
 const emit = defineEmits<{
@@ -17,8 +17,8 @@ const emit = defineEmits<{
 }>();
 
 const workspaces = ref<string[]>([]);
-const workspaceHome = ref("");
-const path = ref("");
+const workspaceHome = ref('');
+const path = ref('');
 const loading = ref(true);
 const pending = ref(false);
 const error = ref<string | null>(null);
@@ -53,7 +53,7 @@ async function choose(cwd: string): Promise<void> {
   pending.value = true;
   error.value = null;
   try {
-    emit("selected", await selectWorkspace(cwd.trim()));
+    emit('selected', await selectWorkspace(cwd.trim()));
   } catch (cause) {
     error.value = messageOf(cause);
   } finally {
@@ -67,7 +67,7 @@ async function createDefault(): Promise<void> {
   pending.value = true;
   error.value = null;
   try {
-    emit("selected", await createDefaultWorkspace());
+    emit('selected', await createDefaultWorkspace());
   } catch (cause) {
     error.value = messageOf(cause);
   } finally {
@@ -81,7 +81,7 @@ async function pickDirectory(): Promise<void> {
   error.value = null;
   try {
     const cwd = await pickWorkspaceDirectory();
-    if (cwd) emit("selected", cwd);
+    if (cwd) emit('selected', cwd);
   } catch (cause) {
     error.value = messageOf(cause);
   } finally {
@@ -91,17 +91,22 @@ async function pickDirectory(): Promise<void> {
 
 function folderName(cwd: string): string {
   // 取路径最后一段作为展示名
-  return cwd.replaceAll("\\", "/").replace(/\/$/, "").split("/").at(-1) || cwd;
+  return cwd.replaceAll('\\', '/').replace(/\/$/, '').split('/').at(-1) || cwd;
 }
 
 function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "无法切换项目目录";
+  return cause instanceof Error ? cause.message : '无法切换项目目录';
 }
 </script>
 
 <template>
   <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
-    <section class="config-dialog workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+    <section
+      class="config-dialog workspace-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="workspace-title"
+    >
       <header class="config-header">
         <div>
           <div class="welcome-kicker">SAFE LOCAL WORKSPACES</div>
@@ -121,10 +126,19 @@ function messageOf(cause: unknown): string {
               v-model="path"
               autofocus
               autocomplete="off"
-              :placeholder="workspaceHome ? `例如 ${workspaceHome}\\Projects\\my-app` : '输入项目绝对路径'"
+              :placeholder="
+                workspaceHome ? `例如 ${workspaceHome}\\Projects\\my-app` : '输入项目绝对路径'
+              "
             />
-            <button type="submit" class="primary-action" :disabled="!path.trim() || pending">打开</button>
-            <button type="button" class="workspace-picker-button" :disabled="pending" @click="pickDirectory">
+            <button type="submit" class="primary-action" :disabled="!path.trim() || pending">
+              打开
+            </button>
+            <button
+              type="button"
+              class="workspace-picker-button"
+              :disabled="pending"
+              @click="pickDirectory"
+            >
               选择文件夹…
             </button>
           </div>

@@ -14,12 +14,12 @@
 export class ApiError extends Error {
   constructor(
     readonly statusCode: number, // HTTP 状态码，如 400 / 404 / 409 / 422 / 503
-    readonly code: string,       // 稳定的错误码，供前端程序化判断（如 "validation_error"）
-    message: string,             // 人类可读的错误描述
-    readonly details?: unknown,  // 可选的附加结构化信息（调试用）
+    readonly code: string, // 稳定的错误码，供前端程序化判断（如 "validation_error"）
+    message: string, // 人类可读的错误描述
+    readonly details?: unknown, // 可选的附加结构化信息（调试用）
   ) {
     super(message);
-    this.name = "ApiError";
+    this.name = 'ApiError';
   }
 }
 

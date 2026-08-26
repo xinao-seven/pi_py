@@ -12,10 +12,15 @@
  *   的事件通道契约（pi:tool_approval:pending/decide/aborted）挂起等待 Web 审批。
  */
 
-import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 
-import { CHANNEL_ABORTED, CHANNEL_DECIDE, CHANNEL_PENDING, type PendingToolApproval } from "../tool-approval.js";
-import type { McpService } from "./mcp-service.js";
+import {
+  CHANNEL_ABORTED,
+  CHANNEL_DECIDE,
+  CHANNEL_PENDING,
+  type PendingToolApproval,
+} from '../tool-approval.js';
+import type { McpService } from './mcp-service.js';
 
 /** 审批等待时长：前端未决定时自动拒绝。 */
 const APPROVAL_TIMEOUT_MS = 120_000;
@@ -28,7 +33,7 @@ export function buildMcpExtension(service: McpService, cwd: string): InlineExten
     }
 
     const waiting = new Set<string>();
-    pi.on("tool_call", async (event, ctx) => {
+    pi.on('tool_call', async (event, ctx) => {
       if (ctx.hasUI) return undefined;
       if (!service.approvalRequired(cwd, event.toolName)) return undefined;
       const pending: PendingToolApproval = {
@@ -37,38 +42,47 @@ export function buildMcpExtension(service: McpService, cwd: string): InlineExten
         toolName: event.toolName,
         args: event.input as Record<string, unknown>,
         reason: `MCP server 配置为需人工审批，工具 ${event.toolName} 的调用待确认`,
-        rule: "mcp-approval-required",
-        risk: "high",
-        category: "system",
+        rule: 'mcp-approval-required',
+        risk: 'high',
+        category: 'system',
       };
       const key = `${pending.sessionId}:${pending.toolCallId}`;
-      if (waiting.has(key)) return { block: true, reason: "Duplicate MCP tool approval request" };
+      if (waiting.has(key)) return { block: true, reason: 'Duplicate MCP tool approval request' };
       waiting.add(key);
       const approved = await new Promise<boolean>((resolve) => {
         let off: () => void = () => undefined;
         let timer: NodeJS.Timeout | undefined;
         const cleanup = () => {
           off();
-          ctx.signal?.removeEventListener("abort", abort);
+          ctx.signal?.removeEventListener('abort', abort);
           if (timer) clearTimeout(timer);
           waiting.delete(key);
         };
-        const settle = (value: boolean) => { cleanup(); resolve(value); };
+        const settle = (value: boolean) => {
+          cleanup();
+          resolve(value);
+        };
         const abort = () => {
-          pi.events.emit(CHANNEL_ABORTED, { sessionId: pending.sessionId, toolCallId: pending.toolCallId });
+          pi.events.emit(CHANNEL_ABORTED, {
+            sessionId: pending.sessionId,
+            toolCallId: pending.toolCallId,
+          });
           settle(false);
         };
         off = pi.events.on(CHANNEL_DECIDE, (value) => {
           const decision = value as { sessionId?: string; toolCallId?: string; approved?: boolean };
-          if (decision.sessionId === pending.sessionId && decision.toolCallId === pending.toolCallId) {
+          if (
+            decision.sessionId === pending.sessionId &&
+            decision.toolCallId === pending.toolCallId
+          ) {
             settle(decision.approved === true);
           }
         });
-        ctx.signal?.addEventListener("abort", abort, { once: true });
+        ctx.signal?.addEventListener('abort', abort, { once: true });
         timer = setTimeout(() => settle(false), APPROVAL_TIMEOUT_MS);
         pi.events.emit(CHANNEL_PENDING, pending);
       });
-      return approved ? undefined : { block: true, reason: "MCP tool execution was not approved" };
+      return approved ? undefined : { block: true, reason: 'MCP tool execution was not approved' };
     });
   };
 }

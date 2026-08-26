@@ -1,6 +1,6 @@
 <!-- 已打开文件的标签栏：切换与关闭。 -->
 <script setup lang="ts">
-import type { FileTab } from "@/types";
+import type { FileTab } from '@/types';
 
 defineProps<{
   tabs: FileTab[];
@@ -23,10 +23,20 @@ const emit = defineEmits<{
       role="tab"
       :aria-selected="tab.path === activePath"
     >
-      <button type="button" class="file-tab-select" :title="tab.path" @click="emit('select', tab.path)">
+      <button
+        type="button"
+        class="file-tab-select"
+        :title="tab.path"
+        @click="emit('select', tab.path)"
+      >
         {{ tab.name }}
       </button>
-      <button type="button" class="file-tab-close" :aria-label="`关闭 ${tab.name}`" @click="emit('close', tab.path)">
+      <button
+        type="button"
+        class="file-tab-close"
+        :aria-label="`关闭 ${tab.name}`"
+        @click="emit('close', tab.path)"
+      >
         ×
       </button>
     </div>

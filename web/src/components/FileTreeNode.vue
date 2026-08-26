@@ -1,11 +1,11 @@
 <!-- 文件树节点：目录点击展开/收起（懒加载子项），文件点击触发打开。 -->
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref } from 'vue';
 
-import { listFiles } from "@/lib/api";
-import type { FileTreeItem } from "@/types";
+import { listFiles } from '@/lib/api';
+import type { FileTreeItem } from '@/types';
 
-defineOptions({ name: "FileTreeNode" });
+defineOptions({ name: 'FileTreeNode' });
 
 const props = defineProps<{
   root: string;
@@ -25,7 +25,7 @@ const children = ref<FileTreeItem[]>([]);
 async function activate(): Promise<void> {
   // 文件：发出 open；目录：切换展开并首次展开时懒加载子目录
   if (!props.item.isDir) {
-    emit("open", props.item.path);
+    emit('open', props.item.path);
     return;
   }
   expanded.value = !expanded.value;
@@ -39,7 +39,7 @@ async function activate(): Promise<void> {
       path: joinPath(props.item.path, entry.name),
     }));
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "目录读取失败";
+    error.value = cause instanceof Error ? cause.message : '目录读取失败';
   } finally {
     loading.value = false;
   }
@@ -61,7 +61,7 @@ function joinPath(parent: string, name: string): string {
       @click="activate"
     >
       <span class="file-tree-icon" aria-hidden="true">
-        {{ item.isDir ? (expanded ? "▾" : "▸") : "·" }}
+        {{ item.isDir ? (expanded ? '▾' : '▸') : '·' }}
       </span>
       <span class="file-tree-name">{{ item.name }}</span>
     </button>

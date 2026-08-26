@@ -1,12 +1,12 @@
 <!-- Rendered source HTML is sanitized with DOMPurify before it reaches v-html. -->
 <!-- 文件预览：文本（语法高亮 + DOMPurify 清洗）、图片与音频。 -->
 <script setup lang="ts">
-import DOMPurify from "dompurify";
-import hljs from "highlight.js/lib/common";
-import { computed, ref, watch } from "vue";
+import DOMPurify from 'dompurify';
+import hljs from 'highlight.js/lib/common';
+import { computed, ref, watch } from 'vue';
 
-import { fileMediaUrl, readFile } from "@/lib/api";
-import type { FileReadResponse } from "@/types";
+import { fileMediaUrl, readFile } from '@/lib/api';
+import type { FileReadResponse } from '@/types';
 
 const props = defineProps<{
   root: string;
@@ -17,21 +17,21 @@ const content = ref<FileReadResponse | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 
-const kind = computed<"image" | "audio" | "text">(() => {
+const kind = computed<'image' | 'audio' | 'text'>(() => {
   // 按扩展名判断预览类型
-  const extension = props.path?.split(".").at(-1)?.toLowerCase() ?? "";
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(extension)) {
-    return "image";
+  const extension = props.path?.split('.').at(-1)?.toLowerCase() ?? '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(extension)) {
+    return 'image';
   }
-  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(extension)) return "audio";
-  return "text";
+  if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(extension)) return 'audio';
+  return 'text';
 });
 const mediaUrl = computed(() =>
-  props.path && kind.value !== "text" ? fileMediaUrl(props.root, props.path) : "",
+  props.path && kind.value !== 'text' ? fileMediaUrl(props.root, props.path) : '',
 );
 const highlighted = computed(() => {
   // 代码高亮：有对应语言用 hljs 高亮，否则自动检测；结果先经 DOMPurify 清洗
-  if (!content.value) return "";
+  if (!content.value) return '';
   const language = content.value.language;
   const html = hljs.getLanguage(language)
     ? hljs.highlight(content.value.content, { language }).value
@@ -42,12 +42,12 @@ const highlighted = computed(() => {
 async function load(): Promise<void> {
   content.value = null;
   error.value = null;
-  if (!props.path || kind.value !== "text") return;
+  if (!props.path || kind.value !== 'text') return;
   loading.value = true;
   try {
     content.value = await readFile(props.root, props.path);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "文件读取失败";
+    error.value = cause instanceof Error ? cause.message : '文件读取失败';
   } finally {
     loading.value = false;
   }

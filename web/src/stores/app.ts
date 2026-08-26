@@ -1,10 +1,10 @@
 // 全局 UI 状态（Pinia）：当前会话、工作区、文件面板/标签、主题与声音偏好。
-import { defineStore } from "pinia";
-import { ref } from "vue";
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
 
-import type { FileTab, SessionTreeNode } from "@/types";
+import type { FileTab, SessionTreeNode } from '@/types';
 
-export const useAppStore = defineStore("app", () => {
+export const useAppStore = defineStore('app', () => {
   // 当前选中的历史会话；为 null 且 newSessionCwd 有值表示“新会话”模式
   const selectedSessionId = ref<string | null>(null);
   const newSessionCwd = ref<string | null>(null);
@@ -22,14 +22,14 @@ export const useAppStore = defineStore("app", () => {
   const modelsConfigOpen = ref(false);
   const skillsConfigOpen = ref(false);
   const mcpConfigOpen = ref(false);
-  const theme = ref<"dark" | "light">("light");
+  const theme = ref<'dark' | 'light'>('light');
   const soundEnabled = ref(false);
 
   function initializePreferences(): void {
     // 启动时从 localStorage 恢复主题与声音偏好，并应用主题
-    const savedTheme = window.localStorage.getItem("pi.theme");
-    theme.value = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
-    soundEnabled.value = window.localStorage.getItem("pi.sound") === "true";
+    const savedTheme = window.localStorage.getItem('pi.theme');
+    theme.value = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'light';
+    soundEnabled.value = window.localStorage.getItem('pi.sound') === 'true';
     applyTheme();
   }
 
@@ -55,14 +55,14 @@ export const useAppStore = defineStore("app", () => {
   }
 
   function toggleTheme(): void {
-    theme.value = theme.value === "dark" ? "light" : "dark";
-    window.localStorage.setItem("pi.theme", theme.value);
+    theme.value = theme.value === 'dark' ? 'light' : 'dark';
+    window.localStorage.setItem('pi.theme', theme.value);
     applyTheme();
   }
 
   function toggleSound(): void {
     soundEnabled.value = !soundEnabled.value;
-    window.localStorage.setItem("pi.sound", String(soundEnabled.value));
+    window.localStorage.setItem('pi.sound', String(soundEnabled.value));
   }
 
   function applyTheme(): void {
@@ -100,7 +100,7 @@ export const useAppStore = defineStore("app", () => {
 
   function openFile(path: string): void {
     // 打开文件：加入标签列表并设为活动文件
-    const name = path.replaceAll("\\", "/").split("/").at(-1) ?? path;
+    const name = path.replaceAll('\\', '/').split('/').at(-1) ?? path;
     if (!fileTabs.value.some((tab) => tab.path === path)) {
       fileTabs.value.push({ path, name });
     }

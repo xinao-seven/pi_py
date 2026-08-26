@@ -1,19 +1,19 @@
 <!-- 根组件：组装三栏布局（侧栏/聊天/文件），管理会话列表、配置弹窗与主题声音。 -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { storeToRefs } from "pinia";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { storeToRefs } from 'pinia';
 
-import AppShell from "@/components/AppShell.vue";
-import ChatWindow from "@/components/ChatWindow.vue";
-import FileWorkspacePanel from "@/components/FileWorkspacePanel.vue";
-import ModelsConfig from "@/components/ModelsConfig.vue";
-import SkillsConfig from "@/components/SkillsConfig.vue";
-import McpConfig from "@/components/McpConfig.vue";
-import WorkspaceSwitcher from "@/components/WorkspaceSwitcher.vue";
-import SessionSidebar from "@/components/SessionSidebar.vue";
-import { listSessions } from "@/lib/api";
-import { useAppStore } from "@/stores/app";
-import type { SessionInfo } from "@/types";
+import AppShell from '@/components/AppShell.vue';
+import ChatWindow from '@/components/ChatWindow.vue';
+import FileWorkspacePanel from '@/components/FileWorkspacePanel.vue';
+import ModelsConfig from '@/components/ModelsConfig.vue';
+import SkillsConfig from '@/components/SkillsConfig.vue';
+import McpConfig from '@/components/McpConfig.vue';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher.vue';
+import SessionSidebar from '@/components/SessionSidebar.vue';
+import { listSessions } from '@/lib/api';
+import { useAppStore } from '@/stores/app';
+import type { SessionInfo } from '@/types';
 
 const store = useAppStore();
 const {
@@ -46,9 +46,9 @@ let sessionRetryTimer: ReturnType<typeof setInterval> | undefined;
 // 当前工作区：历史会话的 cwd 或新会话选中的目录
 const selectedWorkspace = computed(
   () =>
-    sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd
-    ?? newSessionCwd.value
-    ?? null,
+    sessions.value.find((session) => session.id === selectedSessionId.value)?.cwd ??
+    newSessionCwd.value ??
+    null,
 );
 
 async function refreshSessions(): Promise<void> {
@@ -60,7 +60,7 @@ async function refreshSessions(): Promise<void> {
     appError.value = null;
     stopSessionRecovery();
   } catch (cause) {
-    appError.value = cause instanceof Error ? cause.message : "无法加载会话";
+    appError.value = cause instanceof Error ? cause.message : '无法加载会话';
     startSessionRecovery();
   } finally {
     sessionsLoading.value = false;

@@ -16,9 +16,9 @@
  * 扩展与服务器不共享模块实例（jiti 隔离），所以所有通信都走事件总线。
  */
 
-import type { EventBus } from "@earendil-works/pi-coding-agent";
+import type { EventBus } from '@earendil-works/pi-coding-agent';
 
-import { ApiError } from "../errors.js";
+import { ApiError } from '../errors.js';
 
 /** 一条待审批的工具调用（与扩展约定的数据结构，两端必须一致）。 */
 export interface PendingToolApproval {
@@ -27,15 +27,16 @@ export interface PendingToolApproval {
   toolName: string;
   args: Record<string, unknown>;
   reason: string; // 人类可读的危险原因
-  rule: string;   // 命中的规则名
-  risk: "medium" | "high" | "critical";
-  category: "workspace_write" | "dependency_change" | "network" | "git_remote" | "destructive" | "system";
+  rule: string; // 命中的规则名
+  risk: 'medium' | 'high' | 'critical';
+  category:
+    'workspace_write' | 'dependency_change' | 'network' | 'git_remote' | 'destructive' | 'system';
 }
 
 /** 事件通道名契约：与 node-pi/server/extensions/tool-approval.ts 保持一致。 */
-export const CHANNEL_PENDING = "pi:tool_approval:pending";
-export const CHANNEL_DECIDE = "pi:tool_approval:decide";
-export const CHANNEL_ABORTED = "pi:tool_approval:aborted";
+export const CHANNEL_PENDING = 'pi:tool_approval:pending';
+export const CHANNEL_DECIDE = 'pi:tool_approval:decide';
+export const CHANNEL_ABORTED = 'pi:tool_approval:aborted';
 
 /** ToolApprovalBroker 构造选项。 */
 export interface ToolApprovalOptions {
@@ -66,16 +67,20 @@ export class ToolApprovalBroker {
     private readonly options: ToolApprovalOptions = {},
   ) {
     // 扩展命中危险规则后发布待审批项：创建带决策超时的挂起项，并通知监听器（注册表发 SSE）。
-    this.offs.push(events.on(CHANNEL_PENDING, (data) => {
-      const pending = data as PendingToolApproval;
-      this.addPending(pending);
-    }));
+    this.offs.push(
+      events.on(CHANNEL_PENDING, (data) => {
+        const pending = data as PendingToolApproval;
+        this.addPending(pending);
+      }),
+    );
     // 扩展感知工具调用被中止（AbortSignal）：按"拒绝"结算并清空快照。
-    this.offs.push(events.on(CHANNEL_ABORTED, (data) => {
-      const aborted = data as { sessionId: string; toolCallId: string };
-      const waiter = this.waiting.get(this.key(aborted.sessionId, aborted.toolCallId));
-      if (waiter) waiter.settle(false);
-    }));
+    this.offs.push(
+      events.on(CHANNEL_ABORTED, (data) => {
+        const aborted = data as { sessionId: string; toolCallId: string };
+        const waiter = this.waiting.get(this.key(aborted.sessionId, aborted.toolCallId));
+        if (waiter) waiter.settle(false);
+      }),
+    );
   }
 
   /** 登记一个待审批项：防重入 + 启动决策超时。 */
@@ -88,7 +93,11 @@ export class ToolApprovalBroker {
       if (!waiter) return; // 已结算过（幂等）
       clearTimeout(waiter.timer);
       this.waiting.delete(key);
-      this.events.emit(CHANNEL_DECIDE, { sessionId: pending.sessionId, toolCallId: pending.toolCallId, approved });
+      this.events.emit(CHANNEL_DECIDE, {
+        sessionId: pending.sessionId,
+        toolCallId: pending.toolCallId,
+        approved,
+      });
     };
     const timer = setTimeout(() => settle(false), this.options.timeoutMs ?? 30_000);
     this.waiting.set(key, { pending, timer, settle });
@@ -96,12 +105,15 @@ export class ToolApprovalBroker {
   }
 
   /** 注册"有新待审批项"的监听器（注册表用它发 SSE 事件）。 */
-  setPendingListener(listener: (pending: PendingToolApproval) => void): void { this.onPending = listener; }
+  setPendingListener(listener: (pending: PendingToolApproval) => void): void {
+    this.onPending = listener;
+  }
 
   /** 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项并把决定发给扩展。 */
   decide(sessionId: string, toolCallId: string, approved: boolean): void {
     const waiter = this.waiting.get(this.key(sessionId, toolCallId));
-    if (!waiter) throw new ApiError(404, "approval_not_found", "Tool approval is no longer pending");
+    if (!waiter)
+      throw new ApiError(404, 'approval_not_found', 'Tool approval is no longer pending');
     waiter.settle(approved);
   }
 
@@ -128,5 +140,7 @@ export class ToolApprovalBroker {
   }
 
   /** 待审批项的唯一键：sessionId:toolCallId。 */
-  private key(sessionId: string, toolCallId: string): string { return `${sessionId}:${toolCallId}`; }
+  private key(sessionId: string, toolCallId: string): string {
+    return `${sessionId}:${toolCallId}`;
+  }
 }

@@ -1,16 +1,16 @@
 <!-- 聊天主窗口：消息流、Agent 控制条、输入框，以及分支导航/合并等会话操作。 -->
 <script setup lang="ts">
-import { computed, nextTick, ref, toRef, watch } from "vue";
+import { computed, nextTick, ref, toRef, watch } from 'vue';
 
-import AgentControls from "@/components/AgentControls.vue";
-import ChatInput from "@/components/ChatInput.vue";
-import MessageView from "@/components/MessageView.vue";
-import PlanProgress from "@/components/PlanProgress.vue";
-import ToolApprovalDialog from "@/components/ToolApprovalDialog.vue";
-import { useAgentSession } from "@/composables/useAgentSession";
-import { forkSession, mergeSession, sendPlanCommand } from "@/lib/api";
-import { useAppStore } from "@/stores/app";
-import type { SessionInfo } from "@/types";
+import AgentControls from '@/components/AgentControls.vue';
+import ChatInput from '@/components/ChatInput.vue';
+import MessageView from '@/components/MessageView.vue';
+import PlanProgress from '@/components/PlanProgress.vue';
+import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
+import { useAgentSession } from '@/composables/useAgentSession';
+import { forkSession, mergeSession, sendPlanCommand } from '@/lib/api';
+import { useAppStore } from '@/stores/app';
+import type { SessionInfo } from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;
@@ -63,18 +63,18 @@ const {
   navigateTree,
   reloadSession,
 } = useAgentSession({
-  sessionId: toRef(props, "sessionId"),
-  newSessionCwd: toRef(props, "newSessionCwd"),
-  onSessionCreated: (sessionId) => emit("sessionCreated", sessionId),
-  onAgentEnd: () => emit("agentEnd"),
-  modelsRevision: toRef(props, "modelsRevision"),
+  sessionId: toRef(props, 'sessionId'),
+  newSessionCwd: toRef(props, 'newSessionCwd'),
+  onSessionCreated: (sessionId) => emit('sessionCreated', sessionId),
+  onAgentEnd: () => emit('agentEnd'),
+  modelsRevision: toRef(props, 'modelsRevision'),
 });
 
 const visibleMessages = computed(() =>
   // 只展示 user/assistant 消息；toolResult 按 toolCallId 供工具块查询
   messages.value
     .map((message, index) => ({ message, entryId: entryIds.value[index] ?? String(index) }))
-    .filter(({ message }) => message.role === "user" || message.role === "assistant"),
+    .filter(({ message }) => message.role === 'user' || message.role === 'assistant'),
 );
 const empty = computed(
   // 是否为空会话（无消息且不在运行）
@@ -82,16 +82,18 @@ const empty = computed(
 );
 const title = computed(() => {
   // 窗口标题：新会话 / 会话名称 / 首条消息 / 兜底
-  if (isNew.value) return "新会话";
-  return detail.value?.info.name || detail.value?.info.firstMessage || "pi 会话";
+  if (isNew.value) return '新会话';
+  return detail.value?.info.name || detail.value?.info.firstMessage || 'pi 会话';
 });
-const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? "");
-const planActive = computed(() => plan.value?.mode === "planning" || plan.value?.mode === "executing");
+const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? '');
+const planActive = computed(
+  () => plan.value?.mode === 'planning' || plan.value?.mode === 'executing',
+);
 const toolResults = computed(() =>
   // toolCallId -> toolResult 消息 的映射，供工具调用块展示结果
   Object.fromEntries(
     messages.value
-      .filter((message) => message.role === "toolResult" && message.toolCallId)
+      .filter((message) => message.role === 'toolResult' && message.toolCallId)
       .map((message) => [message.toolCallId as string, message]),
   ),
 );
@@ -103,7 +105,7 @@ async function navigateBranch(entryId: string): Promise<void> {
   try {
     await navigateTree(entryId);
   } catch (cause) {
-    store.setBranchError(cause instanceof Error ? cause.message : "无法切换分支");
+    store.setBranchError(cause instanceof Error ? cause.message : '无法切换分支');
   } finally {
     store.setBranchBusy(false);
   }
@@ -116,9 +118,9 @@ async function forkBranch(entryId: string): Promise<void> {
   store.setBranchError(null);
   try {
     const forked = await forkSession(props.sessionId, entryId);
-    emit("sessionForked", forked.sessionId);
+    emit('sessionForked', forked.sessionId);
   } catch (cause) {
-    store.setBranchError(cause instanceof Error ? cause.message : "无法创建 Fork");
+    store.setBranchError(cause instanceof Error ? cause.message : '无法创建 Fork');
   } finally {
     store.setBranchBusy(false);
   }
@@ -132,16 +134,16 @@ async function mergeFrom(sourceSessionId: string): Promise<void> {
   try {
     await mergeSession(props.sessionId, sourceSessionId);
     await reloadSession();
-    emit("agentEnd");
+    emit('agentEnd');
   } catch (cause) {
-    store.setBranchError(cause instanceof Error ? cause.message : "无法合并 Session");
+    store.setBranchError(cause instanceof Error ? cause.message : '无法合并 Session');
   } finally {
     store.setBranchBusy(false);
   }
 }
 
 async function actPlan(
-  action: "enable" | "disable" | "execute" | "refine",
+  action: 'enable' | 'disable' | 'execute' | 'refine',
   message?: string,
 ): Promise<void> {
   // 发送 Plan 命令并乐观更新面板状态；随后 SSE plan_updated 会校正权威状态。
@@ -151,17 +153,37 @@ async function actPlan(
   try {
     await sendPlanCommand(props.sessionId, action, message);
     const current = plan.value;
-    if (action === "enable") {
-      plan.value = { sessionId: props.sessionId, mode: "planning", todos: current?.todos ?? [], awaitingConfirmation: false };
-    } else if (action === "disable") {
-      plan.value = { sessionId: props.sessionId, mode: "normal", todos: [], awaitingConfirmation: false };
-    } else if (action === "execute") {
-      plan.value = { sessionId: props.sessionId, mode: "executing", todos: current?.todos ?? [], awaitingConfirmation: false };
-    } else if (action === "refine") {
-      plan.value = { sessionId: props.sessionId, mode: "planning", todos: current?.todos ?? [], awaitingConfirmation: false };
+    if (action === 'enable') {
+      plan.value = {
+        sessionId: props.sessionId,
+        mode: 'planning',
+        todos: current?.todos ?? [],
+        awaitingConfirmation: false,
+      };
+    } else if (action === 'disable') {
+      plan.value = {
+        sessionId: props.sessionId,
+        mode: 'normal',
+        todos: [],
+        awaitingConfirmation: false,
+      };
+    } else if (action === 'execute') {
+      plan.value = {
+        sessionId: props.sessionId,
+        mode: 'executing',
+        todos: current?.todos ?? [],
+        awaitingConfirmation: false,
+      };
+    } else if (action === 'refine') {
+      plan.value = {
+        sessionId: props.sessionId,
+        mode: 'planning',
+        todos: current?.todos ?? [],
+        awaitingConfirmation: false,
+      };
     }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "Plan 操作失败";
+    error.value = cause instanceof Error ? cause.message : 'Plan 操作失败';
   } finally {
     planBusy.value = false;
   }
@@ -170,33 +192,33 @@ async function actPlan(
 async function togglePlan(): Promise<void> {
   // 新会话尚未有 Session JSONL，必须先发送首条普通消息创建会话。
   if (!props.sessionId) {
-    error.value = "请先发送首条消息创建会话，再开启 Plan 模式。";
+    error.value = '请先发送首条消息创建会话，再开启 Plan 模式。';
     return;
   }
   if (planActive.value) {
     // 激活后开关即退出键；执行中退出会中断计划，先确认避免误退。
-    if (plan.value?.mode === "executing") {
-      const ok = window.confirm("执行中退出会中断当前计划，确定退出 Plan 模式吗？");
+    if (plan.value?.mode === 'executing') {
+      const ok = window.confirm('执行中退出会中断当前计划，确定退出 Plan 模式吗？');
       if (!ok) return;
     }
-    await actPlan("disable");
+    await actPlan('disable');
     return;
   }
-  await actPlan("enable");
+  await actPlan('enable');
 }
 
 watch(
   () => [messages.value.length, stream.streamingMessage] as const,
   async () => {
     await nextTick();
-    messagesEnd.value?.scrollIntoView({ behavior: "smooth" });
+    messagesEnd.value?.scrollIntoView({ behavior: 'smooth' });
   },
   { deep: true },
 );
 
 watch(
   () => stream.running,
-  (running) => emit("runningChange", running),
+  (running) => emit('runningChange', running),
   { immediate: true },
 );
 
@@ -261,7 +283,9 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
       <div class="welcome-kicker">LOCAL · PRIVATE · STREAMING</div>
       <h2>把思路交给 <span>pi</span>，<br />把代码留在本地。</h2>
       <p>从左侧新建会话，或继续一段已有对话。</p>
-      <button class="welcome-action" type="button" @click="emit('openSidebar')">打开会话列表</button>
+      <button class="welcome-action" type="button" @click="emit('openSidebar')">
+        打开会话列表
+      </button>
     </div>
 
     <template v-else>
@@ -331,7 +355,11 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           >
             {{ planActive ? '退出 Plan 模式' : '开启 Plan 模式' }}
           </button>
-          <span>{{ planActive ? '当前回复只会用于调查、讨论和生成计划。' : '开启后，下一条消息将作为规划需求发送给 Agent。' }}</span>
+          <span>{{
+            planActive
+              ? '当前回复只会用于调查、讨论和生成计划。'
+              : '开启后，下一条消息将作为规划需求发送给 Agent。'
+          }}</span>
         </div>
         <ChatInput
           :running="stream.running"

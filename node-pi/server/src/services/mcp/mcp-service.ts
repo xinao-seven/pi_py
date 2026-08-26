@@ -8,12 +8,17 @@
  *   再委托给连接池执行；toolIndex 在每次 toolsFor() 时重建（处理命名冲突后的权威映射）。
  */
 
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-import { ApiError } from "../../errors.js";
-import { McpClientManager, type McpProbeResult, type ServerStatus } from "./mcp-client-manager.js";
-import { McpConfig, type McpScope, type McpServerConfig } from "./mcp-config.js";
-import { buildMcpToolDefinition, mcpResultToPi, parseMcpToolName, serializeMcpToolName } from "./mcp-tools.js";
+import { ApiError } from '../../errors.js';
+import { McpClientManager, type McpProbeResult, type ServerStatus } from './mcp-client-manager.js';
+import { McpConfig, type McpScope, type McpServerConfig } from './mcp-config.js';
+import {
+  buildMcpToolDefinition,
+  mcpResultToPi,
+  parseMcpToolName,
+  serializeMcpToolName,
+} from './mcp-tools.js';
 
 /** REST 层返回的 server 视图：配置 + 实时连接状态 + 工具清单。 */
 export interface McpServerView {
@@ -24,14 +29,14 @@ export interface McpServerView {
   error?: string;
   toolCount: number;
   tools: Array<{ name: string; description?: string }>;
-  transport: McpServerConfig["transport"];
+  transport: McpServerConfig['transport'];
   command?: string;
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
-  approval?: "required";
+  approval?: 'required';
 }
 
 /** 工具名 → 真实 server/tool 的权威映射（每次 toolsFor 重建）。 */
@@ -60,20 +65,22 @@ export class McpService {
     const used = new Set<string>();
     const index: ToolIndex = new Map();
     for (const server of this.manager.status(cwd)) {
-      if (server.status !== "connected") continue;
+      if (server.status !== 'connected') continue;
       for (const tool of server.tools) {
         const base = serializeMcpToolName(server.name, tool.name);
         let fullName = base;
         for (let suffix = 2; used.has(fullName); suffix++) fullName = `${base}_${suffix}`;
         used.add(fullName);
         index.set(fullName, { server: server.name, tool: tool.name });
-        definitions.push(buildMcpToolDefinition({
-          name: fullName,
-          serverName: server.name,
-          toolName: tool.name,
-          tool,
-          callTool: (args, signal) => this.callTool(cwd, fullName, args, signal),
-        }));
+        definitions.push(
+          buildMcpToolDefinition({
+            name: fullName,
+            serverName: server.name,
+            toolName: tool.name,
+            tool,
+            callTool: (args, signal) => this.callTool(cwd, fullName, args, signal),
+          }),
+        );
       }
     }
     this.toolIndex.set(cwd, index);
@@ -86,9 +93,14 @@ export class McpService {
   }
 
   /** 调用 MCP 工具（按 Pi 工具名）；结果已转为 Pi AgentToolResult。 */
-  async callTool(cwd: string, fullName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
+  async callTool(
+    cwd: string,
+    fullName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult<unknown>> {
     const resolved = this.resolveTool(cwd, fullName);
-    if (!resolved) throw new ApiError(404, "mcp_tool_not_found", `Unknown MCP tool: ${fullName}`);
+    if (!resolved) throw new ApiError(404, 'mcp_tool_not_found', `Unknown MCP tool: ${fullName}`);
     const result = await this.manager.callTool(cwd, resolved.server, resolved.tool, args, signal);
     return mcpResultToPi(result);
   }
@@ -105,7 +117,8 @@ export class McpService {
     const managed = this.manager.status(cwd);
     return this.config.effective(cwd).map((server) => {
       const entry = managed.find((item) => item.name === server.name);
-      const status: ServerStatus = server.enabled === false ? "disabled" : entry?.status ?? "connecting";
+      const status: ServerStatus =
+        server.enabled === false ? 'disabled' : (entry?.status ?? 'connecting');
       return {
         name: server.name,
         scope: server.scope,
@@ -113,7 +126,10 @@ export class McpService {
         status,
         error: entry?.error,
         toolCount: entry?.tools.length ?? 0,
-        tools: (entry?.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description })),
+        tools: (entry?.tools ?? []).map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+        })),
         transport: server.transport,
         command: server.command,
         args: server.args,
@@ -127,7 +143,12 @@ export class McpService {
   }
 
   /** REST：新增/更新 server 并同步连接。 */
-  async upsertServer(cwd: string, scope: McpScope, name: string, server: McpServerConfig): Promise<void> {
+  async upsertServer(
+    cwd: string,
+    scope: McpScope,
+    name: string,
+    server: McpServerConfig,
+  ): Promise<void> {
     this.config.upsert(cwd, scope, name, server);
     await this.ensure(cwd);
   }
@@ -139,9 +160,15 @@ export class McpService {
   }
 
   /** REST：试连一个 server（可传入未保存的配置）。 */
-  async testServer(cwd: string, scope: McpScope, name: string, config?: McpServerConfig): Promise<McpProbeResult> {
+  async testServer(
+    cwd: string,
+    scope: McpScope,
+    name: string,
+    config?: McpServerConfig,
+  ): Promise<McpProbeResult> {
     const toProbe = config ?? this.config.effective(cwd).find((server) => server.name === name);
-    if (!toProbe) throw new ApiError(404, "mcp_server_not_found", `MCP server "${name}" was not found`);
+    if (!toProbe)
+      throw new ApiError(404, 'mcp_server_not_found', `MCP server "${name}" was not found`);
     return this.manager.probe(toProbe);
   }
 

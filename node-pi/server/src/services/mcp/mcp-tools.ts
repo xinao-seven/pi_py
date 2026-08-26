@@ -6,11 +6,18 @@
  * （read/bash/edit/write），server 与 tool 名做清洗防止非法字符/歧义。
  */
 
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateTail, type AgentToolResult, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
-import { Type, type TSchema } from "typebox";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  formatSize,
+  truncateTail,
+  type AgentToolResult,
+  type ToolDefinition,
+} from '@earendil-works/pi-coding-agent';
+import type { CallToolResult, Tool as MCPTool } from '@modelcontextprotocol/sdk/types.js';
+import { Type, type TSchema } from 'typebox';
 
-import type { McpServerConfig } from "./mcp-config.js";
+import type { McpServerConfig } from './mcp-config.js';
 
 /** MCP 工具整体输出上限：行数与字节数，任一先到即截断（对齐 Pi 默认 2000 行 / 50KB）。 */
 const MAX_OUTPUT_LINES = DEFAULT_MAX_LINES;
@@ -22,7 +29,9 @@ export function interpolateEnv(value: string): string {
 }
 
 /** 对整个 map 做环境变量插值（stdio env / http headers）。 */
-export function interpolateEnvMap(map: Record<string, string> | undefined): Record<string, string> | undefined {
+export function interpolateEnvMap(
+  map: Record<string, string> | undefined,
+): Record<string, string> | undefined {
   if (!map) return undefined;
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(map)) out[key] = interpolateEnv(value);
@@ -36,7 +45,10 @@ export function fingerprintOf(config: McpServerConfig): string {
 
 /** 名称清洗：非单词字符统一转 `_`、连续下划线折叠、去掉首尾下划线。 */
 function sanitizeName(value: string): string {
-  return value.replace(/[^\w]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return value
+    .replace(/[^\w]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 /** 序列化 Pi 工具名：mcp__<server>__<tool>。 */
@@ -50,9 +62,9 @@ export function serializeMcpToolName(serverName: string, toolName: string): stri
  * 维护的 toolIndex 为准，此解析只作回退。
  */
 export function parseMcpToolName(fullName: string): { server: string; tool: string } | undefined {
-  const parts = fullName.split("__");
-  if (parts.length < 3 || parts[0] !== "mcp") return undefined;
-  return { server: parts[1], tool: parts.slice(2).join("__") };
+  const parts = fullName.split('__');
+  if (parts.length < 3 || parts[0] !== 'mcp') return undefined;
+  return { server: parts[1], tool: parts.slice(2).join('__') };
 }
 
 /**
@@ -61,38 +73,57 @@ export function parseMcpToolName(fullName: string): { server: string; tool: stri
  * （oneOf/anyOf/allOf 等）回退 `Type.Unsafe` 宽松放行，避免误拒 MCP 调用。
  */
 export function jsonSchemaToTypeBox(schema: Record<string, unknown> | undefined): TSchema {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return Type.Unsafe<unknown>({});
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema))
+    return Type.Unsafe<unknown>({});
   const type = schema.type;
   switch (type) {
-    case "object": return objectToTypeBox(schema);
-    case "string": {
-      const enums = Array.isArray(schema.enum) ? schema.enum.filter((v) => typeof v === "string") : [];
+    case 'object':
+      return objectToTypeBox(schema);
+    case 'string': {
+      const enums = Array.isArray(schema.enum)
+        ? schema.enum.filter((v) => typeof v === 'string')
+        : [];
       return enums.length ? Type.Union(enums.map((value) => Type.Literal(value))) : Type.String();
     }
-    case "number": return Type.Number();
-    case "integer": return Type.Integer();
-    case "boolean": return Type.Boolean();
-    case "array": {
+    case 'number':
+      return Type.Number();
+    case 'integer':
+      return Type.Integer();
+    case 'boolean':
+      return Type.Boolean();
+    case 'array': {
       const items = schema.items;
-      return Type.Array(items && typeof items === "object" ? jsonSchemaToTypeBox(items as Record<string, unknown>) : Type.Unknown());
+      return Type.Array(
+        items && typeof items === 'object'
+          ? jsonSchemaToTypeBox(items as Record<string, unknown>)
+          : Type.Unknown(),
+      );
     }
-    case "null": return Type.Null();
+    case 'null':
+      return Type.Null();
     default:
       return Type.Unsafe<unknown>({ ...schema });
   }
 }
 
 function objectToTypeBox(schema: Record<string, unknown>): TSchema {
-  const rawProperties = schema.properties && typeof schema.properties === "object"
-    ? schema.properties as Record<string, Record<string, unknown>>
-    : {};
-  const required = new Set(Array.isArray(schema.required) ? schema.required.filter((name) => typeof name === "string") : []);
+  const rawProperties =
+    schema.properties && typeof schema.properties === 'object'
+      ? (schema.properties as Record<string, Record<string, unknown>>)
+      : {};
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((name) => typeof name === 'string')
+      : [],
+  );
   const props: Record<string, TSchema> = {};
   for (const [key, value] of Object.entries(rawProperties)) {
     const sub = jsonSchemaToTypeBox(value);
     props[key] = required.has(key) ? sub : Type.Optional(sub);
   }
-  return Type.Object(props, { additionalProperties: schema.additionalProperties !== false });
+  return Type.Object(props, {
+    additionalProperties: schema.additionalProperties !== false,
+  });
 }
 
 /**
@@ -101,32 +132,50 @@ function objectToTypeBox(schema: Record<string, unknown>): TSchema {
  * - 文本输出用 truncateTail 截断（2000 行 / 50KB），防止超长结果撑爆上下文，并在末尾附截断说明。
  */
 export function mcpResultToPi(result: CallToolResult): AgentToolResult<unknown> {
-  const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+  const content: Array<
+    { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+  > = [];
   const textParts: string[] = [];
   for (const block of result.content ?? []) {
-    if (block.type === "text") textParts.push(block.text);
-    else if (block.type === "image") content.push({ type: "image", data: block.data, mimeType: block.mimeType });
-    else if (block.type === "resource") textParts.push(JSON.stringify(block.resource));
+    if (block.type === 'text') textParts.push(block.text);
+    else if (block.type === 'image')
+      content.push({
+        type: 'image',
+        data: block.data,
+        mimeType: block.mimeType,
+      });
+    else if (block.type === 'resource') textParts.push(JSON.stringify(block.resource));
   }
   if (result.isError === true) {
-    const message = textParts.join("\n").trim()
-      || (result.structuredContent !== undefined ? JSON.stringify(result.structuredContent) : "MCP tool returned an error");
+    const message =
+      textParts.join('\n').trim() ||
+      (result.structuredContent !== undefined
+        ? JSON.stringify(result.structuredContent)
+        : 'MCP tool returned an error');
     throw new Error(message);
   }
-  let text = textParts.join("\n");
-  if (!text && result.structuredContent !== undefined) text = JSON.stringify(result.structuredContent);
+  let text = textParts.join('\n');
+  if (!text && result.structuredContent !== undefined)
+    text = JSON.stringify(result.structuredContent);
   const truncated = truncateText(text);
-  content.unshift({ type: "text", text: truncated.text + (truncated.marker ?? "") });
+  content.unshift({
+    type: 'text',
+    text: truncated.text + (truncated.marker ?? ''),
+  });
   return { content, details: {} };
 }
 
 /** 对整体文本输出做行数/字节数截断，截断时附说明标记（对齐 bash 的 [Truncated: ...] 文案）。 */
 function truncateText(text: string): { text: string; marker?: string } {
-  const result = truncateTail(text, { maxLines: MAX_OUTPUT_LINES, maxBytes: MAX_OUTPUT_BYTES });
+  const result = truncateTail(text, {
+    maxLines: MAX_OUTPUT_LINES,
+    maxBytes: MAX_OUTPUT_BYTES,
+  });
   if (!result.truncated) return { text };
-  const detail = result.truncatedBy === "lines"
-    ? `showing ${result.outputLines} of ${result.totalLines} lines`
-    : `${result.outputLines} lines shown (${formatSize(result.maxBytes)} limit)`;
+  const detail =
+    result.truncatedBy === 'lines'
+      ? `showing ${result.outputLines} of ${result.totalLines} lines`
+      : `${result.outputLines} lines shown (${formatSize(result.maxBytes)} limit)`;
   return { text: result.content, marker: `\n[Truncated: ${detail}]` };
 }
 
@@ -136,7 +185,10 @@ export function buildMcpToolDefinition(options: {
   serverName: string;
   toolName: string;
   tool: MCPTool;
-  callTool: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<AgentToolResult<unknown>>;
+  callTool: (
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<AgentToolResult<unknown>>;
 }): ToolDefinition {
   return {
     name: options.name,

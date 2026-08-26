@@ -1,9 +1,9 @@
 <!-- Skills 配置弹窗：列出项目/用户级技能，切换模型可见性并显示加载诊断。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref } from 'vue';
 
-import { getSkills, setSkillDisabled } from "@/lib/api";
-import type { SkillDiagnostic, SkillInfo } from "@/types";
+import { getSkills, setSkillDisabled } from '@/lib/api';
+import type { SkillDiagnostic, SkillInfo } from '@/types';
 
 const props = defineProps<{ cwd: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -51,7 +51,7 @@ async function toggle(skill: SkillInfo): Promise<void> {
 }
 
 function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "Skills 操作失败";
+  return cause instanceof Error ? cause.message : 'Skills 操作失败';
 }
 </script>
 
@@ -64,7 +64,9 @@ function messageOf(cause: unknown): string {
           <h2 id="skills-title">Skills</h2>
           <p>{{ enabledCount }} / {{ skills.length }} 可由模型调用</p>
         </div>
-        <button type="button" aria-label="关闭 Skills 配置" autofocus @click="emit('close')">×</button>
+        <button type="button" aria-label="关闭 Skills 配置" autofocus @click="emit('close')">
+          ×
+        </button>
       </header>
       <div v-if="loading" class="config-state">正在发现本地 Skills…</div>
       <div v-else class="config-body skills-list">
@@ -73,9 +75,9 @@ function messageOf(cause: unknown): string {
           <div>
             <div class="skill-title-row">
               <strong>{{ skill.name }}</strong>
-              <span>{{ skill.sourceInfo.scope === "project" ? "项目" : "用户" }}</span>
+              <span>{{ skill.sourceInfo.scope === 'project' ? '项目' : '用户' }}</span>
             </div>
-            <p>{{ skill.description || "未提供描述" }}</p>
+            <p>{{ skill.description || '未提供描述' }}</p>
             <code :title="skill.filePath">{{ skill.filePath }}</code>
           </div>
           <button
@@ -86,7 +88,7 @@ function messageOf(cause: unknown): string {
             :aria-pressed="!skill.disableModelInvocation"
             @click="toggle(skill)"
           >
-            {{ skill.disableModelInvocation ? "已隐藏" : "已启用" }}
+            {{ skill.disableModelInvocation ? '已隐藏' : '已启用' }}
           </button>
         </article>
         <details v-if="diagnostics.length" class="skill-diagnostics">

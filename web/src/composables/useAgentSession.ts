@@ -1,7 +1,7 @@
 // Agent 会话核心组合函数：管理消息列表、SSE 事件流、模型/思考/工具配置，
 // 以及发送/中止/压缩/分支导航等全部会话操作。
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import type { Ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import type { Ref } from 'vue';
 
 import {
   agentEventsUrl,
@@ -11,8 +11,8 @@ import {
   getPlan,
   getSession,
   sendAgentCommand,
-} from "@/lib/api";
-import { INITIAL_STREAM_STATE, reduceAgentEvent } from "@/lib/agent-events";
+} from '@/lib/api';
+import { INITIAL_STREAM_STATE, reduceAgentEvent } from '@/lib/agent-events';
 import type {
   AgentEvent,
   AgentMessage,
@@ -24,9 +24,9 @@ import type {
   PlanSnapshot,
   RetryInfo,
   SessionDetail,
-} from "@/types";
+} from '@/types';
 
-const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
 // 默认激活的工具集合（与后端默认一致）
 
 interface AgentSessionOptions {
@@ -50,7 +50,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   const contextUsage = ref<ContextUsage | null>(null);
   const catalog = ref<ModelCatalog | null>(null);
   const newSessionModel = ref<ModelRef | null>(null);
-  const thinkingLevel = ref("off");
+  const thinkingLevel = ref('off');
   const activeTools = ref<string[]>([...DEFAULT_TOOLS]);
   const compacting = ref(false);
   const compactionError = ref<string | null>(null);
@@ -66,14 +66,15 @@ export function useAgentSession(options: AgentSessionOptions) {
   );
   const displayModel = computed(
     // 展示用的模型：优先会话上下文里保存的，其次新会话选择的，最后默认模型
-    () => detail.value?.context.model ?? newSessionModel.value ?? catalog.value?.defaultModel ?? null,
+    () =>
+      detail.value?.context.model ?? newSessionModel.value ?? catalog.value?.defaultModel ?? null,
   );
   const statusLabel = computed(() => {
     // 顶栏状态文案：空闲/生成/工具/等待
-    if (!stream.running) return "空闲";
-    if (stream.phase === "responding") return "正在生成回复";
-    if (stream.phase === "tool") return "正在执行工具";
-    return "正在等待模型";
+    if (!stream.running) return '空闲';
+    if (stream.phase === 'responding') return '正在生成回复';
+    if (stream.phase === 'tool') return '正在执行工具';
+    return '正在等待模型';
   });
 
   function assignStream(next: AgentStreamState): void {
@@ -92,7 +93,9 @@ export function useAgentSession(options: AgentSessionOptions) {
       const [nextDetail, state, planSnapshot] = await Promise.all([
         getSession(sessionId),
         getAgentState(sessionId),
-        getPlan(sessionId).then((response) => response.plan).catch(() => null),
+        getPlan(sessionId)
+          .then((response) => response.plan)
+          .catch(() => null),
       ]);
       if (sequence !== loadSequence || activeSessionId.value !== sessionId) return;
       detail.value = nextDetail;
@@ -105,7 +108,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       applyPendingToolCall(state.state?.pendingToolCall);
       if (state.running && state.state?.isStreaming) {
         stream.running = true;
-        stream.phase = "waiting";
+        stream.phase = 'waiting';
         connectEvents(sessionId);
       } else {
         assignStream({ ...INITIAL_STREAM_STATE, error: stream.error });
@@ -137,11 +140,11 @@ export function useAgentSession(options: AgentSessionOptions) {
     };
     source.onerror = () => {
       if (eventSource === source && stream.running) {
-        error.value = "事件流暂时中断，正在自动重连…";
+        error.value = '事件流暂时中断，正在自动重连…';
       }
     };
     source.onopen = () => {
-      if (eventSource === source && error.value?.includes("自动重连")) {
+      if (eventSource === source && error.value?.includes('自动重连')) {
         error.value = null;
       }
     };
@@ -153,11 +156,11 @@ export function useAgentSession(options: AgentSessionOptions) {
     stopPendingSync();
   }
 
-  function applyPendingToolCall(pending: AgentStreamState["pendingToolCall"] | undefined): void {
+  function applyPendingToolCall(pending: AgentStreamState['pendingToolCall'] | undefined): void {
     if (!pending) return;
     stream.pendingToolCall = pending;
     stream.running = true;
-    stream.phase = "tool";
+    stream.phase = 'tool';
   }
 
   function startPendingSync(sessionId: string): void {
@@ -184,37 +187,37 @@ export function useAgentSession(options: AgentSessionOptions) {
     assignStream(reduceAgentEvent(stream, event));
     if (event.contextUsage !== undefined) contextUsage.value = event.contextUsage ?? null;
 
-    if (event.type === "plan_updated" && event.plan) {
+    if (event.type === 'plan_updated' && event.plan) {
       plan.value = event.plan as PlanSnapshot;
-    } else if (event.type === "auto_retry_start") {
+    } else if (event.type === 'auto_retry_start') {
       retryInfo.value = {
         attempt: event.attempt ?? 0,
         maxAttempts: event.maxAttempts ?? 0,
         errorMessage: event.errorMessage ?? null,
       };
-    } else if (event.type === "auto_retry_end") {
+    } else if (event.type === 'auto_retry_end') {
       retryInfo.value = null;
-    } else if (event.type === "compaction_start") {
+    } else if (event.type === 'compaction_start') {
       compacting.value = true;
       compactionError.value = null;
-    } else if (event.type === "compaction_end") {
+    } else if (event.type === 'compaction_end') {
       compacting.value = false;
-      compactionError.value = typeof event.error === "string" ? event.error : null;
+      compactionError.value = typeof event.error === 'string' ? event.error : null;
       if (!event.aborted) void loadSession(sessionId);
     }
 
-    if (event.type === "message_end" && event.message) {
+    if (event.type === 'message_end' && event.message) {
       // 按 entryId 去重：已存在则原地替换，否则追加到列表末尾
       const existingIndex = event.entryId ? entryIds.value.indexOf(event.entryId) : -1;
       if (existingIndex >= 0) {
         messages.value[existingIndex] = event.message;
       } else {
         messages.value = [...messages.value, event.message];
-        entryIds.value = [...entryIds.value, event.entryId ?? ""];
+        entryIds.value = [...entryIds.value, event.entryId ?? ''];
       }
     }
 
-    if (event.type === "agent_end") {
+    if (event.type === 'agent_end') {
       // 一轮结束：重新加载会话以同步持久化内容
       stopPendingSync();
       void loadSession(sessionId);
@@ -228,12 +231,18 @@ export function useAgentSession(options: AgentSessionOptions) {
     if ((!text && images.length === 0) || stream.running) return;
     const imageBlocks = images.map(toImageBlock);
     error.value = null;
-    assignStream({ running: true, phase: "waiting", streamingMessage: null, error: null, pendingToolCall: null });
+    assignStream({
+      running: true,
+      phase: 'waiting',
+      streamingMessage: null,
+      error: null,
+      pendingToolCall: null,
+    });
     try {
       if (activeSessionId.value === null) {
         // 新会话：带模型/思考/工具配置创建 Agent 并连接事件流
         const cwd = options.newSessionCwd.value;
-        if (!cwd) throw new Error("请先选择工作区");
+        if (!cwd) throw new Error('请先选择工作区');
         const sessionId = await createAgent({
           cwd,
           message: text,
@@ -251,7 +260,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         // 历史会话：直接发送 prompt 命令
         const sessionId = activeSessionId.value;
         await sendAgentCommand(sessionId, {
-          type: "prompt",
+          type: 'prompt',
           message: text,
           images: imageBlocks,
         });
@@ -260,7 +269,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     } catch (cause) {
       assignStream({
         running: false,
-        phase: "idle",
+        phase: 'idle',
         streamingMessage: null,
         error: errorMessage(cause),
         pendingToolCall: null,
@@ -272,7 +281,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     // 中止当前运行
     if (!activeSessionId.value || !stream.running) return;
     try {
-      await sendAgentCommand(activeSessionId.value, { type: "abort" });
+      await sendAgentCommand(activeSessionId.value, { type: 'abort' });
     } catch (cause) {
       error.value = errorMessage(cause);
     }
@@ -284,7 +293,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (!activeSessionId.value || !pending) return;
     try {
       await sendAgentCommand(activeSessionId.value, {
-        type: "approve_tool",
+        type: 'approve_tool',
         toolCallId: pending.toolCallId,
         approved,
       });
@@ -297,21 +306,22 @@ export function useAgentSession(options: AgentSessionOptions) {
 
   async function steer(message: string, images: AttachedImage[] = []): Promise<void> {
     // 运行中插入指令（立即参与当前回合）
-    await liveTextCommand("steer", message, images);
+    await liveTextCommand('steer', message, images);
   }
 
   async function followUp(message: string, images: AttachedImage[] = []): Promise<void> {
     // 运行中排队消息（当前回合结束后处理）
-    await liveTextCommand("follow_up", message, images);
+    await liveTextCommand('follow_up', message, images);
   }
 
   async function liveTextCommand(
-    type: "steer" | "follow_up",
+    type: 'steer' | 'follow_up',
     message: string,
     images: AttachedImage[],
   ): Promise<void> {
     // steer/follow_up 共用的发送逻辑：要求会话正在运行
-    if (!activeSessionId.value || !stream.running || (!message.trim() && images.length === 0)) return;
+    if (!activeSessionId.value || !stream.running || (!message.trim() && images.length === 0))
+      return;
     try {
       await sendAgentCommand(activeSessionId.value, {
         type,
@@ -330,7 +340,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       return;
     }
     try {
-      await sendAgentCommand(activeSessionId.value, { type: "set_model", ...model });
+      await sendAgentCommand(activeSessionId.value, { type: 'set_model', ...model });
       if (detail.value) detail.value.context.model = model;
     } catch (cause) {
       error.value = errorMessage(cause);
@@ -345,7 +355,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
     try {
       await sendAgentCommand(activeSessionId.value, {
-        type: "set_thinking_level",
+        type: 'set_thinking_level',
         thinkingLevel: level,
       });
       thinkingLevel.value = level;
@@ -361,7 +371,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       return;
     }
     try {
-      await sendAgentCommand(activeSessionId.value, { type: "set_tools", toolNames });
+      await sendAgentCommand(activeSessionId.value, { type: 'set_tools', toolNames });
       activeTools.value = toolNames;
     } catch (cause) {
       error.value = errorMessage(cause);
@@ -374,7 +384,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     compacting.value = true;
     compactionError.value = null;
     try {
-      await sendAgentCommand(activeSessionId.value, { type: "compact" });
+      await sendAgentCommand(activeSessionId.value, { type: 'compact' });
       await loadSession(activeSessionId.value);
     } catch (cause) {
       compactionError.value = errorMessage(cause);
@@ -388,7 +398,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (!activeSessionId.value || stream.running) return;
     error.value = null;
     await sendAgentCommand(activeSessionId.value, {
-      type: "navigate_tree",
+      type: 'navigate_tree',
       targetId,
     });
     await loadSession(activeSessionId.value);
@@ -408,7 +418,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       plan.value = null;
       messages.value = [];
       entryIds.value = [];
-      thinkingLevel.value = "off";
+      thinkingLevel.value = 'off';
       activeTools.value = [...DEFAULT_TOOLS];
       retryInfo.value = null;
       compacting.value = false;
@@ -426,7 +436,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       plan.value = null;
       messages.value = [];
       entryIds.value = [];
-      thinkingLevel.value = "off";
+      thinkingLevel.value = 'off';
       activeTools.value = [...DEFAULT_TOOLS];
       assignStream({ ...INITIAL_STREAM_STATE });
       error.value = null;
@@ -443,7 +453,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       catalog.value = await getModels();
       newSessionModel.value ??= catalog.value.defaultModel;
       stopCatalogRecovery();
-      if (error.value?.includes("模型")) error.value = null;
+      if (error.value?.includes('模型')) error.value = null;
     } catch (cause) {
       error.value = errorMessage(cause);
       startCatalogRecovery();
@@ -502,9 +512,9 @@ export function useAgentSession(options: AgentSessionOptions) {
 }
 
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "发生未知错误";
+  return cause instanceof Error ? cause.message : '发生未知错误';
 }
 
-function toImageBlock(image: AttachedImage): { type: "image"; data: string; mimeType: string } {
-  return { type: "image", data: image.data, mimeType: image.mimeType };
+function toImageBlock(image: AttachedImage): { type: 'image'; data: string; mimeType: string } {
+  return { type: 'image', data: image.data, mimeType: image.mimeType };
 }

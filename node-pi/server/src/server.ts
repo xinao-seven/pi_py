@@ -10,8 +10,8 @@
  * 不依赖真实端口，也不需要真的启动服务器。
  */
 
-import { createApp } from "./app.js";
-import { readServerConfig } from "./config.js";
+import { createApp } from './app.js';
+import { readServerConfig } from './config.js';
 
 const config = readServerConfig();
 const app = createApp({ agentDir: config.agentDir, workspaceParent: config.workspaceParent });
@@ -24,6 +24,6 @@ try {
 } catch (error) {
   // Fastify 实例创建时 logger 被关闭（见 app.ts 的 Fastify({ logger: false })），
   // 但启动失败必须让开发启动器（npm run dev / 前端集成）能看到具体原因。
-  console.error("Node Pi backend failed to start:", error);
+  console.error('Node Pi backend failed to start:', error);
   process.exit(1);
 }

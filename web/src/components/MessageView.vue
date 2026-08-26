@@ -1,12 +1,12 @@
 <!-- 单条消息渲染：用户文本/图片；助手思考块、Markdown、工具调用与错误信息。 -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed } from 'vue';
 
-import { messageText } from "@/lib/agent-events";
-import MarkdownContent from "@/components/MarkdownContent.vue";
-import ThinkingBlock from "@/components/ThinkingBlock.vue";
-import ToolCallBlock from "@/components/ToolCallBlock.vue";
-import type { AgentMessage, ContentBlock } from "@/types";
+import { messageText } from '@/lib/agent-events';
+import MarkdownContent from '@/components/MarkdownContent.vue';
+import ThinkingBlock from '@/components/ThinkingBlock.vue';
+import ToolCallBlock from '@/components/ToolCallBlock.vue';
+import type { AgentMessage, ContentBlock } from '@/types';
 
 const props = defineProps<{
   message: AgentMessage;
@@ -15,7 +15,7 @@ const props = defineProps<{
 }>();
 
 const text = computed(() => messageText(props.message));
-const isUser = computed(() => props.message.role === "user");
+const isUser = computed(() => props.message.role === 'user');
 const blocks = computed(() =>
   // 消息内容块列表
   Array.isArray(props.message.content) ? props.message.content : [],
@@ -23,19 +23,19 @@ const blocks = computed(() =>
 const thinking = computed(() =>
   // 拼接全部思考块
   blocks.value
-    .filter((block) => block.type === "thinking")
-    .map((block) => block.thinking ?? block.text ?? "")
-    .join("\n"),
+    .filter((block) => block.type === 'thinking')
+    .map((block) => block.thinking ?? block.text ?? '')
+    .join('\n'),
 );
 const toolCalls = computed(() =>
   // 提取工具调用块
-  blocks.value.filter((block): block is ContentBlock => block.type === "toolCall"),
+  blocks.value.filter((block): block is ContentBlock => block.type === 'toolCall'),
 );
 const images = computed(() =>
   // 提取图片块（仅含 data 与 mimeType 的）
   blocks.value.filter(
     (block): block is ContentBlock & { data: string; mimeType: string } =>
-      block.type === "image" && !!block.data && !!block.mimeType,
+      block.type === 'image' && !!block.data && !!block.mimeType,
   ),
 );
 </script>

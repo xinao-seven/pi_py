@@ -1,8 +1,8 @@
 <!-- 分支导航条：选择会话树节点定位/Fork，或从其他会话合并有界摘要。 -->
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch } from 'vue';
 
-import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/types";
+import type { AgentMessage, SessionInfo, SessionTreeNode } from '@/types';
 
 interface TreeOption {
   id: string;
@@ -25,8 +25,8 @@ const emit = defineEmits<{
   merge: [sourceSessionId: string];
 }>();
 
-const selectedEntryId = ref(props.leafId ?? "");
-const mergeSourceId = ref("");
+const selectedEntryId = ref(props.leafId ?? '');
+const mergeSourceId = ref('');
 
 const options = computed(() => flattenTree(props.tree));
 // 拍平的树选项（带深度缩进）
@@ -40,26 +40,26 @@ const mergeSources = computed(() =>
 watch(
   () => props.leafId,
   (leafId) => {
-    selectedEntryId.value = leafId ?? "";
+    selectedEntryId.value = leafId ?? '';
   },
 );
 
 function navigate(): void {
   if (selectedEntryId.value && selectedEntryId.value !== props.leafId) {
-    emit("navigate", selectedEntryId.value);
+    emit('navigate', selectedEntryId.value);
   }
 }
 
 function fork(): void {
   if (selectedEntryId.value && selectedOption.value?.canFork) {
-    emit("fork", selectedEntryId.value);
+    emit('fork', selectedEntryId.value);
   }
 }
 
 function merge(): void {
   if (!mergeSourceId.value) return;
-  emit("merge", mergeSourceId.value);
-  mergeSourceId.value = "";
+  emit('merge', mergeSourceId.value);
+  mergeSourceId.value = '';
 }
 
 function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
@@ -70,7 +70,7 @@ function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
       id: node.entry.id,
       depth,
       label: node.label || describeEntry(node.entry.type, message),
-      canFork: node.entry.type === "message" && message?.role === "assistant",
+      canFork: node.entry.type === 'message' && message?.role === 'assistant',
     };
     return [option, ...flattenTree(node.children, depth + 1)];
   });
@@ -78,18 +78,19 @@ function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
 
 function describeEntry(type: string, message?: AgentMessage): string {
   // 节点标签：消息显示“你/pi: 摘要”，其他类型显示类型名
-  if (type !== "message" || !message) return type.replaceAll("_", " ");
-  const text = messageText(message).replace(/\s+/g, " ").trim();
-  const prefix = message.role === "user" ? "你" : message.role === "assistant" ? "pi" : message.role;
-  return `${prefix}: ${text || "（空消息）"}`.slice(0, 72);
+  if (type !== 'message' || !message) return type.replaceAll('_', ' ');
+  const text = messageText(message).replace(/\s+/g, ' ').trim();
+  const prefix =
+    message.role === 'user' ? '你' : message.role === 'assistant' ? 'pi' : message.role;
+  return `${prefix}: ${text || '（空消息）'}`.slice(0, 72);
 }
 
 function messageText(message: AgentMessage): string {
-  if (typeof message.content === "string") return message.content;
+  if (typeof message.content === 'string') return message.content;
   return (message.content ?? [])
-    .map((block) => block.text ?? block.thinking ?? "")
+    .map((block) => block.text ?? block.thinking ?? '')
     .filter(Boolean)
-    .join(" ");
+    .join(' ');
 }
 </script>
 
@@ -99,7 +100,7 @@ function messageText(message: AgentMessage): string {
       <span>分支</span>
       <select v-model="selectedEntryId" :disabled="busy || options.length === 0">
         <option v-for="option in options" :key="option.id" :value="option.id">
-          {{ `${"· ".repeat(option.depth)}${option.label}` }}
+          {{ `${'· '.repeat(option.depth)}${option.label}` }}
         </option>
       </select>
     </label>

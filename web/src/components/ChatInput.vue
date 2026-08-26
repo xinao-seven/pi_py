@@ -1,8 +1,8 @@
 <!-- 输入区：文本 + 最多 4 张图片（选择/粘贴/拖放），运行中可插入指令/排队跟进/停止。 -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 
-import type { AttachedImage } from "@/types";
+import type { AttachedImage } from '@/types';
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -20,7 +20,7 @@ const emit = defineEmits<{
   abort: [];
 }>();
 
-const message = ref("");
+const message = ref('');
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const images = ref<AttachedImage[]>([]);
@@ -31,27 +31,27 @@ const canSend = computed(
   () => (message.value.trim().length > 0 || images.value.length > 0) && !props.disabled,
 );
 
-function submit(mode: "send" | "steer" | "followUp" = props.running ? "followUp" : "send"): void {
+function submit(mode: 'send' | 'steer' | 'followUp' = props.running ? 'followUp' : 'send'): void {
   // 提交：运行中默认排队跟进；steer 立即插入；发送后清空输入与图片
   if (!canSend.value) return;
   const value = message.value.trim();
   const attached = images.value.length ? [...images.value] : undefined;
-  message.value = "";
+  message.value = '';
   clearImages();
   resize();
-  if (mode === "steer") {
-    if (attached) emit("steer", value, attached);
-    else emit("steer", value);
-  } else if (mode === "followUp") {
-    if (attached) emit("followUp", value, attached);
-    else emit("followUp", value);
-  } else if (attached) emit("send", value, attached);
-  else emit("send", value);
+  if (mode === 'steer') {
+    if (attached) emit('steer', value, attached);
+    else emit('steer', value);
+  } else if (mode === 'followUp') {
+    if (attached) emit('followUp', value, attached);
+    else emit('followUp', value);
+  } else if (attached) emit('send', value, attached);
+  else emit('send', value);
 }
 
 function onKeydown(event: KeyboardEvent): void {
   // Enter 发送、Shift+Enter 换行（组合输入法期间不触发）
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     submit();
   }
@@ -60,7 +60,7 @@ function onKeydown(event: KeyboardEvent): void {
 function resize(): void {
   void nextTick(() => {
     if (!textarea.value) return;
-    textarea.value.style.height = "0px";
+    textarea.value.style.height = '0px';
     textarea.value.style.height = `${Math.min(textarea.value.scrollHeight, 180)}px`;
   });
 }
@@ -69,8 +69,8 @@ async function addFiles(files: File[]): Promise<void> {
   // 添加图片：过滤类型、限制数量与单张 5 MB，转 base64 并生成预览
   imageError.value = null;
   const available = MAX_IMAGES - images.value.length;
-  const selected = files.filter((file) => file.type.startsWith("image/")).slice(0, available);
-  if (selected.length < files.filter((file) => file.type.startsWith("image/")).length) {
+  const selected = files.filter((file) => file.type.startsWith('image/')).slice(0, available);
+  if (selected.length < files.filter((file) => file.type.startsWith('image/')).length) {
     imageError.value = `最多添加 ${MAX_IMAGES} 张图片`;
   }
   for (const file of selected) {
@@ -80,7 +80,7 @@ async function addFiles(files: File[]): Promise<void> {
     }
     const dataUrl = await readDataUrl(file);
     images.value.push({
-      data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+      data: dataUrl.slice(dataUrl.indexOf(',') + 1),
       mimeType: file.type,
       previewUrl: URL.createObjectURL(file),
       name: file.name,
@@ -101,12 +101,12 @@ function clearImages(): void {
 function onFiles(event: Event): void {
   const input = event.target as HTMLInputElement;
   void addFiles(Array.from(input.files ?? []));
-  input.value = "";
+  input.value = '';
 }
 
 function onPaste(event: ClipboardEvent): void {
   const files = Array.from(event.clipboardData?.items ?? [])
-    .filter((item) => item.type.startsWith("image/"))
+    .filter((item) => item.type.startsWith('image/'))
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
   if (!files.length) return;
@@ -124,7 +124,7 @@ function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("图片读取失败"));
+    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'));
     reader.readAsDataURL(file);
   });
 }
@@ -146,7 +146,9 @@ onBeforeUnmount(clearImages);
     <div v-if="images.length" class="image-attachments" aria-label="待发送图片">
       <div v-for="(image, index) in images" :key="image.previewUrl" class="image-attachment">
         <img :src="image.previewUrl" :alt="image.name" />
-        <button type="button" :aria-label="`移除 ${image.name}`" @click="removeImage(index)">×</button>
+        <button type="button" :aria-label="`移除 ${image.name}`" @click="removeImage(index)">
+          ×
+        </button>
       </div>
     </div>
     <div v-if="imageError" class="image-error" role="alert">{{ imageError }}</div>
@@ -156,7 +158,13 @@ onBeforeUnmount(clearImages);
       class="composer-input"
       rows="1"
       :disabled="disabled"
-      :placeholder="running ? '输入修正指令或排队消息…' : planActive ? '描述需求，Agent 将先生成 Plan…' : '给 pi 发消息'"
+      :placeholder="
+        running
+          ? '输入修正指令或排队消息…'
+          : planActive
+            ? '描述需求，Agent 将先生成 Plan…'
+            : '给 pi 发消息'
+      "
       aria-label="消息"
       @input="resize"
       @keydown="onKeydown"
@@ -164,7 +172,14 @@ onBeforeUnmount(clearImages);
     />
     <div class="composer-actions">
       <div class="composer-tools">
-        <button type="button" class="attach-button" aria-label="添加图片" @click="fileInput?.click()">＋ 图片</button>
+        <button
+          type="button"
+          class="attach-button"
+          aria-label="添加图片"
+          @click="fileInput?.click()"
+        >
+          ＋ 图片
+        </button>
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles" />
         <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
       </div>
@@ -175,12 +190,7 @@ onBeforeUnmount(clearImages);
         <button class="queue-button" type="button" :disabled="!canSend" @click="submit('followUp')">
           排队跟进
         </button>
-        <button
-          class="abort-button"
-          type="button"
-          aria-label="停止生成"
-          @click="emit('abort')"
-        >
+        <button class="abort-button" type="button" aria-label="停止生成" @click="emit('abort')">
           <span aria-hidden="true">■</span>
           停止
         </button>

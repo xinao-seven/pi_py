@@ -15,29 +15,29 @@
  *   "应用关闭时"执行，适合做资源初始化和清理。
  */
 
-import { createEventBus } from "@earendil-works/pi-coding-agent";
-import cors from "@fastify/cors";
-import Fastify, { type FastifyInstance } from "fastify";
-import { join } from "node:path";
+import { createEventBus } from '@earendil-works/pi-coding-agent';
+import cors from '@fastify/cors';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { join } from 'node:path';
 
-import { ApiError, errorPayload } from "./errors.js";
-import { agentRoutes } from "./routes/agent.js";
-import { fileRoutes } from "./routes/files.js";
-import { modelRoutes } from "./routes/models.js";
-import { sessionRoutes } from "./routes/sessions.js";
-import { skillRoutes } from "./routes/skills.js";
-import { workspaceRoutes } from "./routes/workspaces.js";
-import { AgentRegistry, OriginalPiSessionFactory } from "./services/agent-registry.js";
-import { FileService } from "./services/file-service.js";
-import { ModelCatalogService } from "./services/model-catalog.js";
-import { ModelConfigService } from "./services/model-config-service.js";
-import { SkillService } from "./services/skill-service.js";
-import { ToolApprovalBroker } from "./services/tool-approval.js";
-import { PlanModeService } from "./services/plan-mode-service.js";
-import { WorkspaceService } from "./services/workspace-service.js";
-import { McpService } from "./services/mcp/mcp-service.js";
-import { McpConfig } from "./services/mcp/mcp-config.js";
-import { mcpRoutes } from "./routes/mcp.js";
+import { ApiError, errorPayload } from './errors.js';
+import { agentRoutes } from './routes/agent.js';
+import { fileRoutes } from './routes/files.js';
+import { modelRoutes } from './routes/models.js';
+import { sessionRoutes } from './routes/sessions.js';
+import { skillRoutes } from './routes/skills.js';
+import { workspaceRoutes } from './routes/workspaces.js';
+import { AgentRegistry, OriginalPiSessionFactory } from './services/agent-registry.js';
+import { FileService } from './services/file-service.js';
+import { ModelCatalogService } from './services/model-catalog.js';
+import { ModelConfigService } from './services/model-config-service.js';
+import { SkillService } from './services/skill-service.js';
+import { ToolApprovalBroker } from './services/tool-approval.js';
+import { PlanModeService } from './services/plan-mode-service.js';
+import { WorkspaceService } from './services/workspace-service.js';
+import { McpService } from './services/mcp/mcp-service.js';
+import { McpConfig } from './services/mcp/mcp-config.js';
+import { mcpRoutes } from './routes/mcp.js';
 
 /**
  * createApp 的可选依赖注入参数。
@@ -45,14 +45,14 @@ import { mcpRoutes } from "./routes/mcp.js";
  * Pi 配置文件或真实操作文件系统；不传则使用生产默认实现。
  */
 export interface AppOptions {
-  agentDir?: string;                 // Pi agent 数据目录（auth.json / models.json / sessions/）
-  registry?: AgentRegistry;          // 会话注册表（活跃 Pi 会话 + SSE 事件缓存）
-  workspaceParent?: string;          // 默认工作区父目录
-  workspaceService?: WorkspaceService;     // 工作区登记与持久化
+  agentDir?: string; // Pi agent 数据目录（auth.json / models.json / sessions/）
+  registry?: AgentRegistry; // 会话注册表（活跃 Pi 会话 + SSE 事件缓存）
+  workspaceParent?: string; // 默认工作区父目录
+  workspaceService?: WorkspaceService; // 工作区登记与持久化
   modelCatalogService?: ModelCatalogService; // 模型目录（从 Pi SDK 读取）
-  modelConfigService?: ModelConfigService;   // models.json 读写
+  modelConfigService?: ModelConfigService; // models.json 读写
   planService?: PlanModeService;
-  mcpService?: McpService;                // MCP server 配置与连接池（测试可注入 mock）
+  mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -74,7 +74,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const approvals = new ToolApprovalBroker(eventBus);
   const plans = options.planService ?? new PlanModeService(eventBus);
 
-  const agentDir = options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? "."}/.pi/agent`;
+  const agentDir =
+    options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? '.'}/.pi/agent`;
 
   // MCP 服务：进程级单例，持有 MCP server 配置读写 + 连接池（多个会话共享连接）。
   // 注入给 OriginalPiSessionFactory，其 loader() 会把它包装成内联扩展注入每个会话。
@@ -86,17 +87,22 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // - ModelCatalogService / ModelConfigService：模型目录与 models.json 配置；
   // - FileService：工作区文件浏览/预览（带路径越权保护）；
   // - SkillService：技能列表与开关。
-  const registry = options.registry ?? new AgentRegistry(
-    // OriginalPiSessionFactory 是 Pi SDK 的适配器，负责真正创建/打开 AgentSession；
-    // agentDir 默认指向用户主目录下的 ~/.pi/agent。
-    // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动；
-    // 传入 mcpService，MCP 内联扩展才能注入会话并共享连接。
-    new OriginalPiSessionFactory(agentDir, eventBus, mcpService),
-    approvals,
-    plans,
-  );
-  const workspaceService = options.workspaceService ?? new WorkspaceService(options.workspaceParent, join(agentDir, "node-server-workspaces.json"));
-  const modelCatalogService = options.modelCatalogService ?? new ModelCatalogService(agentDir, process.cwd());
+  const registry =
+    options.registry ??
+    new AgentRegistry(
+      // OriginalPiSessionFactory 是 Pi SDK 的适配器，负责真正创建/打开 AgentSession；
+      // agentDir 默认指向用户主目录下的 ~/.pi/agent。
+      // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动；
+      // 传入 mcpService，MCP 内联扩展才能注入会话并共享连接。
+      new OriginalPiSessionFactory(agentDir, eventBus, mcpService),
+      approvals,
+      plans,
+    );
+  const workspaceService =
+    options.workspaceService ??
+    new WorkspaceService(options.workspaceParent, join(agentDir, 'node-server-workspaces.json'));
+  const modelCatalogService =
+    options.modelCatalogService ?? new ModelCatalogService(agentDir, process.cwd());
   const modelConfigService = options.modelConfigService ?? new ModelConfigService(agentDir);
   const fileService = new FileService(workspaceService);
   const skillService = new SkillService(agentDir, workspaceService);
@@ -112,33 +118,37 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
         .send(errorPayload(error.code, error.message, error.details));
     }
     request.log.error(error);
-    return reply.code(500).send(errorPayload("internal_error", "Internal server error"));
+    return reply.code(500).send(errorPayload('internal_error', 'Internal server error'));
   });
 
   // onReady 钩子：在 app.listen() 真正开始监听之前执行。
   // 用途：从持久化文件恢复用户登记过的工作区目录（见 workspace-service.ts）。
-  app.addHook("onReady", async () => workspaceService.initialize());
+  app.addHook('onReady', async () => workspaceService.initialize());
 
   // 健康检查端点，供部署探活 / 前端判断后端是否就绪。
-  app.get("/api/health", async () => ({ status: "ok" }));
+  app.get('/api/health', async () => ({ status: 'ok' }));
 
   // 挂载各业务路由插件。
   // Fastify 的 prefix 选项会给插件内所有路由统一加上路径前缀，例如
   // agent.ts 里的 "/new" 实际对外是 POST /api/agent/new。
-  app.register(agentRoutes, { prefix: "/api/agent", registry });
-  app.register(sessionRoutes, { prefix: "/api/sessions", registry });
-  app.register(fileRoutes, { prefix: "/api/files", service: fileService });
+  app.register(agentRoutes, { prefix: '/api/agent', registry });
+  app.register(sessionRoutes, { prefix: '/api/sessions', registry });
+  app.register(fileRoutes, { prefix: '/api/files', service: fileService });
   // 下面三个插件未使用 prefix，路径在插件内部写全（如 /api/models、/api/home），
   // 两种风格都可以，保持与 FastAPI 后端相同的对外路径即可。
   app.register(workspaceRoutes, { service: workspaceService });
-  app.register(modelRoutes, { service: modelCatalogService, configService: modelConfigService, registry });
+  app.register(modelRoutes, {
+    service: modelCatalogService,
+    configService: modelConfigService,
+    registry,
+  });
   app.register(skillRoutes, { service: skillService, registry });
-  app.register(mcpRoutes, { prefix: "/api/mcp", service: mcpService, registry });
+  app.register(mcpRoutes, { prefix: '/api/mcp', service: mcpService, registry });
 
   // onClose 钩子：服务关闭（Ctrl+C、进程退出等）时释放所有活跃 Pi 会话，
   // 包括取消事件订阅、中止还在流式输出的会话、清理待审批的工具调用。
   // PlanModeService 也订阅了事件总线，关闭时一并释放，避免测试/热重启遗留监听器。
-  app.addHook("onClose", async () => {
+  app.addHook('onClose', async () => {
     await registry.close();
     plans.dispose();
     await mcpService.dispose();

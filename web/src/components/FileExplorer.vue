@@ -1,10 +1,10 @@
 <!-- 文件树（根目录层）：懒加载根目录列表，点击目录递归展开。 -->
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch } from 'vue';
 
-import FileTreeNode from "@/components/FileTreeNode.vue";
-import { listFiles } from "@/lib/api";
-import type { FileTreeItem } from "@/types";
+import FileTreeNode from '@/components/FileTreeNode.vue';
+import { listFiles } from '@/lib/api';
+import type { FileTreeItem } from '@/types';
 
 const props = defineProps<{ root: string }>();
 
@@ -26,7 +26,7 @@ async function loadRoot(): Promise<void> {
     entries.value = result.entries.map((entry) => ({ ...entry, path: entry.name }));
   } catch (cause) {
     entries.value = [];
-    error.value = cause instanceof Error ? cause.message : "工作区读取失败";
+    error.value = cause instanceof Error ? cause.message : '工作区读取失败';
   } finally {
     loading.value = false;
   }

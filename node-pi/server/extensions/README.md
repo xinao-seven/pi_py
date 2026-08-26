@@ -14,16 +14,16 @@
 一个 `.ts` 文件，default export 一个工厂函数：
 
 ```ts
-import { Type } from "@earendil-works/pi-ai";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from '@earendil-works/pi-ai';
+import { defineTool, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 const myTool = defineTool({
-  name: "hello",
-  label: "Hello",
-  description: "A simple greeting tool",
-  parameters: Type.Object({ name: Type.String({ description: "Name to greet" }) }),
+  name: 'hello',
+  label: 'Hello',
+  description: 'A simple greeting tool',
+  parameters: Type.Object({ name: Type.String({ description: 'Name to greet' }) }),
   async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-    return { content: [{ type: "text", text: `Hello, ${params.name}!` }], details: {} };
+    return { content: [{ type: 'text', text: `Hello, ${params.name}!` }], details: {} };
   },
 });
 
@@ -66,11 +66,11 @@ Web 后端默认走与原版 pi 相同的扩展自动发现（`~/.pi/agent/exten
 扩展与后端**不共享模块实例**（jiti 隔离），所有通信走 `pi.events`（事件总线）。
 通道名是两端之间的契约，改动时必须同步修改两边：
 
-| 通道 | 方向 | 载荷 |
-| --- | --- | --- |
-| `pi:tool_approval:pending` | 扩展 → 后端 | `{ sessionId, toolCallId, toolName, args, reason, rule }` |
-| `pi:tool_approval:decide` | 后端 → 扩展 | `{ sessionId, toolCallId, approved }`（前端审批、决策超时、会话取消都会发） |
-| `pi:tool_approval:aborted` | 扩展 → 后端 | `{ sessionId, toolCallId }`（工具调用被 AbortSignal 中止） |
+| 通道                       | 方向        | 载荷                                                                        |
+| -------------------------- | ----------- | --------------------------------------------------------------------------- |
+| `pi:tool_approval:pending` | 扩展 → 后端 | `{ sessionId, toolCallId, toolName, args, reason, rule }`                   |
+| `pi:tool_approval:decide`  | 后端 → 扩展 | `{ sessionId, toolCallId, approved }`（前端审批、决策超时、会话取消都会发） |
+| `pi:tool_approval:aborted` | 扩展 → 后端 | `{ sessionId, toolCallId }`（工具调用被 AbortSignal 中止）                  |
 
 通道名两端各有一份常量（`node-pi/server/extensions/tool-approval.ts` 与
 `node-pi/server/src/services/tool-approval.ts`），测试里有断言保证它们一致。
@@ -91,9 +91,9 @@ Agent 在调查和讨论后必须输出 `Plan:` 编号步骤。用户确认前�
 
 事件总线契约：
 
-| 通道 | 方向 | 载荷 |
-| --- | --- | --- |
-| `pi:plan-mode:set` | 服务端 → 扩展 | `{ sessionId, action: "enable" | "disable" | "refine" | "execute", message? }` |
+| 通道                 | 方向          | 载荷                                               |
+| -------------------- | ------------- | -------------------------------------------------- |
+| `pi:plan-mode:set`   | 服务端 → 扩展 | `{ sessionId, action: "enable"                     | "disable" | "refine" | "execute", message? }` |
 | `pi:plan-mode:state` | 扩展 → 服务端 | `{ sessionId, mode, todos, awaitingConfirmation }` |
 
 ## MCP 支持（内联扩展，不在本目录）
