@@ -58,7 +58,6 @@ export function useAgentSession(options: AgentSessionOptions) {
   let eventSource: EventSource | null = null;
   let loadSequence = 0;
   let catalogRetryTimer: ReturnType<typeof setInterval> | undefined;
-  let pendingSyncTimer: ReturnType<typeof setInterval> | undefined;
 
   const isNew = computed(
     // 是否处于“新会话”模式（无历史会话且已选工作区）
@@ -129,7 +128,6 @@ export function useAgentSession(options: AgentSessionOptions) {
     closeEvents();
     const source = new EventSource(agentEventsUrl(sessionId));
     eventSource = source;
-    startPendingSync(sessionId);
     source.onmessage = (messageEvent) => {
       if (eventSource !== source || activeSessionId.value !== sessionId) return;
       try {
@@ -153,7 +151,6 @@ export function useAgentSession(options: AgentSessionOptions) {
   function closeEvents(): void {
     eventSource?.close();
     eventSource = null;
-    stopPendingSync();
   }
 
   function applyPendingToolCall(pending: AgentStreamState['pendingToolCall'] | undefined): void {
@@ -161,25 +158,6 @@ export function useAgentSession(options: AgentSessionOptions) {
     stream.pendingToolCall = pending;
     stream.running = true;
     stream.phase = 'tool';
-  }
-
-  function startPendingSync(sessionId: string): void {
-    if (pendingSyncTimer !== undefined) return;
-    pendingSyncTimer = setInterval(() => {
-      if (!stream.running) {
-        stopPendingSync();
-        return;
-      }
-      void getAgentState(sessionId)
-        .then((response) => applyPendingToolCall(response.state?.pendingToolCall))
-        .catch(() => undefined);
-    }, 1_000);
-  }
-
-  function stopPendingSync(): void {
-    if (pendingSyncTimer === undefined) return;
-    clearInterval(pendingSyncTimer);
-    pendingSyncTimer = undefined;
   }
 
   function handleAgentEvent(event: AgentEvent, sessionId: string): void {
@@ -219,7 +197,6 @@ export function useAgentSession(options: AgentSessionOptions) {
 
     if (event.type === 'agent_end') {
       // 一轮结束：重新加载会话以同步持久化内容
-      stopPendingSync();
       void loadSession(sessionId);
       options.onAgentEnd?.();
     }
