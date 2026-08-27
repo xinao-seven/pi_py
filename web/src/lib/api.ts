@@ -13,8 +13,11 @@ import type {
   MergeSessionResponse,
   ModelCatalog,
   ModelsConfigValue,
+  PresetCompaction,
   SessionDetail,
   SessionInfo,
+  SessionPreset,
+  SessionPresetInput,
   SkillsResponse,
   PlanSnapshot,
 } from '@/types';
@@ -170,6 +173,8 @@ export async function createAgent(input: {
   thinkingLevel?: string;
   toolNames?: string[];
   images?: Array<{ type: 'image'; data: string; mimeType: string }>;
+  systemPrompt?: string;
+  compaction?: PresetCompaction;
 }): Promise<string> {
   // 创建新 Agent 会话并发送首条消息，返回 sessionId
   const result = await request<{ success: true; sessionId: string }>('/api/agent/new', {
@@ -207,6 +212,32 @@ export async function saveModelsConfig(value: ModelsConfigValue): Promise<void> 
     method: 'PUT',
     body: JSON.stringify(value),
   });
+}
+
+export async function getPresets(): Promise<SessionPreset[]> {
+  // 全部会话预设（内置 coding-agent + 自定义）
+  const result = await request<{ presets: SessionPreset[] }>('/api/presets');
+  return result.presets;
+}
+
+export async function createPreset(input: SessionPresetInput): Promise<SessionPreset> {
+  const result = await request<{ success: true; preset: SessionPreset }>('/api/presets', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return result.preset;
+}
+
+export async function updatePreset(id: string, input: SessionPresetInput): Promise<SessionPreset> {
+  const result = await request<{ success: true; preset: SessionPreset }>(
+    `/api/presets/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+  return result.preset;
+}
+
+export async function deletePreset(id: string): Promise<void> {
+  await request(`/api/presets/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export function getSkills(cwd: string): Promise<SkillsResponse> {

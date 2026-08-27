@@ -226,7 +226,9 @@ function relativeDate(value: string): string {
             </span>
             <span class="session-meta">
               <span class="session-cwd">{{ item.session.cwd }}</span>
-              <time :datetime="item.session.modified">{{ relativeDate(item.session.modified) }}</time>
+              <time :datetime="item.session.modified">{{
+                relativeDate(item.session.modified)
+              }}</time>
             </span>
           </button>
         </div>

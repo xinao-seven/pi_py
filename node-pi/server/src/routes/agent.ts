@@ -18,6 +18,7 @@
  *   http.ServerResponse）写数据——SSE 长连接就是靠它实现的。
  */
 
+import type { CompactionSettings } from '@earendil-works/pi-coding-agent';
 import type { FastifyPluginAsync } from 'fastify';
 import { stat } from 'node:fs/promises';
 
@@ -41,6 +42,8 @@ interface NewAgentBody {
   modelId?: unknown;
   thinkingLevel?: unknown;
   toolNames?: unknown;
+  systemPrompt?: unknown;
+  compaction?: unknown;
   images?: unknown;
 }
 
@@ -72,6 +75,37 @@ function optionalStringArray(value: unknown): string[] | undefined {
     throw new ApiError(422, 'validation_error', 'toolNames must be an array of strings');
   }
   return value;
+}
+
+/** 可选压缩策略：enabled 布尔，keepRecentTokens/reserveTokens 正整数。 */
+function optionalCompaction(value: unknown): CompactionSettings | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(422, 'validation_error', 'compaction must be an object');
+  }
+  const { enabled, keepRecentTokens, reserveTokens } = value as Record<string, unknown>;
+  if (typeof enabled !== 'boolean') {
+    throw new ApiError(422, 'validation_error', 'compaction.enabled must be a boolean');
+  }
+  if (
+    typeof keepRecentTokens !== 'number' ||
+    !Number.isInteger(keepRecentTokens) ||
+    keepRecentTokens <= 0
+  ) {
+    throw new ApiError(
+      422,
+      'validation_error',
+      'compaction.keepRecentTokens must be a positive integer',
+    );
+  }
+  if (typeof reserveTokens !== 'number' || !Number.isInteger(reserveTokens) || reserveTokens <= 0) {
+    throw new ApiError(
+      422,
+      'validation_error',
+      'compaction.reserveTokens must be a positive integer',
+    );
+  }
+  return { enabled, keepRecentTokens, reserveTokens };
 }
 
 /**
@@ -160,6 +194,8 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       modelId: optionalString(body.modelId, 'modelId'),
       thinkingLevel: optionalString(body.thinkingLevel, 'thinkingLevel'),
       toolNames: optionalStringArray(body.toolNames),
+      systemPrompt: optionalString(body.systemPrompt, 'systemPrompt'),
+      compaction: optionalCompaction(body.compaction),
     });
     await options.registry.command(entry.session.sessionId, {
       type: 'prompt',

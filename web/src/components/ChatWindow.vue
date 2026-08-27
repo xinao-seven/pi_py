@@ -47,6 +47,9 @@ const {
   catalog,
   thinkingLevel,
   activeTools,
+  presets,
+  selectedPreset,
+  applyPreset,
   compacting,
   compactionError,
   retryInfo,
@@ -375,6 +378,9 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           :model="displayModel"
           :thinking-level="thinkingLevel"
           :active-tools="activeTools"
+          :presets="presets"
+          :selected-preset="selectedPreset"
+          :is-new="isNew"
           :compacting="compacting"
           :running="stream.running"
           :retry-info="retryInfo"
@@ -384,6 +390,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           @model-change="changeModel"
           @thinking-change="changeThinkingLevel"
           @tools-change="changeTools"
+          @preset-change="applyPreset"
           @compact="compact"
           @toggle-plan="togglePlan"
         />

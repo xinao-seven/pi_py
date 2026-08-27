@@ -9,6 +9,7 @@ import {
   getAgentState,
   getModels,
   getPlan,
+  getPresets,
   getSession,
   sendAgentCommand,
 } from '@/lib/api';
@@ -22,12 +23,15 @@ import type {
   ModelCatalog,
   ModelRef,
   PlanSnapshot,
+  PresetCompaction,
   RetryInfo,
   SessionDetail,
+  SessionPreset,
 } from '@/types';
 
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
 // 默认激活的工具集合（与后端默认一致）
+const BUILTIN_PRESET_ID = 'coding-agent';
 
 interface AgentSessionOptions {
   sessionId: Ref<string | null>;
@@ -52,6 +56,13 @@ export function useAgentSession(options: AgentSessionOptions) {
   const newSessionModel = ref<ModelRef | null>(null);
   const thinkingLevel = ref('off');
   const activeTools = ref<string[]>([...DEFAULT_TOOLS]);
+  const presets = ref<SessionPreset[]>([]);
+  const selectedPreset = ref(BUILTIN_PRESET_ID);
+  const presetSystemPrompt = ref('');
+  const presetCompaction = ref<PresetCompaction | null>(null);
+  // 思考等级是否被显式选择过（用户改下拉或预设指定）：为 true 才随创建请求发送，
+  // 避免默认的 'off' 占位值把新会话的思考意外关掉（后端现在会把 'off' 透传给 SDK）。
+  const thinkingExplicit = ref(false);
   const compacting = ref(false);
   const compactionError = ref<string | null>(null);
   const retryInfo = ref<RetryInfo | null>(null);
@@ -225,9 +236,12 @@ export function useAgentSession(options: AgentSessionOptions) {
           message: text,
           provider: displayModel.value?.provider,
           modelId: displayModel.value?.modelId,
-          thinkingLevel: thinkingLevel.value,
+          // 默认路径（未显式选择思考）不发送 thinkingLevel，保持与改动前一致。
+          ...(thinkingExplicit.value ? { thinkingLevel: thinkingLevel.value } : {}),
           toolNames: activeTools.value,
           images: imageBlocks,
+          ...(presetSystemPrompt.value ? { systemPrompt: presetSystemPrompt.value } : {}),
+          ...(presetCompaction.value ? { compaction: presetCompaction.value } : {}),
         });
         activeSessionId.value = sessionId;
         options.onSessionCreated?.(sessionId);
@@ -324,10 +338,32 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
+  function applyPreset(preset: SessionPreset): void {
+    // 应用预设：预填模型/推理/工具（仍可在控件里修改），并记住系统提示词与压缩策略
+    selectedPreset.value = preset.id;
+    presetSystemPrompt.value = preset.systemPrompt;
+    presetCompaction.value = { ...preset.compaction };
+    activeTools.value = [...preset.toolNames];
+    // 预设指定了模型就用它，否则退回目录默认模型。
+    newSessionModel.value =
+      preset.provider && preset.modelId
+        ? { provider: preset.provider, modelId: preset.modelId }
+        : (catalog.value?.defaultModel ?? null);
+    if (preset.thinkingLevel) {
+      thinkingLevel.value = preset.thinkingLevel;
+      thinkingExplicit.value = true;
+    } else {
+      // 预设未指定思考等级：回到初始占位值（不随请求发送，走 SDK 默认思考）。
+      thinkingLevel.value = 'off';
+      thinkingExplicit.value = false;
+    }
+  }
+
   async function changeThinkingLevel(level: string): Promise<void> {
     // 切换思考档位
     if (!activeSessionId.value) {
       thinkingLevel.value = level;
+      thinkingExplicit.value = true; // 用户显式选择，创建时发送
       return;
     }
     try {
@@ -397,6 +433,10 @@ export function useAgentSession(options: AgentSessionOptions) {
       entryIds.value = [];
       thinkingLevel.value = 'off';
       activeTools.value = [...DEFAULT_TOOLS];
+      selectedPreset.value = BUILTIN_PRESET_ID;
+      presetSystemPrompt.value = '';
+      presetCompaction.value = null;
+      thinkingExplicit.value = false;
       retryInfo.value = null;
       compacting.value = false;
       compactionError.value = null;
@@ -415,14 +455,27 @@ export function useAgentSession(options: AgentSessionOptions) {
       entryIds.value = [];
       thinkingLevel.value = 'off';
       activeTools.value = [...DEFAULT_TOOLS];
+      selectedPreset.value = BUILTIN_PRESET_ID;
+      presetSystemPrompt.value = '';
+      presetCompaction.value = null;
+      thinkingExplicit.value = false;
       assignStream({ ...INITIAL_STREAM_STATE });
       error.value = null;
     }
   });
 
   onMounted(async () => {
-    await loadCatalog();
+    await Promise.all([loadCatalog(), loadPresets()]);
   });
+
+  async function loadPresets(): Promise<void> {
+    // 预设加载失败不阻塞新会话；回退到只有内置默认。
+    try {
+      presets.value = await getPresets();
+    } catch {
+      presets.value = [];
+    }
+  }
 
   async function loadCatalog(): Promise<void> {
     // 加载模型目录，为新会话初始化默认模型
@@ -468,6 +521,9 @@ export function useAgentSession(options: AgentSessionOptions) {
     catalog,
     thinkingLevel,
     activeTools,
+    presets,
+    selectedPreset,
+    applyPreset,
     compacting,
     compactionError,
     retryInfo,

@@ -22,8 +22,10 @@ import {
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
+  SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type CompactionSettings,
   type EventBus,
   type SessionInfo,
 } from '@earendil-works/pi-coding-agent';
@@ -98,6 +100,8 @@ export interface CreateSessionInput {
   modelId?: string; // 模型 id（如 claude-sonnet-4-5）
   thinkingLevel?: string; // 思考强度（off/minimal/low/medium/high/xhigh/max）
   toolNames?: string[]; // 启用的工具白名单
+  systemPrompt?: string; // 预设系统提示词；空串/未提供 = SDK 默认
+  compaction?: CompactionSettings; // 预设上下文压缩策略；未提供 = SDK 默认
 }
 
 /** 磁盘上持久化会话的元信息（从 SessionManager.listAll 的 SessionInfo 转换而来）。 */
@@ -248,17 +252,27 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
         `Unknown Pi model: ${input.provider}/${input.modelId}`,
       );
     }
-    // 调用 Pi SDK 创建会话；注意 "off" 表示不启用思考（与 Pi 语义一致）。
+    // 预设压缩策略：每个会话独立的 SettingsManager，仅在内存里 applyOverrides
+    // （不标记 modified、不写 settings.json），默认模型/思考等级仍从设置文件解析。
+    const settingsManager = input.compaction
+      ? (() => {
+          const manager = SettingsManager.create(input.cwd, this.agentDir);
+          manager.applyOverrides({ compaction: input.compaction });
+          return manager;
+        })()
+      : undefined;
+    // 调用 Pi SDK 创建会话；"off" 透传给 SDK（clampThinkingLevel 对任何模型都接受）。
     const session = await createAgentSession({
       cwd: input.cwd,
       agentDir: this.agentDir,
       modelRuntime: runtime,
-      resourceLoader: await this.loader(input.cwd),
+      resourceLoader: await this.loader(input.cwd, input.systemPrompt),
       ...(model === undefined ? {} : { model }),
-      ...(input.thinkingLevel && input.thinkingLevel !== 'off'
+      ...(input.thinkingLevel
         ? { thinkingLevel: input.thinkingLevel as AgentSession['thinkingLevel'] }
         : {}),
       ...(input.toolNames === undefined ? {} : { tools: input.toolNames }),
+      ...(settingsManager === undefined ? {} : { settingsManager }),
     });
     // createAgentSession 返回 { session, agent, ... }，这里只把 session 暴露出去。
     return session.session as unknown as PiSession;
@@ -327,13 +341,16 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
   }
 
   /** 创建资源加载器（工具/技能发现），并注册"工具审批"扩展。 */
-  private async loader(cwd: string): Promise<DefaultResourceLoader> {
+  private async loader(cwd: string, systemPrompt?: string): Promise<DefaultResourceLoader> {
     // 本服务自身的扩展目录：node-pi/server/extensions/。dev（src/services）与 prod
     // （dist/services）都上溯 2 级落在 server/ 下，扫描其中的 .ts/.js 扩展模块。
     const extensionDir = serverExtensionDirectory();
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: this.agentDir,
+      // 预设系统提示词：非空才传（空串传进去会让 loader 跳过 SYSTEM.md/AGENTS.md 发现，
+      // 使"默认预设"破坏用户已有的文件级提示词）。空串/未提供 → 走 SDK 默认发现。
+      ...(systemPrompt ? { systemPrompt } : {}),
       // 与 TUI 平级：不设 noExtensions，走 SDK 的自动发现（与 TUI 相同的代码路径），
       // 加载用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展，
       // 使 Web 能实现 TUI 能做的一切。工具审批扩展（tool-approval.ts）通过下面的
@@ -800,10 +817,7 @@ export class AgentRegistry {
    * 与模型响应（message_end：provider/model、stopReason、token 用量与耗时）。
    * 响应报错时升级为 error 级别。只记元数据，不落正文，避免日志体积与敏感内容问题。
    */
-  private logSessionEvent(
-    entry: RegistryEntry,
-    event: StreamEvent['payload'],
-  ): void {
+  private logSessionEvent(entry: RegistryEntry, event: StreamEvent['payload']): void {
     const logger = this.logger;
     if (!logger) return;
     const sessionId = entry.session.sessionId;
@@ -848,7 +862,8 @@ export class AgentRegistry {
         };
         delete entry.turnStartedAt;
         if (isError) logger.error(logPayload, 'model response failed');
-        else if (message.stopReason === 'aborted') logger.warn(logPayload, 'model response aborted');
+        else if (message.stopReason === 'aborted')
+          logger.warn(logPayload, 'model response aborted');
         else logger.info(logPayload, 'model response');
         break;
       }

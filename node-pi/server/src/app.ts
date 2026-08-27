@@ -28,6 +28,7 @@ import { authRoutes } from './routes/auth.js';
 import { agentRoutes } from './routes/agent.js';
 import { fileRoutes } from './routes/files.js';
 import { modelRoutes } from './routes/models.js';
+import { presetRoutes } from './routes/presets.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { skillRoutes } from './routes/skills.js';
 import { workspaceRoutes } from './routes/workspaces.js';
@@ -35,6 +36,7 @@ import { AgentRegistry, OriginalPiSessionFactory } from './services/agent-regist
 import { FileService } from './services/file-service.js';
 import { ModelCatalogService } from './services/model-catalog.js';
 import { ModelConfigService } from './services/model-config-service.js';
+import { PresetService } from './services/preset-service.js';
 import { SkillService } from './services/skill-service.js';
 import { ToolApprovalBroker } from './services/tool-approval.js';
 import { PlanModeService } from './services/plan-mode-service.js';
@@ -56,6 +58,7 @@ export interface AppOptions {
   workspaceService?: WorkspaceService; // 工作区登记与持久化
   modelCatalogService?: ModelCatalogService; // 模型目录（从 Pi SDK 读取）
   modelConfigService?: ModelConfigService; // models.json 读写
+  presetService?: PresetService; // 会话预设读写
   planService?: PlanModeService;
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
@@ -151,6 +154,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const modelCatalogService =
     options.modelCatalogService ?? new ModelCatalogService(agentDir, process.cwd());
   const modelConfigService = options.modelConfigService ?? new ModelConfigService(agentDir);
+  const presetService = options.presetService ?? new PresetService(agentDir);
   const fileService = new FileService(workspaceService);
   const skillService = new SkillService(agentDir, workspaceService);
 
@@ -191,6 +195,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
   app.register(skillRoutes, { service: skillService, registry });
   app.register(mcpRoutes, { prefix: '/api/mcp', service: mcpService, registry });
+  app.register(presetRoutes, { prefix: '/api/presets', service: presetService });
 
   // 前端静态托管：web 构建产物（默认 ../../web/dist）。显式 /api 路由优先于
   // @fastify/static 的 wildcard 路由，故不影响 API；找不到文件会触发下面的

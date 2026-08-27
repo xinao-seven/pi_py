@@ -4,10 +4,11 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import McpConfig from '@/components/McpConfig.vue';
 import ModelsConfig from '@/components/ModelsConfig.vue';
+import PresetConfig from '@/components/PresetConfig.vue';
 import SkillsConfig from '@/components/SkillsConfig.vue';
 import { useAuthStore } from '@/stores/auth';
 
-type SettingsSection = 'general' | 'models' | 'skills' | 'mcp';
+type SettingsSection = 'general' | 'models' | 'presets' | 'skills' | 'mcp';
 
 const auth = useAuthStore();
 
@@ -68,6 +69,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
             @click="selectSection('models')"
           >
             <span aria-hidden="true">◇</span>模型
+          </button>
+          <button
+            type="button"
+            :class="{ 'settings-nav-button--active': activeSection === 'presets' }"
+            @click="selectSection('presets')"
+          >
+            <span aria-hidden="true">☰</span>预设
           </button>
           <button
             type="button"
@@ -138,6 +146,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
             embedded
             @close="activeSection = 'general'"
             @saved="emit('modelsSaved')"
+          />
+          <PresetConfig
+            v-else-if="activeSection === 'presets'"
+            embedded
+            @close="activeSection = 'general'"
           />
           <SkillsConfig
             v-else-if="activeSection === 'skills' && cwd"

@@ -238,6 +238,30 @@ export interface McpServerInput {
   server: McpServerConfigInput;
 }
 
+export interface PresetCompaction {
+  // 上下文压缩策略：enabled 开关 + 保留 token 数值
+  enabled: boolean;
+  keepRecentTokens: number;
+  reserveTokens: number;
+}
+
+export interface SessionPresetInput {
+  // 预设输入（创建/更新用）：空串/缺省 = 用 SDK/设置默认值
+  name: string;
+  systemPrompt: string; // '' = SDK 默认系统提示词
+  toolNames: string[]; // [] = 无工具
+  compaction: PresetCompaction;
+  provider?: string; // 空串/缺省 = 用目录默认模型
+  modelId?: string;
+  thinkingLevel?: string; // 空串/缺省 = 用设置默认思考等级
+}
+
+export interface SessionPreset extends SessionPresetInput {
+  // 预设视图：含 id 与内置标志
+  id: string;
+  builtin: boolean;
+}
+
 export interface AttachedImage {
   // 待发送的图片：base64 数据 + MIME + 本地预览 URL
   data: string;

@@ -12,6 +12,7 @@ import {
   type PiSessionFactory,
 } from '../src/services/agent-registry.js';
 import { PLAN_CHANNEL_STATE, PlanModeService } from '../src/services/plan-mode-service.js';
+import { PresetService } from '../src/services/preset-service.js';
 
 class FakePiSession implements PiSession {
   readonly sessionId = 'node-test-session';
@@ -116,7 +117,9 @@ describe('Fastify application', () => {
 
   it('logs incoming requests when a logger is enabled', async () => {
     const lines: string[] = [];
-    const app = createApp({ logger: { level: 'info', stream: { write: (msg: string) => lines.push(msg) } } });
+    const app = createApp({
+      logger: { level: 'info', stream: { write: (msg: string) => lines.push(msg) } },
+    });
     apps.push(app);
 
     await app.inject({ method: 'GET', url: '/api/health' });
@@ -186,5 +189,91 @@ describe('Fastify application', () => {
     expect(response.json()).toMatchObject({
       plan: { mode: 'planning', awaitingConfirmation: true, todos: [{ text: 'Inspect the API' }] },
     });
+  });
+
+  it('serves preset CRUD and protects the built-in preset', async () => {
+    const presetDir = await mkdtemp(join(tmpdir(), 'pi-node-presets-'));
+    try {
+      const app = createApp({ presetService: new PresetService(presetDir) });
+      apps.push(app);
+
+      const list = await app.inject({ method: 'GET', url: '/api/presets' });
+      expect(list.statusCode).toBe(200);
+      expect(list.json().presets[0]).toMatchObject({ id: 'coding-agent', builtin: true });
+
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/presets',
+        payload: {
+          name: '测试',
+          systemPrompt: 'You are helpful.',
+          toolNames: ['read'],
+          compaction: { enabled: true, keepRecentTokens: 8000, reserveTokens: 16384 },
+          provider: '',
+          modelId: '',
+          thinkingLevel: '',
+        },
+      });
+      expect(created.statusCode).toBe(200);
+      const id = created.json().preset.id as string;
+
+      const patched = await app.inject({
+        method: 'PATCH',
+        url: `/api/presets/${id}`,
+        payload: {
+          name: '测试改',
+          systemPrompt: '',
+          toolNames: [],
+          compaction: { enabled: false, keepRecentTokens: 8000, reserveTokens: 16384 },
+          provider: '',
+          modelId: '',
+          thinkingLevel: 'off',
+        },
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json().preset).toMatchObject({ id, name: '测试改', thinkingLevel: 'off' });
+
+      const builtinDelete = await app.inject({
+        method: 'DELETE',
+        url: '/api/presets/coding-agent',
+      });
+      expect(builtinDelete.statusCode).toBe(400);
+      expect(builtinDelete.json()).toMatchObject({ error: { code: 'builtin_preset' } });
+
+      const deleted = await app.inject({ method: 'DELETE', url: `/api/presets/${id}` });
+      expect(deleted.statusCode).toBe(200);
+    } finally {
+      await rm(presetDir, { recursive: true, force: true });
+    }
+  });
+
+  it('validates systemPrompt and compaction on agent creation', async () => {
+    const app = createApp({ registry: new AgentRegistry(new FakePiSessionFactory()) });
+    apps.push(app);
+
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: {
+        cwd: process.cwd(),
+        message: 'hello',
+        compaction: { enabled: 'yes', keepRecentTokens: 8000, reserveTokens: 16384 },
+      },
+    });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json()).toMatchObject({ error: { code: 'validation_error' } });
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: {
+        cwd: process.cwd(),
+        message: 'hello',
+        systemPrompt: 'custom prompt',
+        compaction: { enabled: false, keepRecentTokens: 8000, reserveTokens: 16384 },
+      },
+    });
+    expect(ok.statusCode).toBe(202);
+    expect(ok.json()).toEqual({ success: true, sessionId: 'node-test-session' });
   });
 });

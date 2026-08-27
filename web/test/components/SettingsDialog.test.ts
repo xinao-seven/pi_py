@@ -15,8 +15,9 @@ describe('SettingsDialog', () => {
     });
 
     const navButtons = wrapper.findAll('.settings-nav button');
-    expect(navButtons[2].attributes('disabled')).toBeDefined();
+    // 索引：常规 0 / 模型 1 / 预设 2 / Skills 3 / MCP 4（预设无需 cwd，始终可用）。
     expect(navButtons[3].attributes('disabled')).toBeDefined();
+    expect(navButtons[4].attributes('disabled')).toBeDefined();
 
     const generalButtons = wrapper.findAll('.settings-row > button');
     await generalButtons[0].trigger('click');

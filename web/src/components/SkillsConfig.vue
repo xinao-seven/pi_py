@@ -111,12 +111,7 @@ function messageOf(cause: unknown): string {
       <div v-if="error" class="config-error" role="alert">{{ error }}</div>
       <footer class="config-footer">
         <button type="button" @click="load">刷新</button>
-        <button
-          v-if="!props.embedded"
-          type="button"
-          class="primary-action"
-          @click="emit('close')"
-        >
+        <button v-if="!props.embedded" type="button" class="primary-action" @click="emit('close')">
           完成
         </button>
       </footer>

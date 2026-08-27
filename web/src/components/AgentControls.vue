@@ -2,13 +2,16 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import type { ContextUsage, ModelCatalog, ModelRef, RetryInfo } from '@/types';
+import type { ContextUsage, ModelCatalog, ModelRef, RetryInfo, SessionPreset } from '@/types';
 
 const props = defineProps<{
   catalog: ModelCatalog | null;
   model: ModelRef | null;
   thinkingLevel: string;
   activeTools: string[];
+  presets: SessionPreset[];
+  selectedPreset: string;
+  isNew: boolean;
   compacting: boolean;
   running: boolean;
   retryInfo: RetryInfo | null;
@@ -21,6 +24,7 @@ const emit = defineEmits<{
   modelChange: [model: ModelRef];
   thinkingChange: [level: string];
   toolsChange: [toolNames: string[]];
+  presetChange: [preset: SessionPreset];
   compact: [];
   togglePlan: [];
 }>();
@@ -64,10 +68,26 @@ function changeTools(event: Event): void {
     emit('toolsChange', ['read', 'bash', 'edit', 'write']);
   }
 }
+
+function changePreset(event: Event): void {
+  // 切换会话预设：交由父级 applyPreset 预填模型/推理/工具并记住系统提示词与压缩策略
+  const id = (event.target as HTMLSelectElement).value;
+  const preset = props.presets.find((item) => item.id === id);
+  if (preset) emit('presetChange', preset);
+}
 </script>
 
 <template>
   <div class="agent-controls">
+    <label v-if="isNew" class="control-field">
+      <span>预设</span>
+      <select :value="selectedPreset" :disabled="running" @change="changePreset">
+        <option v-for="preset in presets" :key="preset.id" :value="preset.id">
+          {{ preset.name }}{{ preset.builtin ? '（内置）' : '' }}
+        </option>
+      </select>
+    </label>
+
     <label class="control-field">
       <span>模型</span>
       <select :value="modelKey" :disabled="running" @change="changeModel">
