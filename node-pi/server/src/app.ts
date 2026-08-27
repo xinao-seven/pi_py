@@ -122,7 +122,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // MCP 服务：进程级单例，持有 MCP server 配置读写 + 连接池（多个会话共享连接）。
   // 注入给 OriginalPiSessionFactory，其 loader() 会把它包装成内联扩展注入每个会话。
-  const mcpService = options.mcpService ?? new McpService(new McpConfig(agentDir));
+  // app.log（logger:false 时为静默实现）同时作为 MCP 连接/工具调用的日志器。
+  const mcpService =
+    options.mcpService ?? new McpService(new McpConfig(agentDir), undefined, app.log);
 
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
@@ -137,9 +139,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       // agentDir 默认指向用户主目录下的 ~/.pi/agent。
       // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动；
       // 传入 mcpService，MCP 内联扩展才能注入会话并共享连接。
+      // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
       new OriginalPiSessionFactory(agentDir, eventBus, mcpService),
       approvals,
       plans,
+      app.log,
     );
   const workspaceService =
     options.workspaceService ??

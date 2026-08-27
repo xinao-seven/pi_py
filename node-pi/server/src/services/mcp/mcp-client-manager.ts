@@ -15,6 +15,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 
 import { ApiError } from '../../errors.js';
+import type { ServiceLogger } from '../service-logger.js';
 import type { McpServerConfig } from './mcp-config.js';
 import { fingerprintOf, interpolateEnvMap } from './mcp-tools.js';
 
@@ -48,7 +49,10 @@ const CONNECT_TIMEOUT_MS = 15_000;
 export class McpClientManager {
   private readonly servers = new Map<string, ManagedServer>();
 
-  constructor(private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS) {}
+  constructor(
+    private readonly logger?: ServiceLogger,
+    private readonly connectTimeoutMs = CONNECT_TIMEOUT_MS,
+  ) {}
 
   /**
    * 把某 cwd 的连接对账到期望配置。
@@ -90,12 +94,31 @@ export class McpClientManager {
     if (!server?.client) {
       throw new ApiError(503, 'mcp_not_connected', `MCP server "${name}" is not connected`);
     }
-    // callTool 的返回类型是内联联合（含 toolResult 变体），我们只需要 CallToolResult 形状。
-    return server.client.callTool(
-      { name: toolName, arguments: args },
-      undefined,
-      signal ? { signal } : undefined,
-    ) as Promise<CallToolResult>;
+    const startedAt = Date.now();
+    try {
+      // callTool 的返回类型是内联联合（含 toolResult 变体），我们只需要 CallToolResult 形状。
+      const result = (await server.client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        signal ? { signal } : undefined,
+      )) as CallToolResult;
+      this.logger?.info(
+        {
+          server: name,
+          tool: toolName,
+          durationMs: Date.now() - startedAt,
+          isError: Boolean(result.isError),
+        },
+        'mcp tool call finished',
+      );
+      return result;
+    } catch (error) {
+      this.logger?.error(
+        { server: name, tool: toolName, durationMs: Date.now() - startedAt, err: error },
+        'mcp tool call failed',
+      );
+      throw error;
+    }
   }
 
   /** 某 server 是否配置了审批要求。 */
@@ -128,6 +151,15 @@ export class McpClientManager {
         tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       };
     } catch (error) {
+      this.logger?.warn(
+        {
+          transport: config.transport,
+          command: config.command,
+          url: config.url,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        'mcp probe failed',
+      );
       return {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -166,16 +198,25 @@ export class McpClientManager {
       managed.transport = transport;
       managed.tools = tools;
       managed.status = 'connected';
+      this.logger?.info(
+        { server: name, cwd, transport: config.transport, toolCount: tools.length },
+        'mcp server connected',
+      );
     } catch (error) {
       managed.status = 'error';
       managed.error = error instanceof Error ? error.message : String(error);
       managed.transport = undefined;
+      this.logger?.warn(
+        { server: name, cwd, transport: config.transport, err: managed.error },
+        'mcp server connect failed',
+      );
     }
   }
 
   private async disconnect(key: string): Promise<void> {
     const server = this.servers.get(key);
     if (!server) return;
+    this.logger?.info({ server: server.name, cwd: server.cwd }, 'mcp server disconnected');
     try {
       await server.client?.close();
     } catch {

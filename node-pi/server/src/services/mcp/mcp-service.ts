@@ -11,6 +11,7 @@
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../../errors.js';
+import type { ServiceLogger } from '../service-logger.js';
 import { McpClientManager, type McpProbeResult, type ServerStatus } from './mcp-client-manager.js';
 import { McpConfig, type McpScope, type McpServerConfig } from './mcp-config.js';
 import {
@@ -48,9 +49,10 @@ export class McpService {
 
   constructor(
     private readonly config: McpConfig,
-    manager: McpClientManager = new McpClientManager(),
+    manager?: McpClientManager,
+    logger?: ServiceLogger,
   ) {
-    this.manager = manager;
+    this.manager = manager ?? new McpClientManager(logger);
   }
 
   /** 使某 cwd 的连接对账到当前配置（扩展工厂 / 配置变更后调用，幂等）。 */

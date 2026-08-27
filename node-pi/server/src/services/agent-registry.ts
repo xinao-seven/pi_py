@@ -32,6 +32,8 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ApiError } from '../errors.js';
+import type { ServiceLogger } from './service-logger.js';
+import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
 import { PlanModeService, type PlanSnapshot } from './plan-mode-service.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
@@ -39,6 +41,26 @@ import type { McpService } from './mcp/mcp-service.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
+
+/**
+ * 模型响应日志所需的 assistant 消息元数据（结构化子集）。
+ * 中文说明：SDK 的 AgentMessage 联合类型未直接暴露 AssistantMessage 形状，
+ * 这里按需声明，避免依赖 SDK 内部类型路径。
+ */
+interface AssistantMessageMeta {
+  role: 'assistant';
+  provider: string;
+  model: string;
+  stopReason: string;
+  errorMessage?: string;
+  usage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    totalTokens: number;
+    cost?: { total: number };
+  };
+}
 
 /**
  * 返回 Node 后端随服务发布的扩展目录。
@@ -189,6 +211,10 @@ export interface RegistryEntry {
   unsubscribe: () => void; // 取消对 SDK 事件的订阅
   subscribers: Set<(event: StreamEvent) => void>; // 当前 SSE 连接的监听器
   persisted?: PersistedSessionInfo;
+  /** 工具调用计时（toolCallId → 开始时刻），用于日志统计执行耗时。 */
+  toolStartTimes: Map<string, number>;
+  /** 本轮模型请求发出时刻（turn_start 记录），message_end 时算响应耗时。 */
+  turnStartedAt?: number;
 }
 
 /**
@@ -358,6 +384,7 @@ export class AgentRegistry {
     private readonly sessionFactory: PiSessionFactory,
     private readonly approvals?: ToolApprovalBroker,
     private readonly plans?: PlanModeService,
+    private readonly logger?: ServiceLogger,
   ) {
     // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
     approvals?.setPendingListener((pending) => this.announceApproval(pending));
@@ -452,6 +479,7 @@ export class AgentRegistry {
       unsubscribe: () => undefined,
       subscribers: new Set(),
       persisted,
+      toolStartTimes: new Map(),
     };
     // 订阅 SDK 事件：所有事件先进缓存（publish 内部处理），再广播给订阅者。
     entry.unsubscribe = session.subscribe((event) => this.publish(entry, event));
@@ -759,10 +787,101 @@ export class AgentRegistry {
    * 事件发布核心：SDK 事件 → 编号 → 入缓存（超限丢最旧）→ 广播给所有订阅者。
    */
   private publish(entry: RegistryEntry, payload: StreamEvent['payload']): void {
+    this.logSessionEvent(entry, payload);
     const event: StreamEvent = { id: entry.nextEventId++, payload };
     entry.events.push(event);
     if (entry.events.length > MAX_REPLAY_EVENTS) entry.events.shift();
     for (const subscriber of entry.subscribers) subscriber(event);
+  }
+
+  /**
+   * 把关键 SDK 事件写入日志（请求日志之外的补充观测点）。
+   * 中文说明：覆盖三类信息——工具执行（开始/结束+耗时）、模型请求（turn_start）
+   * 与模型响应（message_end：provider/model、stopReason、token 用量与耗时）。
+   * 响应报错时升级为 error 级别。只记元数据，不落正文，避免日志体积与敏感内容问题。
+   */
+  private logSessionEvent(
+    entry: RegistryEntry,
+    event: StreamEvent['payload'],
+  ): void {
+    const logger = this.logger;
+    if (!logger) return;
+    const sessionId = entry.session.sessionId;
+    switch (event.type) {
+      case 'turn_start': {
+        entry.turnStartedAt = Date.now();
+        logger.info(
+          {
+            sessionId,
+            model: entry.session.model
+              ? `${entry.session.model.provider}/${entry.session.model.id}`
+              : undefined,
+            thinkingLevel: entry.session.thinkingLevel,
+            messages: entry.session.messages.length,
+          },
+          'model request',
+        );
+        break;
+      }
+      case 'message_end': {
+        // message_end 也可能来自 user/toolResult 消息回放；只统计 assistant（模型响应）。
+        if (event.message.role !== 'assistant') break;
+        const message = event.message as unknown as AssistantMessageMeta;
+        const isError = message.stopReason === 'error';
+        const logPayload = {
+          sessionId,
+          provider: message.provider,
+          model: message.model,
+          stopReason: message.stopReason,
+          errorMessage: message.errorMessage,
+          durationMs:
+            entry.turnStartedAt !== undefined ? Date.now() - entry.turnStartedAt : undefined,
+          usage: message.usage
+            ? {
+                input: message.usage.input,
+                output: message.usage.output,
+                cacheRead: message.usage.cacheRead,
+                totalTokens: message.usage.totalTokens,
+                costTotal: message.usage.cost?.total,
+              }
+            : undefined,
+        };
+        delete entry.turnStartedAt;
+        if (isError) logger.error(logPayload, 'model response failed');
+        else if (message.stopReason === 'aborted') logger.warn(logPayload, 'model response aborted');
+        else logger.info(logPayload, 'model response');
+        break;
+      }
+      case 'tool_execution_start': {
+        entry.toolStartTimes.set(event.toolCallId, Date.now());
+        logger.info(
+          {
+            sessionId,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            args: previewOf(event.args),
+          },
+          'tool execution started',
+        );
+        break;
+      }
+      case 'tool_execution_end': {
+        const startedAt = entry.toolStartTimes.get(event.toolCallId) ?? Date.now();
+        entry.toolStartTimes.delete(event.toolCallId);
+        const logPayload = {
+          sessionId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          durationMs: Date.now() - startedAt,
+          result: previewOf(event.result),
+        };
+        if (event.isError) logger.error(logPayload, 'tool execution failed');
+        else logger.info(logPayload, 'tool execution finished');
+        break;
+      }
+      default:
+        break;
+    }
   }
 
   /** 工具审批待处理时发布 tool_call_pending 事件（驱动前端审批对话框）。 */
