@@ -307,9 +307,22 @@ export async function testMcpServer(
   });
 }
 
-export function agentEventsUrl(sessionId: string): string {
-  // SSE 事件流地址（EventSource 无法带 Authorization 头，令牌走查询参数）
-  return appendToken(`${BASE_URL}/api/agent/${encodeURIComponent(sessionId)}/events`);
+export function fetchAgentEvents(
+  sessionId: string,
+  lastEventId: number,
+  signal: AbortSignal,
+): Promise<Response> {
+  // 会话事件流：fetch + ReadableStream 手写解析 SSE 帧（不走 EventSource）。
+  // 令牌放 Authorization 头（不进 URL，避免泄露到日志）；断线重连时带 Last-Event-ID
+  // 请求头，让服务端从该序号之后补发缓存的未收事件。
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (lastEventId > 0) headers['Last-Event-ID'] = String(lastEventId);
+  return fetch(`${BASE_URL}/api/agent/${encodeURIComponent(sessionId)}/events`, {
+    headers,
+    signal,
+  });
 }
 
 export function listFiles(root: string, path = ''): Promise<FileListResponse> {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getAuthStatus, listSessions } from '@/lib/api';
+import { fetchAgentEvents, getAuthStatus, listSessions } from '@/lib/api';
 import { clearToken, setToken, setUnauthorizedHandler } from '@/lib/session';
 
 function jsonResponse(body: unknown, status: number) {
@@ -70,5 +70,38 @@ describe('api request auth', () => {
 
     await expect(getAuthStatus()).rejects.toThrow('Invalid password');
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchAgentEvents', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('attaches Authorization and Last-Event-ID headers, passing the abort signal', async () => {
+    setToken('t0ken');
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+
+    await fetchAgentEvents('s1', 7, controller.signal);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/agent/s1/events');
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer t0ken');
+    expect(headers['Last-Event-ID']).toBe('7');
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it('omits Last-Event-ID when resuming from the start (id 0)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchAgentEvents('s1', 0, new AbortController().signal);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Record<string, string>)['Last-Event-ID']).toBeUndefined();
   });
 });

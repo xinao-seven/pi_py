@@ -1003,6 +1003,26 @@ select:focus-visible {
   border-left: 1px solid var(--line-strong);
 }
 
+/* 不定高虚拟列表：虚拟行绝对定位，translateY 铺开；
+   padding-bottom 代替原 .message-row 的 margin 间距，让 measureElement
+   测到的盒高天然包含行间距，避免相邻行贴在一起。 */
+.virtual-list {
+  position: relative;
+}
+
+.virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 38px;
+}
+
+.virtual-row .message-row {
+  margin-bottom: 0;
+  animation: none; /* 虚拟化后行会滚动进出视口，关闭入场动画避免反复闪烁 */
+}
+
 .message-images {
   display: flex;
   flex-wrap: wrap;

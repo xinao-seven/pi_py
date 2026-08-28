@@ -4,8 +4,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { Ref } from 'vue';
 
 import {
-  agentEventsUrl,
   createAgent,
+  fetchAgentEvents,
   getAgentState,
   getModels,
   getPlan,
@@ -14,6 +14,7 @@ import {
   sendAgentCommand,
 } from '@/lib/api';
 import { INITIAL_STREAM_STATE, reduceAgentEvent } from '@/lib/agent-events';
+import { fireUnauthorized } from '@/lib/session';
 import type {
   AgentEvent,
   AgentMessage,
@@ -32,6 +33,12 @@ import type {
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
 // 默认激活的工具集合（与后端默认一致）
 const BUILTIN_PRESET_ID = 'coding-agent';
+
+// ---- SSE 断线重连与心跳参数 ----
+const RECONNECT_BASE_DELAY_MS = 500; // 首退避 0.5s
+const RECONNECT_MAX_DELAY_MS = 10_000; // 退避封顶 10s
+const STREAM_IDLE_TIMEOUT_MS = 45_000; // 超过 3 倍心跳间隔（15s）没有数据 = 连接假死
+const ACTIVITY_CHECK_INTERVAL_MS = 10_000; // 假死检测轮询间隔
 
 interface AgentSessionOptions {
   sessionId: Ref<string | null>;
@@ -66,7 +73,18 @@ export function useAgentSession(options: AgentSessionOptions) {
   const compacting = ref(false);
   const compactionError = ref<string | null>(null);
   const retryInfo = ref<RetryInfo | null>(null);
-  let eventSource: EventSource | null = null;
+  // ---- SSE 事件流（fetch + ReadableStream 手写解析，自建断线重连）----
+  // eventStream：当前活跃的流（controller 用于中止，generation 用于竞态防护）；
+  // lastEventId：已处理的最新事件序号，重连时作为 Last-Event-ID 请求头续传；
+  // reconnectTimer / reconnectAttempt：指数退避重连；activityTimer：心跳假死检测。
+  let eventStream: { controller: AbortController; generation: number } | null = null;
+  let streamGeneration = 0;
+  let lastEventId = 0;
+  let reconnectAttempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let activityTimer: ReturnType<typeof setInterval> | undefined;
+  let lastActivityAt = 0;
+
   let loadSequence = 0;
   let catalogRetryTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -134,34 +152,154 @@ export function useAgentSession(options: AgentSessionOptions) {
   }
 
   function connectEvents(sessionId: string): void {
-    // 建立 SSE 连接；收到事件交给 handleAgentEvent 处理
-    if (eventSource && activeSessionId.value === sessionId) return;
-    closeEvents();
-    const source = new EventSource(agentEventsUrl(sessionId));
-    eventSource = source;
-    source.onmessage = (messageEvent) => {
-      if (eventSource !== source || activeSessionId.value !== sessionId) return;
-      try {
-        handleAgentEvent(JSON.parse(messageEvent.data) as AgentEvent, sessionId);
-      } catch {
-        // Ignore malformed third-party events and keep the stream alive.
-      }
-    };
-    source.onerror = () => {
-      if (eventSource === source && stream.running) {
-        error.value = '事件流暂时中断，正在自动重连…';
-      }
-    };
-    source.onopen = () => {
-      if (eventSource === source && error.value?.includes('自动重连')) {
-        error.value = null;
-      }
-    };
+    // 建立 SSE 连接（fetch + ReadableStream）；已有活跃连接则复用。
+    if (eventStream && activeSessionId.value === sessionId) return;
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+    if (eventStream) {
+      eventStream.controller.abort();
+      eventStream = null;
+    }
+    stopActivityTimer();
+    const generation = ++streamGeneration;
+    const controller = new AbortController();
+    eventStream = { controller, generation };
+    void readStream(sessionId, generation);
   }
 
   function closeEvents(): void {
-    eventSource?.close();
-    eventSource = null;
+    // 完全拆除事件流：使当前 generation 失效，旧的读取循环立刻停止且不再调度重连。
+    ++streamGeneration;
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+    stopActivityTimer();
+    if (eventStream) {
+      eventStream.controller.abort();
+      eventStream = null;
+    }
+  }
+
+  /**
+   * 读取并解析事件流。generation 用于竞态防护：重连/关闭后旧循环发现序号不匹配
+   * 就直接退出，保证同一时间只有一个活跃流在喂 handleAgentEvent。
+   * 断线（网络错误 / 流结束）时进入指数退避重连；被主动中止则静默退出。
+   */
+  async function readStream(sessionId: string, generation: number): Promise<void> {
+    const controller = eventStream?.controller;
+    if (!controller) return;
+    try {
+      const response = await fetchAgentEvents(sessionId, lastEventId, controller.signal);
+      if (controller.signal.aborted || generation !== streamGeneration) return;
+      if (!response.ok) {
+        if (response.status === 401) {
+          fireUnauthorized(); // 鉴权失效：通知 auth store 上锁，不无限重连
+          eventStream = null; // 清掉死连接，避免挡住下次 connectEvents
+          return;
+        }
+        throw new Error(`事件流请求失败（${response.status}）`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('事件流响应缺少 body');
+      // 连接建立成功：重置退避，清除"自动重连"提示，启动假死检测。
+      reconnectAttempt = 0;
+      if (error.value?.includes('自动重连')) error.value = null;
+      lastActivityAt = Date.now();
+      startActivityTimer();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (controller.signal.aborted || generation !== streamGeneration) return;
+        lastActivityAt = Date.now();
+        buffer += decoder.decode(value, { stream: true });
+        // 按空行切分 SSE 帧（后端每帧以 \n\n 结尾），心跳注释帧直接跳过。
+        let boundary: number;
+        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (frame.startsWith(':')) continue;
+          const parsed = parseSseFrame(frame);
+          if (parsed.data) {
+            if (parsed.id !== undefined) lastEventId = parsed.id;
+            try {
+              handleAgentEvent(JSON.parse(parsed.data) as AgentEvent, sessionId);
+            } catch {
+              // 忽略畸形事件，保持流存活
+            }
+          }
+        }
+      }
+      stopActivityTimer();
+    } catch {
+      stopActivityTimer();
+      if (controller.signal.aborted || generation !== streamGeneration) return;
+    }
+    if (controller.signal.aborted || generation !== streamGeneration) return;
+    scheduleReconnect(sessionId);
+  }
+
+  /** 指数退避调度重连：0.5s → 1s → 2s … 封顶 10s。 */
+  function scheduleReconnect(sessionId: string): void {
+    if (activeSessionId.value !== sessionId || reconnectTimer !== undefined) return;
+    const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** reconnectAttempt, RECONNECT_MAX_DELAY_MS);
+    reconnectAttempt += 1;
+    if (stream.running) error.value = '事件流暂时中断，正在自动重连…';
+    // 让当前流失效，之后 connectEvents 创建全新连接。
+    ++streamGeneration;
+    if (eventStream) {
+      eventStream.controller.abort();
+      eventStream = null;
+    }
+    stopActivityTimer();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      if (activeSessionId.value !== sessionId) return;
+      connectEvents(sessionId);
+    }, delay);
+  }
+
+  /** 强制重连：心跳假死 / 页面恢复可见时调用，中断旧连接并立即重连。 */
+  function forceReconnect(): void {
+    const sessionId = activeSessionId.value;
+    if (!sessionId || !eventStream) return;
+    ++streamGeneration;
+    if (eventStream) {
+      eventStream.controller.abort();
+      eventStream = null;
+    }
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+    stopActivityTimer();
+    connectEvents(sessionId);
+  }
+
+  /** 假死检测：超过 STREAM_IDLE_TIMEOUT_MS 没收到任何数据（含心跳）则强制重连。 */
+  function startActivityTimer(): void {
+    stopActivityTimer();
+    lastActivityAt = Date.now();
+    activityTimer = setInterval(() => {
+      if (eventStream && Date.now() - lastActivityAt > STREAM_IDLE_TIMEOUT_MS) forceReconnect();
+    }, ACTIVITY_CHECK_INTERVAL_MS);
+  }
+
+  function stopActivityTimer(): void {
+    if (activityTimer !== undefined) {
+      clearInterval(activityTimer);
+      activityTimer = undefined;
+    }
+  }
+
+  function onVisibilityChange(): void {
+    // 后台时连接可能被系统挂起/假死，恢复可见后主动重连以加速恢复。
+    // 只在正在运行（有活跃回合）时触发，空闲时保留连接，避免无谓断开。
+    if (document.visibilityState === 'visible' && stream.running && eventStream) forceReconnect();
   }
 
   function applyPendingToolCall(pending: AgentStreamState['pendingToolCall'] | undefined): void {
@@ -426,6 +564,8 @@ export function useAgentSession(options: AgentSessionOptions) {
     (sessionId) => {
       activeSessionId.value = sessionId;
       closeEvents();
+      lastEventId = 0; // 新会话从头接收，重放其缓存中的全部事件
+      reconnectAttempt = 0;
       assignStream({ ...INITIAL_STREAM_STATE });
       detail.value = null;
       plan.value = null;
@@ -449,6 +589,9 @@ export function useAgentSession(options: AgentSessionOptions) {
   watch(options.newSessionCwd, () => {
     if (options.sessionId.value === null) {
       activeSessionId.value = null;
+      closeEvents();
+      lastEventId = 0;
+      reconnectAttempt = 0;
       detail.value = null;
       plan.value = null;
       messages.value = [];
@@ -465,6 +608,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   });
 
   onMounted(async () => {
+    document.addEventListener('visibilitychange', onVisibilityChange);
     await Promise.all([loadCatalog(), loadPresets()]);
   });
 
@@ -504,6 +648,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   if (options.modelsRevision) watch(options.modelsRevision, loadCatalog);
 
   onBeforeUnmount(() => {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     closeEvents();
     stopCatalogRecovery();
   });
@@ -542,6 +687,28 @@ export function useAgentSession(options: AgentSessionOptions) {
     navigateTree,
     reloadSession,
   };
+}
+
+interface SseFrame {
+  id?: number;
+  data?: string;
+}
+
+/** 解析一帧 SSE：取 id: 与 data: 两行（按协议，data 可多行拼接）；无这些行则忽略。 */
+export function parseSseFrame(frame: string): SseFrame {
+  let id: number | undefined;
+  let data: string | undefined;
+  for (const rawLine of frame.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (line.startsWith('id:')) {
+      const parsed = Number(line.slice(3).trim());
+      if (Number.isInteger(parsed)) id = parsed;
+    } else if (line.startsWith('data:')) {
+      const payload = line.slice(5).replace(/^ /, '');
+      data = data === undefined ? payload : `${data}\n${payload}`;
+    }
+  }
+  return { id, data };
 }
 
 function errorMessage(cause: unknown): string {

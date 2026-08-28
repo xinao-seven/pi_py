@@ -1,5 +1,6 @@
 <!-- 聊天主窗口：消息流、Agent 控制条、输入框，以及分支导航/合并等会话操作。 -->
 <script setup lang="ts">
+import { useVirtualizer } from '@tanstack/vue-virtual';
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 
 import AgentControls from '@/components/AgentControls.vue';
@@ -11,7 +12,7 @@ import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
 import { forkSession, mergeSession, sendPlanCommand } from '@/lib/api';
 import { useAppStore } from '@/stores/app';
-import type { SessionInfo, SessionTreeNode } from '@/types';
+import type { AgentMessage, SessionInfo, SessionTreeNode } from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;
@@ -32,6 +33,8 @@ const emit = defineEmits<{
 }>();
 
 const messagesEnd = ref<HTMLElement | null>(null);
+const messageScroller = ref<HTMLElement | null>(null);
+const followBottom = ref(true); // 是否跟随滚动到最新消息
 const planBusy = ref(false);
 const branchExpanded = ref(false);
 const store = useAppStore();
@@ -103,6 +106,40 @@ const toolResults = computed(() =>
       .map((message) => [message.toolCallId as string, message]),
   ),
 );
+
+// 不定高虚拟列表：只渲染可视区内的消息行，用 measureElement 按真实高度测量，
+// 长会话下避免全量渲染上千条 Markdown/代码块导致卡顿。流式消息在列表外单独渲染。
+// 整个 options 包成 computed：TanStack 的 Vue 适配器按对象级响应式跟踪。
+const virtualizer = useVirtualizer(
+  computed(() => ({
+    count: visibleMessages.value.length,
+    getScrollElement: () => messageScroller.value,
+    getItemKey: (index: number) => visibleMessages.value[index]?.entryId ?? `msg-${index}`,
+    estimateSize: (index: number) => {
+      // 未测量前的粗估高度（measureElement 测量后会按真实高度替换）
+      const message = visibleMessages.value[index]?.message;
+      return message?.role === 'user' ? 64 : 260;
+    },
+    overscan: 8,
+  })),
+);
+
+function rowMessage(row: { index: number }): AgentMessage {
+  // 只在虚拟行渲染时调用（模板里已有 v-if 守卫），索引一定有效
+  return visibleMessages.value[row.index]!.message;
+}
+
+function measureRow(el: unknown): void {
+  // Vue 的 ref 回调签名与 TanStack 的 measureElement 不一致，包一层做类型适配
+  virtualizer.value.measureElement(el as HTMLElement | null);
+}
+
+function onScroll(): void {
+  // 距底部 <120px 视为"跟随底部"：新消息/流式内容时自动滚动到最新。
+  const el = messageScroller.value;
+  if (!el) return;
+  followBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+}
 
 function countTreeNodes(nodes: SessionTreeNode[]): number {
   return nodes.reduce((total, node) => total + 1 + countTreeNodes(node.children), 0);
@@ -221,9 +258,21 @@ watch(
   () => [messages.value.length, stream.streamingMessage] as const,
   async () => {
     await nextTick();
-    messagesEnd.value?.scrollIntoView({ behavior: 'smooth' });
+    // 跟随底部时才自动滚动：流式输出用 auto（避免逐 chunk 平滑滚动卡顿），
+    // 新消息用 smooth；用户上滑阅读历史时不被强制拉回底部。
+    if (!followBottom.value) return;
+    messagesEnd.value?.scrollIntoView({
+      behavior: stream.streamingMessage ? 'auto' : 'smooth',
+    });
   },
   { deep: true },
+);
+
+watch(
+  () => props.sessionId,
+  () => {
+    followBottom.value = true;
+  },
 );
 
 watch(
@@ -332,7 +381,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
     </div>
 
     <template v-else>
-      <div class="message-scroller">
+      <div ref="messageScroller" class="message-scroller" @scroll.passive="onScroll">
         <div v-if="empty" class="empty-conversation">
           <div class="empty-symbol" aria-hidden="true">π</div>
           <div class="welcome-kicker">READY IN {{ workspace }}</div>
@@ -341,12 +390,22 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         </div>
 
         <div v-else class="message-list">
-          <MessageView
-            v-for="item in visibleMessages"
-            :key="item.entryId"
-            :message="item.message"
-            :tool-results="toolResults"
-          />
+          <div class="virtual-list" :style="{ height: `${virtualizer.getTotalSize()}px` }">
+            <div
+              v-for="row in virtualizer.getVirtualItems()"
+              :key="String(row.key)"
+              :ref="measureRow"
+              :data-index="row.index"
+              class="virtual-row"
+              :style="{ transform: `translateY(${row.start}px)` }"
+            >
+              <MessageView
+                v-if="rowMessage(row)"
+                :message="rowMessage(row)"
+                :tool-results="toolResults"
+              />
+            </div>
+          </div>
           <MessageView
             v-if="stream.streamingMessage"
             :message="stream.streamingMessage"
