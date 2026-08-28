@@ -34,7 +34,7 @@ Pi 的一切工具能力（开关、审批、Plan 约束、SSE 展示、上下�
 
 ## 2. SDK 集成点（三个决定成败的机制）
 
-### 2.1 为什么用"内联扩展"而不是文件扩展
+### 2.1 为什么仓库内全部用"内联扩展"
 
 Pi SDK 的扩展有两种加载方式：
 
@@ -44,22 +44,23 @@ Pi SDK 的扩展有两种加载方式：
 | 内联扩展（`DefaultResourceLoader.extensionFactories`） | 直接调用工厂函数 | **能（闭包引用）** |
 
 MCP 连接必须**进程级共享**：同一工作区的多个会话复用同一连接、不重复 spawn stdio 子进程。
-文件扩展（如 plan-mode、tool-approval）是 jiti 隔离的，无法直接引用服务端对象，只能靠事件总线通信；
-而 MCP 工具的执行需要"闭包直连连接池"（高频、同步地拿结果），所以选择内联扩展：
+内联扩展闭包可"直连连接池"（高频、同步地拿结果），所以 MCP 选择内联扩展。工具审批与 Plan
+模式同样需要直连服务端单例（`ToolApprovalBroker` / `PlanModeService`），因此仓库内三个能力
+统一采用内联扩展，不再使用 jiti 文件扩展：
 
 ```ts
-// src/services/agent-registry.ts  loader(cwd)
-new DefaultResourceLoader({
-  cwd,
-  agentDir: this.agentDir,
-  additionalExtensionPaths: discoverLocalExtensions(extensionDir),
-  extensionFactories: this.mcpService ? [buildMcpExtension(this.mcpService, cwd)] : [],
-  eventBus: this.eventBus,
-});
+// src/services/agent-registry.ts  loader(cwd, systemPrompt, extensions)
+const factories: InlineExtension[] = [];
+if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
+if (extensions?.approval !== false && this.approvals)
+  factories.push(this.approvals.buildExtension());
+if (this.mcpService) factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals));
+new DefaultResourceLoader({ cwd, agentDir: this.agentDir, extensionFactories: factories });
 ```
 
-`buildMcpExtension(service, cwd)` 返回一个工厂函数，闭包捕获 `McpService` 单例和会话 cwd。
-工厂被每个会话的资源加载器调用（会话创建/打开、`reload_resources`、MCP 配置变更后的 reload）。
+`buildMcpExtension(service, cwd, approvals)` 返回一个工厂函数，闭包捕获 `McpService` 单例、
+会话 cwd 与审批中枢。工厂被每个会话的资源加载器调用（会话创建/打开、`reload_resources`、MCP
+配置变更后的 reload）。
 
 ### 2.2 `pi.registerTool()` 与工具注册表刷新
 
@@ -84,9 +85,9 @@ API 的 `tools` 数组里拿到工具并调用，但系统提示词文字里看�
 所有工具（内置/自定义/MCP）调用前都会触发 `tool_call` 事件。`emitToolCall`（`runner.js`）按
 **扩展数组顺序**逐个跑处理器，遇到返回 `{ block: true }` 就**短路返回**。
 
-扩展数组顺序 = 文件扩展在前（`additionalExtensionPaths`，按文件名排序）+ 内联扩展在后
-（`extensionFactories` 追加到末尾）。因此 **plan-mode 的拦截优先于 MCP 的审批钩子**：规划期
-plan-mode 先 block MCP 工具，审批对话框不会弹出。
+全部内联扩展按 loader 里 `extensionFactories` 的注册顺序执行：
+`plan → approval → mcp`。因此 **plan 的拦截优先于 MCP 的审批钩子**：规划期 plan 先 block
+MCP 工具，审批对话框不会弹出；危险 bash 在规划期也先被 plan 拦下，不会先弹审批框。
 
 ---
 
@@ -171,16 +172,16 @@ plan-mode 先 block MCP 工具，审批对话框不会弹出。
 
 ### 3.5 `src/services/mcp/mcp-extension.ts` —— 内联扩展（工具注册 + 审批钩子）
 
-`buildMcpExtension(service, cwd)` 返回一个 `InlineExtension` 工厂：
+`buildMcpExtension(service, cwd, approvals)` 返回一个 `InlineExtension` 工厂：
 
 1. **注册工具**：`await service.ensure(cwd)` → 遍历 `service.toolsFor(cwd)` → `pi.registerTool(tool)`。
 2. **审批钩子**：`pi.on("tool_call", ...)` —— 当工具名以 `mcp__` 开头且该 server 配置了
-   `approval: "required"`，复用工具审批的**事件通道契约**挂起等待：
+   `approval: "required"`，直接调用 `broker.requestApproval()` 挂起等待：
 
 ```
-扩展 → CHANNEL_PENDING（pi:tool_approval:pending）→ ToolApprovalBroker → SSE 推给前端弹框
-前端 approve_tool → broker.decide → CHANNEL_DECIDE（pi:tool_approval:decide）→ 扩展放行/拦截
-AbortSignal / 120s 超时 → CHANNEL_ABORTED → 按拒绝结算
+扩展 → broker.requestApproval(pending) → SSE 推给前端弹框
+前端 approve_tool → broker.decide → 结算 Promise → 放行/拦截
+AbortSignal / 120s 超时 → 按拒绝结算
 ```
 
 审批载荷 `PendingToolApproval`：`{ sessionId, toolCallId, toolName, args, reason,

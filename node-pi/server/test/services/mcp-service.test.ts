@@ -2,7 +2,6 @@
  * McpService 集成测试：用本地 stdio MCP server（test/fixtures/mcp-test-server.mjs）
  * 验证连接、工具注册、工具调用、失败处理、审批联动与状态上报。
  */
-import { createEventBus } from '@earendil-works/pi-coding-agent';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -144,11 +143,9 @@ describe('MCP 内联扩展（审批联动）', () => {
     });
     const service = new McpService(config);
 
-    const events = createEventBus();
-    const broker = new ToolApprovalBroker(events);
+    const broker = new ToolApprovalBroker();
     const registered: string[] = [];
     const fakePi = {
-      events,
       handlers: new Map<string, (event: unknown, ctx: unknown) => unknown>(),
       registerTool(tool: { name: string }) {
         registered.push(tool.name);
@@ -163,7 +160,7 @@ describe('MCP 内联扩展（审批联动）', () => {
       },
     };
     try {
-      const factory = buildMcpExtension(service, cwd);
+      const factory = buildMcpExtension(service, cwd, broker);
       await (factory as (pi: typeof fakePi) => Promise<void>)(fakePi as never);
 
       expect(registered).toContain('mcp__test_server__echo');
@@ -197,9 +194,7 @@ describe('MCP 内联扩展（审批联动）', () => {
       args: [fixturePath],
     });
     const service = new McpService(config);
-    const events = createEventBus();
     const fakePi = {
-      events,
       handlers: new Map<string, (event: unknown, ctx: unknown) => unknown>(),
       registerTool() {},
       on(channel: string, handler: (event: unknown, ctx: unknown) => unknown) {

@@ -25,16 +25,20 @@ Vue PlanProgress（输入框上方内联面板）
   └─ POST /api/agent/:sessionId { type: plan_* } ← 用户决定
                          │
                          ▼
-PlanModeService ── pi:plan-mode:set ──► extensions/plan-mode.ts
-      ▲                                      │
-      └──── pi:plan-mode:state ◄─────────────┘
-                         │
-                         └─ SSE { type: "plan_updated", plan } → useAgentSession
+PlanModeService（按会话持有 PlanMachine 状态机）
+      │                │
+      │ command()      │ buildExtension() 注入 tool_call / before_agent_start 等钩子
+      ▼                ▼
+  状态快照          Pi 生命周期钩子（Plan 工具权限的最终约束点）
+      │
+      └─ SSE { type: "plan_updated", plan } → useAgentSession
 ```
 
-- `node-pi/server/extensions/plan-mode.ts` 是 Pi 生命周期扩展，也是 Plan 工具权限的最终约束点。
-- `PlanModeService` 不保存计划文本的权威副本；它把扩展发来的状态缓存为 API 快照，并将 Web 命令送回
-  同一 `pi.events` 总线。扩展与后端可能被 jiti 隔离加载，因此不可直接 import 对方单例。
+- `PlanModeService.buildExtension()` 生成内联扩展，为每个会话注册一套 Pi 生命周期钩子，钩子委托给
+  按会话隔离的 `PlanMachine`（`node-pi/server/src/services/plan-mode-service.ts`）——这是 Plan
+  工具权限的最终约束点。
+- `PlanModeService` 按 sessionId 持有状态机，是状态快照的权威来源；`command()` 直接调用状态机的
+  enable/disable/execute/refine，不经过事件总线（内联扩展与后端共享模块实例，可直接调用）。
 - `AgentRegistry` 把状态变化翻译为 `plan_updated` SSE 事件，供已连接的客户端即时刷新；
   `useAgentSession` 在会话加载时通过 REST 快照恢复 Plan 状态，并在 SSE 收到 `plan_updated` 时实时
   更新内联面板，SSE 断连或会话从 JSONL 恢复后仍能通过快照兜底。
@@ -88,11 +92,12 @@ JSONL。这是**会话内容持久化的一部分**：同一会话恢复后，�
 
 ## 接入与测试
 
-- 后端内置扩展会由 `OriginalPiSessionFactory` 自动扫描，无需在 `app.ts` 逐项注册。
+- Plan 内联扩展由 `OriginalPiSessionFactory.loader()` 通过 `extensionFactories` 注入每个会话，
+  无需在 `app.ts` 逐项注册；预设可关闭（`extensions.planMode: false`）。
 - 主入口位于聊天输入框上方的 **开启 Plan 模式**：先点击开关，再在原输入框发送需求；该消息会在
   只读规划上下文中驱动 Agent 生成 `Plan:`。激活后，内联面板 `web/src/components/PlanProgress.vue`
   固定在输入框上方始终可见，实时展示规划/确认/执行进度并高亮当前步骤；再次点击开关即退出 Plan
   模式（执行中会先弹确认），面板内也有"退出 Plan 模式"按钮。
-- 修改事件通道、状态形状或权限规则时，同步更新 Plan 扩展、`PlanModeService`、前端类型/API 和本文档。
+- 修改状态形状或权限规则时，同步更新 `PlanModeService`、前端类型/API 和本文档。
 - 关键契约测试位于 `node-pi/server/test/services/plan-mode.test.ts`；前端面板测试位于
   `web/test/components/PlanProgress.test.ts`。

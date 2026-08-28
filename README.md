@@ -74,13 +74,13 @@ Python 版详细说明见 [`pi-python/README.md`](pi-python/README.md)。
 
 ## 扩展（给 Node 版加能力）
 
-`node-pi/server/extensions/` 是给 Node 版后端添加工具/钩子的地方。放一个 `.ts` 文件
-（default export `ExtensionFactory`，用 `pi.registerTool()` / `pi.on(...)`），后端启动时自动扫描加载。
+Node 版后端把工具审批、Plan 模式与 MCP 工具以**内联扩展**注入每个会话（闭包直连服务单例），
+注册点集中在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories`，并支持按预设开关
+（`extensions.approval` / `extensions.planMode`）启用/关闭。
 
-- 本目录是服务额外加载的来源；原版 pi（TUI）的 `~/.pi/agent/extensions/` 与项目
-  `.pi/extensions/` 仍由 SDK 自动发现。
-- 示例与格式说明见 [`node-pi/server/extensions/README.md`](node-pi/server/extensions/README.md)，
-  加载机制见 [`docs/node-extension-system.md`](docs/node-extension-system.md)。
+- 原版 pi（TUI）的 `~/.pi/agent/extensions/` 与项目 `.pi/extensions/` 仍由 SDK 自动发现；
+  仓库不再随服务发布 jiti 文件扩展。
+- 机制说明见 [`docs/node-extension-system.md`](docs/node-extension-system.md)。
 
 ## 测试
 

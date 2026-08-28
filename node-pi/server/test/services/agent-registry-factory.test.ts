@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@earendil-works/pi-coding-agent', () => mocks);
 
 import { OriginalPiSessionFactory } from '../../src/services/agent-registry.js';
+import { PlanModeService } from '../../src/services/plan-mode-service.js';
+import { ToolApprovalBroker } from '../../src/services/tool-approval.js';
 
 describe('OriginalPiSessionFactory', () => {
   const agentDir = '/tmp/fake-pi-agent';
@@ -40,7 +42,7 @@ describe('OriginalPiSessionFactory', () => {
   it('threads systemPrompt, compaction, tools and thinking level into createAgentSession', async () => {
     const applyOverrides = vi.fn();
     mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
-    const factory = new OriginalPiSessionFactory(agentDir, {} as never);
+    const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({
       cwd: '/tmp/workspace',
@@ -63,7 +65,7 @@ describe('OriginalPiSessionFactory', () => {
   });
 
   it('keeps the default path unchanged when preset fields are absent', async () => {
-    const factory = new OriginalPiSessionFactory(agentDir, {} as never);
+    const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({ cwd: '/tmp/workspace' });
 
@@ -76,7 +78,7 @@ describe('OriginalPiSessionFactory', () => {
   });
 
   it('does not pass an empty systemPrompt to the loader', async () => {
-    const factory = new OriginalPiSessionFactory(agentDir, {} as never);
+    const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({ cwd: '/tmp/workspace', systemPrompt: '' });
 
@@ -84,11 +86,36 @@ describe('OriginalPiSessionFactory', () => {
   });
 
   it('resolves an explicit model and forwards it', async () => {
-    const factory = new OriginalPiSessionFactory(agentDir, {} as never);
+    const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({ cwd: '/tmp/workspace', provider: 'anthropic', modelId: 'claude-x' });
 
     const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
     expect(options.model).toEqual({ provider: 'anthropic', modelId: 'claude-x' });
+  });
+
+  it('injects approval/plan inline extensions by default and gates them off by preset', async () => {
+    const factory = new OriginalPiSessionFactory(
+      agentDir,
+      undefined,
+      new ToolApprovalBroker(),
+      new PlanModeService(),
+    );
+
+    await factory.create({ cwd: '/tmp/workspace' });
+    const factories = (loaderOptions?.extensionFactories as unknown[] | undefined) ?? [];
+    expect(factories).toHaveLength(2); // plan + approval
+
+    await factory.create({ cwd: '/tmp/workspace', extensions: { approval: false } });
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+
+    await factory.create({ cwd: '/tmp/workspace', extensions: { planMode: false } });
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+
+    await factory.create({
+      cwd: '/tmp/workspace',
+      extensions: { approval: false, planMode: false },
+    });
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(0);
   });
 });

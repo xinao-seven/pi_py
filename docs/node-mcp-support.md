@@ -31,8 +31,8 @@ MCP 工具只是"另一种工具"。它应该：
 - **`DefaultResourceLoader.extensionFactories` 支持内联扩展工厂，不走 jiti 隔离**：工厂闭包可直接引用
   服务端单例。这是唯一能让多个会话共享 MCP 连接、且工具 `execute()` 直达连接管理器的途径。
 
-现有 plan / 审批扩展采用"文件扩展（jiti 隔离）+ 事件总线通道"模式，但 MCP 的连接状态必须进程级共享，
-所以 MCP 采用**内联扩展工厂注入**。这是对 SDK 既有能力（`extensionFactories`）的合理使用。
+plan / 审批 / MCP 都采用**内联扩展工厂注入**（`extensionFactories`），闭包直连服务端单例；
+MCP 的连接状态因此可以进程级共享。这是对 SDK 既有能力（`extensionFactories`）的合理使用。
 
 ## 总体架构
 
@@ -124,11 +124,10 @@ node-pi/server/
 ## 与既有功能协同
 
 1. **工具审批**：内联扩展额外注册 `pi.on("tool_call", ...)` —— 工具名以 `mcp__` 开头且对应 server 配置
-   `approval: "required"` 时，走与 `extensions/tool-approval.ts` 相同的
-   `pi:tool_approval:pending/decide/aborted` 通道契约。服务端内联代码可直接 import 服务端常量与
-   `ToolApprovalBroker`，**前端审批对话框零改动**。
-2. **Plan 模式**：`extensions/plan-mode.ts` 的 `tool_call` 拦截补一条 —— 规划期**默认拦截所有 `mcp__` 工具**
-   （无法证明只读，保守处理）。
+   `approval: "required"` 时，直接调用 `ToolApprovalBroker.requestApproval()` 挂起等待（内联扩展闭包
+   直连单例，与 bash 审批共用同一中枢），**前端审批对话框零改动**。
+2. **Plan 模式**：`PlanModeService.buildExtension()` 的 `tool_call` 拦截补一条 —— 规划期**默认拦截所有
+   `mcp__` 工具**（无法证明只读，保守处理）。
 3. **工具开关**：MCP 工具注册后出现在 `getActiveTools()`，前端的 `set_tools` 命令可开关，无需额外接口。
 4. **SSE 展示**：MCP 调用走标准 `tool_execution_start/update/end`，注册表全量转发，前端 `ToolCallBlock` 渲染
    （需确认对任意 toolName 的通用性）。
@@ -164,9 +163,9 @@ node-pi/server/
 - **[完成] P1 核心链路（无 UI）**：加依赖 `@modelcontextprotocol/sdk`（+ `zod` peer）；`McpConfig` +
   `McpClientManager` + `McpService`；`routes/mcp.ts`；`buildMcpExtension()` 注册工具。本地 stdio MCP server
   验证工具出现且可调用（见 `test/services/mcp-service.test.ts`）。
-- **[完成] P2 协同**：MCP 审批 `tool_call` 处理器（复用 `pi:tool_approval:*` 通道）；Plan 模式拦截
-  `mcp__` 工具（`extensions/plan-mode.ts`）。前端 ToolCallBlock / tool_call_pending 规约已确认对任意
-  toolName 与 risk/category 通用，无需改动。
+- **[完成] P2 协同**：MCP 审批 `tool_call` 处理器（直连 `ToolApprovalBroker.requestApproval()`）；
+  Plan 模式拦截 `mcp__` 工具（`PlanModeService.buildExtension()`）。前端 ToolCallBlock /
+  tool_call_pending 规约已确认对任意 toolName 与 risk/category 通用，无需改动。
 - **[完成] P3 前端**：`McpConfig.vue` 配置弹窗（状态徽标/工具数/启停/试连/增删改，对标 SkillsConfig）
   + `api.ts` 封装 + `App.vue`/`SessionSidebar.vue` 挂载（侧栏 MCP 按钮）。
   注意：REST 请求体把 server 配置嵌套在 `server` 键下，避免工作区 cwd 与 stdio 子进程 cwd 重名。

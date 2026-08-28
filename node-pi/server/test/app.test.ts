@@ -3,15 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createEventBus } from '@earendil-works/pi-coding-agent';
-
 import { createApp } from '../src/app.js';
 import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
 } from '../src/services/agent-registry.js';
-import { PLAN_CHANNEL_STATE, PlanModeService } from '../src/services/plan-mode-service.js';
+import type { PlanModeService } from '../src/services/plan-mode-service.js';
 import { PresetService } from '../src/services/preset-service.js';
 
 class FakePiSession implements PiSession {
@@ -166,21 +164,29 @@ describe('Fastify application', () => {
   });
 
   it('exposes the session Plan snapshot through the agent API', async () => {
-    const events = createEventBus();
-    const plans = new PlanModeService(events);
-    const registry = new AgentRegistry(new FakePiSessionFactory(), undefined, plans);
-    const app = createApp({ registry, planService: plans });
+    // 用桩替换 PlanModeService：本测试只验证 HTTP 路由把服务的状态快照透传出去，
+    // 状态机的完整行为在 plan-mode.test.ts 覆盖。
+    const plans = {
+      state: () => ({
+        sessionId: 'node-test-session',
+        mode: 'planning' as const,
+        todos: [{ step: 1, text: 'Inspect the API', completed: false }],
+        awaitingConfirmation: true,
+      }),
+      // AgentRegistry 构造时会给 plans 挂 setListener（SSE 转发），桩里保持无操作。
+      setListener: () => undefined,
+    };
+    const registry = new AgentRegistry(
+      new FakePiSessionFactory(),
+      undefined,
+      plans as unknown as PlanModeService,
+    );
+    const app = createApp({ registry });
     apps.push(app);
     await app.inject({
       method: 'POST',
       url: '/api/agent/new',
       payload: { cwd: process.cwd(), message: 'hello' },
-    });
-    events.emit(PLAN_CHANNEL_STATE, {
-      sessionId: 'node-test-session',
-      mode: 'planning',
-      todos: [{ step: 1, text: 'Inspect the API', completed: false }],
-      awaitingConfirmation: true,
     });
 
     const response = await app.inject({ method: 'GET', url: '/api/agent/node-test-session/plan' });

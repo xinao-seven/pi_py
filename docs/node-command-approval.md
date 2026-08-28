@@ -12,7 +12,7 @@ Pi 的 `bash` 工具能够执行任意系统命令。原有实现仅在少数“
 
 ## 策略层级
 
-`node-pi/server/extensions/tool-approval.ts` 的 `classifyBashCommand()` 以以下顺序评估命令：
+`node-pi/server/src/services/tool-approval.ts` 的 `classifyBashCommand()` 以以下顺序评估命令：
 
 | 优先级 | 例子 | 风险 | 分类 | 行为 |
 | --- | --- | --- | --- | --- |
@@ -26,24 +26,25 @@ Pi 的 `bash` 工具能够执行任意系统命令。原有实现仅在少数“
 
 ## 事件和状态流
 
+`ToolApprovalBroker` 同时持有“拦截点”和“挂起状态”：它以内联扩展注册 `tool_call` 钩子，
+命中规则后调用自身的 `requestApproval()` 挂起等待，不再经过事件总线。
+
 ```text
-bash tool_call
+bash tool_call（内联扩展的 tool_call 钩子）
   → classifyBashCommand()
-  → pi:tool_approval:pending
-  → ToolApprovalBroker（唯一的挂起/超时状态）
+  → broker.requestApproval(pending)（唯一的挂起/超时状态）
   → SSE tool_call_pending { rule, risk, category, ... }
   → ToolApprovalDialog
   → POST /api/agent/:sessionId { type: "approve_tool", approved }
-  → pi:tool_approval:decide
-  → 扩展放行或阻断工具调用
+  → broker.decide() 结算 requestApproval 的 Promise → 放行或阻断工具调用
 ```
 
 `risk` 为 `medium`、`high` 或 `critical`；`category` 为 `workspace_write`、
-`dependency_change`、`network`、`git_remote`、`destructive` 或 `system`。它们是扩展、
+`dependency_change`、`network`、`git_remote`、`destructive` 或 `system`。它们是
 服务端、SSE 与前端之间的契约，修改时必须同步更新所有层和契约测试。
 
 审批中枢仍默认在 30 秒后拒绝。用户拒绝、超时、AbortSignal、会话删除和服务关闭均按拒绝结算；
-扩展不能自行保存审批队列，避免会话重载后出现无法清理的等待项。
+挂起队列只由 broker 维护，避免会话重载后出现无法清理的等待项。
 
 ## 如何新增规则
 

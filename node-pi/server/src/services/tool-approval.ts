@@ -1,26 +1,24 @@
 /**
- * 工具调用审批的 Web 桥接层（事件总线版）。
+ * 工具调用审批中枢 + 内联扩展。
  *
- * 中文说明：审批逻辑的拦截点仍在扩展（node-pi/server/extensions/tool-approval.ts，
- * 通过 tool_call 钩子），本模块是"有状态"的那一半——挂起队列、决策超时、
- * 快照都由这里维护，是唯一真相源：
- * - 订阅 pi:tool_approval:pending：扩展命中危险规则时发布，本类创建挂起项
- *   （带决策超时，默认 30 秒）、触发 onPending 监听（注册表把它转成 SSE 事件推给前端）；
- * - decide()：前端审批后结算挂起项，并发布 pi:tool_approval:decide 让扩展放行/拦截；
- * - 订阅 pi:tool_approval:aborted：扩展感知到工具调用被中止（AbortSignal）时发布，
- *   本类按"拒绝"结算；
- * - cancelSession()：会话关闭/删除时把该会话所有挂起项按"拒绝"结算；
- * - 结算（settle）时会自动清理快照，state() 不会返回过期的 pendingToolCall。
- *
- * 事件通道名是两端之间的契约，必须与扩展里的同名常量保持一致。
- * 扩展与服务器不共享模块实例（jiti 隔离），所以所有通信都走事件总线。
+ * 中文说明：审批的"拦截点"与"有状态的一半"合并到同一个模块（内联扩展，不走 jiti），
+ * 因此扩展闭包可直接调用 broker 的方法，不再需要事件总线通道桥。
+ * - buildExtension()：注册 tool_call 钩子，命中危险命令规则时调用 requestApproval()
+ *   挂起等待决定；决定（前端 approve_tool）、超时、AbortSignal 中止、会话关闭都会结算。
+ * - requestApproval()：登记挂起项（防重入 + 决策超时）、触发 onPending 监听
+ *   （注册表把它转成 SSE 事件推给前端），返回 Promise<boolean> 表示放行/拦截。
+ * - 挂起队列、决策超时与快照都由本类维护，是唯一真相源。
  */
 
-import type { EventBus } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../errors.js';
 
-/** 一条待审批的工具调用（与扩展约定的数据结构，两端必须一致）。 */
+export type ApprovalRisk = 'medium' | 'high' | 'critical';
+export type ApprovalCategory =
+  'workspace_write' | 'dependency_change' | 'network' | 'git_remote' | 'destructive' | 'system';
+
+/** 一条待审批的工具调用。 */
 export interface PendingToolApproval {
   sessionId: string;
   toolCallId: string;
@@ -28,15 +26,180 @@ export interface PendingToolApproval {
   args: Record<string, unknown>;
   reason: string; // 人类可读的危险原因
   rule: string; // 命中的规则名
-  risk: 'medium' | 'high' | 'critical';
-  category:
-    'workspace_write' | 'dependency_change' | 'network' | 'git_remote' | 'destructive' | 'system';
+  risk: ApprovalRisk;
+  category: ApprovalCategory;
 }
 
-/** 事件通道名契约：与 node-pi/server/extensions/tool-approval.ts 保持一致。 */
-export const CHANNEL_PENDING = 'pi:tool_approval:pending';
-export const CHANNEL_DECIDE = 'pi:tool_approval:decide';
-export const CHANNEL_ABORTED = 'pi:tool_approval:aborted';
+export interface CommandApproval {
+  rule: string;
+  reason: string;
+  risk: ApprovalRisk;
+  category: ApprovalCategory;
+}
+
+interface DangerousCommandRule {
+  name: string;
+  pattern: RegExp;
+  reason: string;
+}
+interface SensitiveCommandRule extends CommandApproval {
+  pattern: RegExp;
+}
+
+/** 高危规则优先，避免强制推送等操作被普通 Git 规则降级。 */
+export const DANGEROUS_COMMAND_RULES: readonly DangerousCommandRule[] = [
+  {
+    name: 'privileged-delete',
+    pattern: /sudo\s+.*\b(rm|del|remove-item)\b/i,
+    reason: '使用提权执行删除命令，影响范围可能超出当前工作区',
+  },
+  {
+    name: 'recursive-delete',
+    pattern:
+      /(^|\b)(rm|rmdir|rd|del|remove-item)(\s|\/).*(-rf|-fr|--recursive|-recurse|\/s)(\s|$)/i,
+    reason: '递归或强制删除文件/目录，可能造成不可恢复的数据丢失',
+  },
+  {
+    name: 'file-delete',
+    pattern: /(^|[;|&]\s*|\b(?:sudo|command|xargs)\s+)(rm|rmdir|rd|del|remove-item)(\s|$)/i,
+    reason: '删除文件或目录会改变工作区内容，需要人工确认',
+  },
+  {
+    name: 'force-delete',
+    pattern: /(^|\b)remove-item(\s|\/).*(-force|\/f)(\s|$)/i,
+    reason: '强制删除文件或目录，可能造成不可恢复的数据丢失',
+  },
+  {
+    name: 'disk-format',
+    pattern: /(^|\b)(format|format-volume|mkfs|mkfs\.[a-z0-9]+|fdisk|diskpart)([.\s]|$)/i,
+    reason: '磁盘格式化或分区操作会销毁磁盘数据',
+  },
+  {
+    name: 'raw-disk-write',
+    pattern: /(^|\b)dd(\s+.*)?\s+of=\/(dev\/(sd|hd)|dev)\b|>\s*\/dev\/(sd|hd)/i,
+    reason: '直接写入磁盘设备会覆盖磁盘内容',
+  },
+  {
+    name: 'shutdown',
+    pattern: /(^|\b)(shutdown|restart-computer|stop-computer|reboot|poweroff)(\s|$)/i,
+    reason: '关机、重启或断电会中断当前机器',
+  },
+  {
+    name: 'force-push',
+    pattern: /git\s+(push|fetch)\s+.*(-f|--force)\b/i,
+    reason: '强制推送或拉取 Git 历史，可能覆盖远端提交',
+  },
+  {
+    name: 'bulk-uninstall',
+    pattern:
+      /(^|\b)(pip|npm|conda|apt|apt-get|dnf|yum)\s+(uninstall|remove|purge)(\s|$).*(-y\b|--yes\b|-y$)/i,
+    reason: '批量卸载软件包，可能破坏开发环境',
+  },
+  {
+    name: 'pipe-remote-script',
+    pattern:
+      /(curl|wget|iwr|invoke-webrequest|invoke-restmethod)[^\n|]*\s*\|\s*(sh|bash|zsh|iex|powershell)/i,
+    reason: '将远程脚本直接管道执行，可能运行未知代码',
+  },
+  {
+    name: 'recursive-chmod',
+    pattern: /chmod\s+(-r\s+)?777\s+\/\s*$|chown\s+(-r\s+)?[^\s]+\s+\//i,
+    reason: '递归修改根目录权限或属主，可能使系统不可用',
+  },
+  {
+    name: 'registry-delete',
+    pattern: /(^|\b)reg\s+delete\b/i,
+    reason: '删除 Windows 注册表项，可能损坏系统配置',
+  },
+  {
+    name: 'fork-bomb',
+    pattern: /:\(\)\s*\{.*\|.*&.*\}/,
+    reason: 'fork 炸弹会使系统资源耗尽',
+  },
+];
+export const SENSITIVE_COMMAND_RULES: readonly SensitiveCommandRule[] = [
+  {
+    rule: 'git-remote-write',
+    pattern: /\bgit\s+(push|fetch)\b/i,
+    reason: 'Git 远端操作可能写入远端分支或改变本地远端跟踪状态',
+    risk: 'high',
+    category: 'git_remote',
+  },
+  {
+    rule: 'dependency-change',
+    pattern:
+      /\b(?:npm|pnpm|yarn|bun|pip|pip3|uv)\s+(?:install|add|update|upgrade|remove|uninstall|publish)\b/i,
+    reason: '安装、更新、卸载或发布依赖会改变项目环境或向外部发布内容',
+    risk: 'high',
+    category: 'dependency_change',
+  },
+  {
+    rule: 'network-request',
+    pattern: /\b(?:curl|wget|iwr|invoke-webrequest|invoke-restmethod)\b/i,
+    reason: '命令将访问网络；请确认目标和传输的数据符合预期',
+    risk: 'medium',
+    category: 'network',
+  },
+  {
+    rule: 'shell-redirection-write',
+    pattern: /(?:^|\s)(?:>|>>)|\b(?:tee|out-file|set-content|add-content)\b/i,
+    reason: 'Shell 重定向会直接写入文件，可能覆盖或追加工作区内容',
+    risk: 'medium',
+    category: 'workspace_write',
+  },
+];
+
+export function findDangerousBashRule(input: unknown): DangerousCommandRule | undefined {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    typeof (input as { command?: unknown }).command !== 'string'
+  )
+    return undefined;
+  const command = (input as { command: string }).command.trim().replace(/\s+/g, ' ');
+  return DANGEROUS_COMMAND_RULES.find((rule) => rule.pattern.test(command));
+}
+function dangerousCategory(name: string): ApprovalCategory {
+  if (name === 'force-push') return 'git_remote';
+  if (name === 'pipe-remote-script') return 'network';
+  return [
+    'shutdown',
+    'disk-format',
+    'raw-disk-write',
+    'registry-delete',
+    'recursive-chmod',
+    'fork-bomb',
+  ].includes(name)
+    ? 'system'
+    : 'destructive';
+}
+/** 判断一条 bash 命令是否需要人工审批：危险规则 → critical；敏感规则 → medium/high。 */
+export function classifyBashCommand(input: unknown): CommandApproval | undefined {
+  const dangerous = findDangerousBashRule(input);
+  if (dangerous)
+    return {
+      rule: dangerous.name,
+      reason: dangerous.reason,
+      risk: 'critical',
+      category: dangerousCategory(dangerous.name),
+    };
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    typeof (input as { command?: unknown }).command !== 'string'
+  )
+    return undefined;
+  const command = (input as { command: string }).command.trim().replace(/\s+/g, ' ');
+  const sensitive = SENSITIVE_COMMAND_RULES.find((rule) => rule.pattern.test(command));
+  return (
+    sensitive && {
+      rule: sensitive.rule,
+      reason: sensitive.reason,
+      risk: sensitive.risk,
+      category: sensitive.category,
+    }
+  );
+}
 
 /** ToolApprovalBroker 构造选项。 */
 export interface ToolApprovalOptions {
@@ -49,59 +212,75 @@ interface Waiter {
   pending: PendingToolApproval;
   timer: NodeJS.Timeout;
   settle: (approved: boolean) => void;
+  abort: () => void;
 }
 
 /**
- * 服务端审批中枢：维护挂起队列 + 决策超时 + 通过事件总线向扩展收发结论。
- * 中文说明：不依赖 Fastify/SSE，便于单元测试；事件总线由 app.ts 创建并注入，
- * 同一个实例同时传给 AgentRegistry（订阅）与 OriginalPiSessionFactory（给 loader，
- * 最终成为扩展的 pi.events）。
+ * 服务端审批中枢：维护挂起队列 + 决策超时，并以内联扩展注册 bash 拦截。
+ * 中文说明：不依赖 Fastify/SSE/事件总线，便于单元测试；buildExtension() 生成的扩展
+ * 闭包直接引用本实例，requestApproval() 的 Promise 在决定/超时/中止/取消时结算。
  */
 export class ToolApprovalBroker {
   private readonly waiting = new Map<string, Waiter>();
   private onPending: ((pending: PendingToolApproval) => void) | undefined;
-  private readonly offs: Array<() => void> = [];
 
-  constructor(
-    private readonly events: EventBus,
-    private readonly options: ToolApprovalOptions = {},
-  ) {
-    // 扩展命中危险规则后发布待审批项：创建带决策超时的挂起项，并通知监听器（注册表发 SSE）。
-    this.offs.push(
-      events.on(CHANNEL_PENDING, (data) => {
-        const pending = data as PendingToolApproval;
-        this.addPending(pending);
-      }),
-    );
-    // 扩展感知工具调用被中止（AbortSignal）：按"拒绝"结算并清空快照。
-    this.offs.push(
-      events.on(CHANNEL_ABORTED, (data) => {
-        const aborted = data as { sessionId: string; toolCallId: string };
-        const waiter = this.waiting.get(this.key(aborted.sessionId, aborted.toolCallId));
-        if (waiter) waiter.settle(false);
-      }),
-    );
-  }
+  constructor(private readonly options: ToolApprovalOptions = {}) {}
 
-  /** 登记一个待审批项：防重入 + 启动决策超时。 */
-  private addPending(pending: PendingToolApproval): void {
-    const key = this.key(pending.sessionId, pending.toolCallId);
-    if (this.waiting.has(key)) return; // 同一调用不会重复挂起
-    // settle：无论批准/拒绝/超时都走这里，负责清定时器、清快照，并通知扩展。
-    const settle = (approved: boolean): void => {
-      const waiter = this.waiting.get(key);
-      if (!waiter) return; // 已结算过（幂等）
-      clearTimeout(waiter.timer);
-      this.waiting.delete(key);
-      this.events.emit(CHANNEL_DECIDE, {
-        sessionId: pending.sessionId,
-        toolCallId: pending.toolCallId,
-        approved,
+  /**
+   * 生成"bash 危险命令审批"内联扩展：命中规则时挂起等待，未命中或 TUI/RPC 宿主直接放行。
+   * 中文说明：host 守卫保留 ctx.hasUI——即使将来该扩展被共享到 TUI/RPC 宿主加载，
+   * 也不会绕过其自身的确认 UI。
+   */
+  buildExtension(): InlineExtension {
+    return (pi: ExtensionAPI) => {
+      pi.on('tool_call', async (event, ctx) => {
+        if (event.toolName !== 'bash' || ctx.hasUI) return undefined;
+        const approval = classifyBashCommand(event.input);
+        if (!approval) return undefined;
+        const pending: PendingToolApproval = {
+          sessionId: ctx.sessionManager.getSessionId(),
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.input as Record<string, unknown>,
+          ...approval,
+        };
+        const approved = await this.requestApproval(pending, ctx.signal);
+        return approved ? undefined : { block: true, reason: 'Tool execution was not approved' };
       });
     };
-    const timer = setTimeout(() => settle(false), this.options.timeoutMs ?? 30_000);
-    this.waiting.set(key, { pending, timer, settle });
-    this.onPending?.(pending);
+  }
+
+  /**
+   * 登记一个待审批项并等待决定：防重入 + 决策超时 + AbortSignal 中止感知。
+   * 返回 true 放行、false 拦截；重复登记同一调用直接返回 false。
+   * timeoutMs 可覆盖构造时的默认值（MCP 审批需要更长的等待窗口）。
+   */
+  requestApproval(
+    pending: PendingToolApproval,
+    signal?: AbortSignal,
+    timeoutMs?: number,
+  ): Promise<boolean> {
+    const key = this.key(pending.sessionId, pending.toolCallId);
+    if (this.waiting.has(key)) return Promise.resolve(false); // 同一调用不会重复挂起
+    return new Promise((resolve) => {
+      let settled = false;
+      // settle：无论批准/拒绝/超时/中止都走这里，负责清定时器、清快照、resolve。
+      const settle = (approved: boolean): void => {
+        if (settled) return;
+        settled = true;
+        const waiter = this.waiting.get(key);
+        if (!waiter) return; // 已结算过（幂等）
+        clearTimeout(waiter.timer);
+        signal?.removeEventListener('abort', abort);
+        this.waiting.delete(key);
+        resolve(approved);
+      };
+      const abort = (): void => settle(false);
+      signal?.addEventListener('abort', abort, { once: true });
+      const timer = setTimeout(() => settle(false), timeoutMs ?? this.options.timeoutMs ?? 30_000);
+      this.waiting.set(key, { pending, timer, settle, abort });
+      this.onPending?.(pending);
+    });
   }
 
   /** 注册"有新待审批项"的监听器（注册表用它发 SSE 事件）。 */
@@ -109,7 +288,7 @@ export class ToolApprovalBroker {
     this.onPending = listener;
   }
 
-  /** 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项并把决定发给扩展。 */
+  /** 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项。 */
   decide(sessionId: string, toolCallId: string, approved: boolean): void {
     const waiter = this.waiting.get(this.key(sessionId, toolCallId));
     if (!waiter)
@@ -132,10 +311,8 @@ export class ToolApprovalBroker {
     return undefined;
   }
 
-  /** 释放对事件总线的订阅，并把仍挂起的审批按"拒绝"结算（服务关闭时调用）。 */
+  /** 把仍挂起的审批按"拒绝"结算（服务关闭时调用）。 */
   dispose(): void {
-    for (const off of this.offs) off();
-    this.offs.length = 0;
     for (const [, waiter] of [...this.waiting]) waiter.settle(false);
   }
 

@@ -79,10 +79,10 @@ node-pi/server/
   避免误拒调用。
 - **结果映射**：`callTool` 的文本/图片/资源内容块 → Pi 的 `AgentToolResult`；失败（`isError`）按 bash 惯例
   **抛 Error** 由 agent-core 标记为错误；文本输出用 `truncateTail` 截断（**2000 行 / 50KB**）防撑爆上下文。
-- **审批协同**：server 配 `approval: "required"` 后，其工具调用复用 `pi:tool_approval:pending/decide/aborted`
-  通道，前端审批对话框零改动。
-- **Plan 协同**：规划期一律拦截 `mcp__` 工具（无法证明只读，保守处理）；因文件扩展先于内联扩展加载、
-  且 `tool_call` 遇 block 短路，不会弹出多余审批框。
+- **审批协同**：server 配 `approval: "required"` 后，其工具调用直接调用
+  `ToolApprovalBroker.requestApproval()`（内联扩展闭包直连单例），前端审批对话框零改动。
+- **Plan 协同**：规划期一律拦截 `mcp__` 工具（无法证明只读，保守处理）；因内联扩展按
+  `plan → approval → mcp` 顺序注册、`tool_call` 遇 block 短路，不会弹出多余审批框。
 - **生命周期**：会话创建/`reload_resources`/MCP 配置变更 → 内联扩展重跑 `ensure(cwd)` + 注册当前工具集
   （增删立即生效）；服务关闭 → `McpService.dispose()` 关闭全部连接与子进程。
 

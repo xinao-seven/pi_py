@@ -26,10 +26,9 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   type CompactionSettings,
-  type EventBus,
+  type InlineExtension,
   type SessionInfo,
 } from '@earendil-works/pi-coding-agent';
-import { readdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -64,28 +63,6 @@ interface AssistantMessageMeta {
   };
 }
 
-/**
- * 返回 Node 后端随服务发布的扩展目录。
- *
- * 中文说明：源码位于 server/src/services，构建产物位于 server/dist/services；两种情况下
- * 上溯两级都恰好回到 server/。将路径计算提取为函数，避免目录重构后加载器和测试各自猜测。
- */
-export function serverExtensionDirectory(sourceDirectory = import.meta.dirname): string {
-  return join(sourceDirectory, '..', '..', 'extensions');
-}
-
-/** 扫描一个扩展目录中的直接子文件；README、子目录和非 JS/TS 文件均忽略。 */
-export function discoverLocalExtensions(directory: string): string[] {
-  try {
-    return readdirSync(directory)
-      .filter((name) => name.endsWith('.ts') || name.endsWith('.js'))
-      .sort()
-      .map((name) => join(directory, name));
-  } catch {
-    return [];
-  }
-}
-
 /** 图片附件（模型视觉输入）：base64 数据 + MIME 类型。 */
 export interface ImageAttachment {
   type: 'image';
@@ -102,6 +79,11 @@ export interface CreateSessionInput {
   toolNames?: string[]; // 启用的工具白名单
   systemPrompt?: string; // 预设系统提示词；空串/未提供 = SDK 默认
   compaction?: CompactionSettings; // 预设上下文压缩策略；未提供 = SDK 默认
+  /** 预设可关闭的能力开关；未指定一律开启。 */
+  extensions?: {
+    approval?: boolean; // 危险命令人工审批
+    planMode?: boolean; // Web Plan 模式
+  };
 }
 
 /** 磁盘上持久化会话的元信息（从 SessionManager.listAll 的 SessionInfo 转换而来）。 */
@@ -231,8 +213,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
 
   constructor(
     private readonly agentDir: string,
-    private readonly eventBus: EventBus,
     private readonly mcpService?: McpService,
+    private readonly approvals?: ToolApprovalBroker,
+    private readonly plans?: PlanModeService,
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -266,7 +249,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       cwd: input.cwd,
       agentDir: this.agentDir,
       modelRuntime: runtime,
-      resourceLoader: await this.loader(input.cwd, input.systemPrompt),
+      resourceLoader: await this.loader(input.cwd, input.systemPrompt, input.extensions),
       ...(model === undefined ? {} : { model }),
       ...(input.thinkingLevel
         ? { thinkingLevel: input.thinkingLevel as AgentSession['thinkingLevel'] }
@@ -340,30 +323,30 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     return this.runtimePromise;
   }
 
-  /** 创建资源加载器（工具/技能发现），并注册"工具审批"扩展。 */
-  private async loader(cwd: string, systemPrompt?: string): Promise<DefaultResourceLoader> {
-    // 本服务自身的扩展目录：node-pi/server/extensions/。dev（src/services）与 prod
-    // （dist/services）都上溯 2 级落在 server/ 下，扫描其中的 .ts/.js 扩展模块。
-    const extensionDir = serverExtensionDirectory();
+  /** 创建资源加载器（工具/技能发现 + 内联扩展注入）。 */
+  private async loader(
+    cwd: string,
+    systemPrompt?: string,
+    extensions?: CreateSessionInput['extensions'],
+  ): Promise<DefaultResourceLoader> {
+    // 内联扩展：不走 jiti、闭包直连服务单例，使多个会话共享同一连接/审批中枢，
+    // 并支持按预设开关动态启用/禁用。仍保留 SDK 的自动发现（与 TUI 平级）加载
+    // 用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展。
+    // 顺序有讲究：plan 在 approval 之前（规划期先拦下危险命令，避免先弹审批框），
+    // approval 在 mcp 之前（MCP 审批复用 broker）。
+    const factories: InlineExtension[] = [];
+    if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
+    if (extensions?.approval !== false && this.approvals)
+      factories.push(this.approvals.buildExtension());
+    // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）。
+    if (this.mcpService) factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals));
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: this.agentDir,
       // 预设系统提示词：非空才传（空串传进去会让 loader 跳过 SYSTEM.md/AGENTS.md 发现，
       // 使"默认预设"破坏用户已有的文件级提示词）。空串/未提供 → 走 SDK 默认发现。
       ...(systemPrompt ? { systemPrompt } : {}),
-      // 与 TUI 平级：不设 noExtensions，走 SDK 的自动发现（与 TUI 相同的代码路径），
-      // 加载用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展，
-      // 使 Web 能实现 TUI 能做的一切。工具审批扩展（tool-approval.ts）通过下面的
-      // additionalExtensionPaths 作为仓库内额外来源加载，并通过 eventBus 与本服务联动。
-      // 审批扩展内部用 ctx.hasUI 守卫，只在 Web 后端（无 UI 上下文）生效，TUI/RPC
-      // 有自己的确认 UI 会直接放行——所以两边共享扩展目录也不会互相干扰。
-      additionalExtensionPaths: discoverLocalExtensions(extensionDir),
-      // MCP 内联扩展：不走 jiti、闭包直连 McpService 单例，使多个会话共享同一连接；
-      // 工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）。
-      extensionFactories: this.mcpService ? [buildMcpExtension(this.mcpService, cwd)] : [],
-      // 关键：把 app.ts 创建的事件总线传给 loader，扩展的 pi.events 与
-      // ToolApprovalBroker 订阅的是同一个实例，审批待处理/决定才能互通。
-      eventBus: this.eventBus,
+      extensionFactories: factories,
     });
     await loader.reload();
     return loader;

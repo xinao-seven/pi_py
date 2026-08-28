@@ -15,8 +15,7 @@ node-pi/server/
 │   ├── server.ts               # 进程入口：读取配置并监听端口
 │   ├── config.ts / errors.ts   # 基础设施配置、统一 API 错误
 │   ├── routes/                 # HTTP/SSE 适配层；按资源拆分，保持薄
-│   └── services/               # 业务逻辑、Pi SDK 适配、状态与文件操作
-├── extensions/                 # 本后端专属扩展（每个 .ts/.js 文件一个扩展）
+│   └── services/               # 业务逻辑、Pi SDK 适配、状态与文件操作、内联扩展
 ├── test/                       # Vitest；目录结构尽量映射 src/
 ├── package.json
 └── README.md                   # 启动与对外使用说明
@@ -32,7 +31,9 @@ node-pi/server/
 - 新 Pi 会话能力：放在 `AgentRegistry` 或其工厂适配层，对外暴露小而可测的接口；不要把 SDK
   的未稳定内部字段扩散到路由层。
 - 新的本地持久化、工作区、模型或资源逻辑：各自一个 service，构造函数接受路径或依赖，便于测试替换。
-- 新工具或事件钩子：放在 `extensions/`，不要为了加载单个扩展修改 `app.ts` 或路由。
+- 新工具或事件钩子：以"内联扩展"实现——在 `services/` 写一个类，提供 `buildExtension()` 返回
+  `InlineExtension`，并在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 中注册。
+  仓库内不再使用 jiti 文件扩展；用户级/工作区级扩展仍由 SDK 自动发现。
 
 ## 2. HTTP、SSE 与错误契约
 
@@ -58,46 +59,41 @@ node-pi/server/
 - 危险工具调用必须默认拒绝。审批扩展只负责拦截、发布事件和等待决定；待审批队列、超时、会话
   取消和 SSE 转发由 `ToolApprovalBroker` 作为唯一真相源维护。
 
-## 4. 扩展规范
+## 4. 内联扩展规范
 
-### 4.1 唯一的仓库扩展目录
+### 4.1 仓库内扩展一律内联
 
-本次目录重构后的**规范位置**是 `node-pi/server/extensions/`：一个 `.ts` 或 `.js` 文件就是一个
-可独立加载的扩展，默认导出 `ExtensionFactory`。扩展可注册工具或订阅 Pi 事件，但不应依赖 Fastify
-实例、路由对象或另一扩展的模块级单例。
+本服务不再随仓库发布 jiti 文件扩展。需要给每个会话注入工具或事件钩子时，在 `services/` 写一个
+类，提供 `buildExtension(): InlineExtension`，由 `OriginalPiSessionFactory.loader()` 在
+`extensionFactories` 中注册。示例：`ToolApprovalBroker.buildExtension()`、
+`PlanModeService.buildExtension()`、`buildMcpExtension()`。
 
-`OriginalPiSessionFactory.loader()` 通过 `serverExtensionDirectory()` 统一解析这一目录，并由
-`extension-loader.test.ts` 证明内置扩展实际能被发现。目录再次重构时，必须同步更新该函数、加载
-测试和文档；不要依赖相对层级散落在各处的路径计算。
+内联扩展在服务端模块图里创建，闭包可直接引用服务单例（审批中枢、MCP 连接池），无需事件总线桥接。
+每个会话的资源加载器都会调用一次工厂，因此按会话隔离状态要在工厂内创建（参考
+`PlanModeService` 的 `PlanMachine`）。
 
-### 4.2 加载与隔离
+### 4.2 用户级/工作区级文件扩展仍由 SDK 自动发现
 
-- 默认资源加载器仍会发现用户级 `~/.pi/agent/extensions/` 和工作区 `.pi/extensions/`；仓库内
-  `server/extensions/` 是本服务的额外扩展来源，不替代前两者。
-- 扩展可能在 Web、TUI 或 RPC 宿主加载。涉及 Web 专属行为时必须使用宿主上下文守卫（例如
-  `ctx.hasUI`），不能仅依赖目录位置判断。
-- 扩展由 jiti 隔离加载，不能以 import 的方式共享服务端单例。需要协作时使用注入给 loader 的
-  `pi.events`，并把通道名和 payload 当作版本化契约。
-- 自定义依赖安装在 `node-pi/server`，且必须加入 `package.json` 与 lockfile；优先使用 SDK 已提供的
-  包，避免引入只为一个扩展服务的大型运行时依赖。
+默认资源加载器继续发现用户级 `~/.pi/agent/extensions/` 与工作区 `.pi/extensions/`（与 TUI 平级），
+仓库不额外扫描自己的扩展目录。用户扩展按 SDK 语义加载，不与服务端共享模块实例。
 
-### 4.3 事件通道契约
+### 4.3 钩子与顺序
 
-- 通道名采用 `pi:<domain>:<action>`，载荷必须是 JSON 可序列化的 plain object，并包含关联会话与
-  调用 ID（适用时）。禁止传递函数、类实例、Error 或模块对象。
-- 事件生产者与消费者各自维护的常量必须保持相同，并有契约测试断言；更改通道名或 payload 属于
-  兼容性变更，需同步服务端、扩展、SSE/UI 和文档。
-- 等待型扩展必须有中止处理和保守的超时结果；批准、拒绝、超时、会话移除、应用关闭都必须幂等地
-  清理监听器与定时器。
+- `tool_call` 处理器按 `extensionFactories` 注册顺序执行，遇 `{ block: true }` 短路。顺序要保持
+  `plan → approval → mcp`：规划期先拦下危险命令/`mcp__` 工具，避免先弹审批框。
+- 涉及 Web 专属行为时保留宿主上下文守卫（`ctx.hasUI`），避免扩展将来被共享到 TUI/RPC 宿主时
+  绕过其自身的确认 UI。
+- 等待型钩子必须有中止处理（`ctx.signal`）和保守的超时结果；批准、拒绝、超时、会话移除、应用
+  关闭都必须幂等地清理定时器与监听器。
 
-### 4.4 新扩展最低交付清单
+### 4.4 新内联扩展最低交付清单
 
-1. 在 `extensions/<feature>.ts` 实现默认导出工厂，并使用唯一、描述性的工具/事件名称。
-2. 为规则、输入和结果写纯单元测试；涉及事件桥接时，用真实 `createEventBus()` 覆盖成功、拒绝、
-   超时与 AbortSignal/会话关闭路径。
-3. 为加载路径加覆盖，确认 `server/extensions/` 中的文件会被发现；如改变前端可见行为，再补 API/SSE
-   集成测试。
-4. 更新 `extensions/README.md`，记录用途、权限/安全边界、事件契约和运行依赖。
+1. 在 `services/<feature>.ts` 实现提供 `buildExtension()` 的类，使用唯一、描述性的工具/事件名称。
+2. 为规则、输入和结果写纯单元测试；用假 `pi`（`on` + 钩子捕获）覆盖成功、拒绝、超时与
+   AbortSignal/会话关闭路径。
+3. 如改变前端可见行为，补 API/SSE 集成测试；在 `OriginalPiSessionFactory` 工厂测试中确认
+   `extensionFactories` 按预设开关正确注入/排除。
+4. 同步更新 `docs/node-extension-system.md` 与相关功能文档。
 
 ## 5. TypeScript 与测试规范
 
@@ -121,8 +117,8 @@ npm run build
 
 ## 6. 文档与提交
 
-- 对外启动、配置或目录变化同步更新本目录 `README.md`；扩展变化同步更新
-  `extensions/README.md`；跨后端行为变化同步更新 `docs/node-pi-backend.md` 与仓库说明。
+- 对外启动、配置或目录变化同步更新本目录 `README.md`；内联扩展变化同步更新
+  `docs/node-extension-system.md`；跨后端行为变化同步更新 `docs/node-pi-backend.md` 与仓库说明。
 - 提交采用 Conventional Commits：`feat`、`fix`、`docs`、`refactor`、`test`、`chore`；每个提交
   聚焦一个可验证的变更。
 - 提交前确认 `git status` 仅包含本次改动；不要提交 `node_modules/`、`dist/`、会话、凭据或本地

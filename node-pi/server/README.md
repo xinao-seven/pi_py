@@ -11,9 +11,9 @@ npm install
 npm run dev
 ```
 
-本项目的扩展放在 `extensions/`（即 `node-pi/server/extensions/`），服务为每个 Pi Session
-创建资源加载器时会自动扫描加载。接入说明见
-[`docs/node-extension-system.md`](../../docs/node-extension-system.md)。
+本项目的工具审批、Plan 模式与 MCP 工具以**内联扩展**注入每个 Pi Session（闭包直连服务单例），
+由 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 注册；用户级/工作区级文件扩展仍由
+SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/node-extension-system.md)。
 
 日志输出到 stdout，采用人类可读（pino-pretty）格式，包含请求、错误与启动日志；
 级别用环境变量 `PI_NODE_LOG_LEVEL` 控制（`trace|debug|info|warn|error|fatal`，默认 `info`；

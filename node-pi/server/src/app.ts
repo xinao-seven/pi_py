@@ -15,7 +15,6 @@
  *   "应用关闭时"执行，适合做资源初始化和清理。
  */
 
-import { createEventBus } from '@earendil-works/pi-coding-agent';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
@@ -112,13 +111,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     });
   }
 
-  // 工具调用审批中枢：Pi 的 bash 工具在命中危险命令规则时，会通过它
-  // 挂起等待，直到前端在 SSE 流上收到 tool_call_pending 事件后做出审批。
-  // 扩展与服务器不共享模块实例（jiti 隔离），所以用同一个事件总线联动：
-  // 同一实例同时注入 OriginalPiSessionFactory（成为扩展的 pi.events）与 broker。
-  const eventBus = createEventBus();
-  const approvals = new ToolApprovalBroker(eventBus);
-  const plans = options.planService ?? new PlanModeService(eventBus);
+  // 工具调用审批中枢 + Plan 模式服务：都以"内联扩展"注入每个会话，
+  // 闭包直接引用这两个实例（不走事件总线），挂起等待由 broker 的 Promise 结算。
+  const approvals = new ToolApprovalBroker();
+  const plans = options.planService ?? new PlanModeService();
 
   const agentDir =
     options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? '.'}/.pi/agent`;
@@ -140,10 +136,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     new AgentRegistry(
       // OriginalPiSessionFactory 是 Pi SDK 的适配器，负责真正创建/打开 AgentSession；
       // agentDir 默认指向用户主目录下的 ~/.pi/agent。
-      // 传入 eventBus（扩展的 pi.events 也指向它），审批扩展才能与 broker 联动；
-      // 传入 mcpService，MCP 内联扩展才能注入会话并共享连接。
+      // 传入 mcpService/approvals/plans，loader 把它们包装成内联扩展注入每个会话
+      // （闭包直连实例，共享 MCP 连接与审批中枢，支持按预设开关）。
       // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
-      new OriginalPiSessionFactory(agentDir, eventBus, mcpService),
+      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans),
       approvals,
       plans,
       app.log,
