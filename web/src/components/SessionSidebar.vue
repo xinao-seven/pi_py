@@ -246,3 +246,389 @@ function relativeDate(value: string): string {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 会话侧栏：品牌区、会话分组列表、底部设置入口（含 2026 白灰重设计的最终值） */
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 10px 10px;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 3px 10px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  font-family: Georgia, serif;
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.brand-name {
+  font-weight: 720;
+  letter-spacing: -0.02em;
+}
+
+.brand-caption {
+  display: none;
+}
+
+.sidebar-collapse-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-collapse-button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+:root[data-theme='light'] .sidebar-collapse-button:hover,
+:root[data-theme='light'] .session-item:hover,
+:root[data-theme='light'] .sidebar-config-actions button:hover {
+  background: #edf1e5;
+}
+
+.new-session-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 13px;
+  font-weight: 620;
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.new-session-button:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.new-session-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.session-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 7px 7px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.session-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 10px;
+}
+
+.session-project-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-list {
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #363a43 transparent;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.session-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background: #3b404a;
+  background-clip: content-box;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background-color: #626a77;
+}
+
+.session-project-group {
+  margin-bottom: 3px;
+}
+
+.session-project-group--generic {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.session-project-heading {
+  display: grid;
+  grid-template-columns: 14px 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 31px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-project-heading:hover {
+  background: var(--panel-soft);
+}
+
+.session-project-chevron {
+  display: inline-block;
+  color: var(--faint);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.session-project-heading[aria-expanded='true'] .session-project-chevron {
+  transform: rotate(90deg);
+}
+
+.session-project-icon {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.session-project-name {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-project-body {
+  margin-left: 14px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+}
+
+.session-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-height: 35px;
+  margin-bottom: 2px;
+  padding: 7px 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: 140ms ease;
+}
+
+.session-item:hover {
+  background: var(--panel-soft);
+}
+
+.session-item--active {
+  border-color: transparent;
+  background: var(--panel-soft);
+}
+
+.session-item--fork {
+  border-left-color: rgba(231, 255, 111, 0.12);
+}
+
+.session-item--orphan {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.orphan-badge {
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 129, 120, 0.25);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.session-fork-mark {
+  margin-right: 4px;
+  color: var(--faint);
+}
+
+.session-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.session-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-note {
+  padding: 16px 10px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.sidebar-config-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.sidebar-config-actions button {
+  min-height: 31px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+}
+
+.sidebar-config-actions button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.sidebar-service {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  color: var(--faint);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #888888;
+}
+
+:root[data-theme='light'] .status-dot {
+  background: #198754;
+  box-shadow: 0 0 8px rgba(25, 135, 84, 0.35);
+}
+
+.sidebar-settings-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 37px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sidebar-settings-button:hover {
+  background: var(--panel-soft);
+}
+
+:root[data-theme='light'] .sidebar-config-actions button {
+  color: var(--muted);
+  background: #f8f9f5;
+}
+
+@media (max-width: 760px) {
+  .sidebar-collapse-button {
+    display: none;
+  }
+}
+</style>

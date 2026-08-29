@@ -44,3 +44,96 @@ const status = computed(() => {
     </div>
   </details>
 </template>
+
+<style scoped>
+/* 工具调用块：按结果状态着色的可折叠卡片 */
+.tool-call {
+  margin: 0 0 13px;
+  overflow: hidden;
+  border: 0;
+  border-left: 3px solid #8a63d2;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tool-call--success {
+  border-left-color: #2d9d68;
+}
+
+.tool-call--error {
+  border-left-color: #d05252;
+}
+
+.tool-call summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0 5px 12px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-glyph {
+  color: var(--accent);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-weight: 700;
+}
+
+.tool-name {
+  color: var(--text);
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+.tool-status {
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.tool-call--error .tool-status {
+  color: var(--danger);
+}
+
+.tool-call--success .tool-status {
+  color: #168453;
+}
+
+.tool-section {
+  padding: 4px 0 9px 12px;
+}
+
+.tool-label {
+  margin: 2px 0 6px;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tool-section pre {
+  max-height: 260px;
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #aeb4be;
+  background: #0d0f13;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+}
+
+:root[data-theme='light'] .tool-section pre {
+  color: #213025;
+  background: #f3f5ee;
+}
+</style>

@@ -75,3 +75,102 @@ const images = computed(() =>
     </div>
   </article>
 </template>
+
+<style scoped>
+/* 单条消息：行布局、用户右对齐、图片、错误与流式光标 */
+.message-row {
+  margin: 0 0 34px;
+  animation: message-enter 180ms ease-out;
+}
+
+.message-row--user {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  margin-left: 0;
+  padding-left: min(18%, 120px);
+  border-left: 0;
+  text-align: right;
+}
+
+.message-body {
+  min-width: 0;
+  max-width: 760px;
+}
+
+.message-body--user {
+  max-width: 680px;
+}
+
+.message-body--user .message-text {
+  color: var(--text);
+}
+
+.message-text {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-images img {
+  max-width: min(280px, 55vw);
+  max-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.message-error {
+  margin-top: 12px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 129, 120, 0.2);
+  border-radius: 4px;
+  color: #ffc0ba;
+  background: rgba(255, 99, 88, 0.09);
+  font-size: 12px;
+}
+
+.stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 3px;
+  border-radius: 1px;
+  vertical-align: -2px;
+  background: var(--accent);
+  animation: blink 0.9s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .message-row--user {
+    padding-left: 10%;
+  }
+}
+</style>

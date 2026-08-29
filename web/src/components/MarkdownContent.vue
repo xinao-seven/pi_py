@@ -31,3 +31,118 @@ const html = computed(() => {
   <!-- eslint-disable-next-line vue/no-v-html -->
   <div class="markdown-content" v-html="html" />
 </template>
+
+<style scoped>
+/* Markdown 渲染：内部元素由 v-html 动态生成，须经 :deep() 命中；
+   hljs token 配色在 globals.css 中全局定义 */
+.markdown-content {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.markdown-content :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-content :deep(p),
+.markdown-content :deep(ul),
+.markdown-content :deep(ol),
+.markdown-content :deep(blockquote) {
+  margin: 0 0 13px;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  padding-left: 22px;
+}
+
+.markdown-content :deep(li + li) {
+  margin-top: 4px;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3) {
+  margin: 22px 0 9px;
+  color: var(--text);
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.markdown-content :deep(h1) {
+  font-size: 21px;
+}
+
+.markdown-content :deep(h2) {
+  font-size: 18px;
+}
+
+.markdown-content :deep(h3) {
+  font-size: 15px;
+}
+
+.markdown-content :deep(a) {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.markdown-content :deep(blockquote) {
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid #596136;
+  color: var(--muted);
+}
+
+.markdown-content :deep(code:not(pre code)) {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: #e7efbc;
+  background: #1a1e24;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.markdown-content :deep(pre) {
+  overflow-x: auto;
+  margin: 13px 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #eef0f3;
+  background: #0d0f13;
+  scrollbar-width: thin;
+}
+
+.markdown-content :deep(pre code) {
+  color: inherit;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.markdown-content :deep(pre .hljs) {
+  color: #eef0f3;
+  background: transparent;
+}
+
+:root[data-theme='light'] .markdown-content :deep(pre),
+:root[data-theme='light'] .markdown-content :deep(code:not(pre code)) {
+  color: #213025;
+  background: #f3f5ee;
+}
+
+:root[data-theme='light'] .markdown-content :deep(code:not(pre code)) {
+  color: #324600;
+  background: #edf2dc;
+}
+
+:root[data-theme='light'] .markdown-content :deep(pre .hljs) {
+  color: #213025;
+}
+</style>

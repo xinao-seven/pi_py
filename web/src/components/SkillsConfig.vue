@@ -118,3 +118,82 @@ function messageOf(cause: unknown): string {
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 技能列表：卡片、开关与诊断信息；弹窗骨架在 globals.css 中共享 */
+.skills-list {
+  display: grid;
+  gap: 10px;
+}
+
+.skill-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+}
+
+.skill-card > div {
+  min-width: 0;
+}
+
+.skill-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.skill-title-row span {
+  padding: 2px 5px;
+  border-radius: 6px;
+  color: var(--faint);
+  background: var(--panel-soft);
+  font-size: 8px;
+}
+
+.skill-card p {
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.skill-card code {
+  display: block;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-toggle {
+  flex: 0 0 auto;
+  min-width: 60px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.skill-toggle--on {
+  border-color: rgba(231, 255, 111, 0.34);
+  color: var(--accent);
+  background: rgba(231, 255, 111, 0.06);
+}
+
+:root[data-theme='light'] .skill-toggle--on {
+  border-color: #8ca63a;
+  color: #3d5700;
+  background: #eff5d7;
+}
+
+.skill-diagnostics {
+  color: var(--faint);
+  font-size: 10px;
+}
+</style>

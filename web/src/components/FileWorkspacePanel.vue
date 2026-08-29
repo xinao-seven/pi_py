@@ -40,3 +40,65 @@ const emit = defineEmits<{
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 文件工作区面板：头部 + 资源管理器/预览两列布局 */
+.file-workspace-panel {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-panel-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.file-panel-header > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.file-panel-header strong {
+  font-size: 12px;
+}
+
+.file-panel-header span {
+  overflow: hidden;
+  color: var(--faint);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-panel-header button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.file-preview-column {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+@media (max-width: 760px) {
+  .file-workspace-panel {
+    grid-template-columns: minmax(125px, 38vw) minmax(0, 1fr);
+  }
+}
+</style>

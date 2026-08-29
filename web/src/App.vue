@@ -245,3 +245,28 @@ onBeforeUnmount(stopSessionRecovery);
     />
   </template>
 </template>
+
+<style scoped>
+/* 全局错误提示（右上角浮动） */
+.app-alert {
+  position: absolute;
+  top: 76px;
+  right: 18px;
+  z-index: 20;
+  display: flex;
+  gap: 15px;
+  max-width: 420px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 129, 120, 0.2);
+  border-radius: 10px;
+  color: #ffc0ba;
+  background: rgba(255, 99, 88, 0.09);
+  font-size: 11px;
+}
+
+.app-alert button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+</style>

@@ -58,3 +58,52 @@ watch(() => props.root, loadRoot, { immediate: true });
     </ul>
   </section>
 </template>
+
+<style scoped>
+/* 文件树容器与标题栏 */
+.file-explorer {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+}
+
+.file-explorer-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 37px;
+  padding: 0 9px 0 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+  background: #111318;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.file-explorer-heading button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+:root[data-theme='light'] .file-explorer-heading {
+  background: #ffffff;
+}
+
+.file-panel-state {
+  padding: 12px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.file-panel-state--error {
+  color: var(--danger);
+}
+</style>

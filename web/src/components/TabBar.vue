@@ -42,3 +42,60 @@ const emit = defineEmits<{
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 已打开文件的标签栏 */
+.file-tab-bar {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 37px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: #111318;
+  scrollbar-width: thin;
+}
+
+:root[data-theme='light'] .file-tab-bar {
+  background: #ffffff;
+}
+
+.file-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--line);
+  border-bottom: 2px solid transparent;
+}
+
+.file-tab--active {
+  border-bottom-color: var(--accent);
+  background: #171a20;
+}
+
+:root[data-theme='light'] .file-tab--active {
+  background: #ffffff;
+}
+
+.file-tab-select,
+.file-tab-close {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.file-tab-select {
+  max-width: 150px;
+  padding: 9px 5px 8px 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tab-close {
+  padding: 8px 8px 8px 3px;
+  color: var(--faint);
+}
+</style>

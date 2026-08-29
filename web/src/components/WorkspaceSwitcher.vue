@@ -172,3 +172,144 @@ function messageOf(cause: unknown): string {
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 工作区切换：路径表单 + 已登记工作区列表；弹窗骨架在 globals.css 中共享 */
+.workspace-dialog {
+  width: min(720px, 100%);
+}
+
+.workspace-path-form {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 20px;
+}
+
+.workspace-path-form > label,
+.workspace-list-heading {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-path-form > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+
+.workspace-path-form input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: #0e1014;
+}
+
+:root[data-theme='light'] .workspace-path-form input {
+  color: var(--text);
+  background: #fbfcf8;
+}
+
+.workspace-path-form small {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.workspace-picker-button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--panel-raised);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-picker-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.workspace-picker-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.workspace-list-heading {
+  margin-bottom: 8px;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 7px;
+}
+
+.workspace-option {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel-raised);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-option:hover,
+.workspace-option--current {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.workspace-option:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.workspace-option > span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-option code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-option small {
+  color: var(--accent);
+  font-size: 9px;
+}
+
+@media (max-width: 760px) {
+  .workspace-path-form > div {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-option {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workspace-option code {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+</style>

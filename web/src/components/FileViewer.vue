@@ -79,3 +79,68 @@ watch(() => [props.root, props.path, kind.value] as const, load, { immediate: tr
     </pre>
   </section>
 </template>
+
+<style scoped>
+/* 文件预览：源码 / 图片 / 音频与空态 */
+.file-viewer {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-viewer-empty,
+.media-preview {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.file-viewer-empty span {
+  color: var(--accent);
+  font-size: 28px;
+}
+
+.media-preview img {
+  max-width: 100%;
+  max-height: calc(100vh - 135px);
+  object-fit: contain;
+}
+
+.media-preview--audio audio {
+  width: min(100%, 360px);
+}
+
+.source-preview {
+  min-width: max-content;
+  min-height: 100%;
+  margin: 0;
+  padding: 18px;
+  color: #d6dae3;
+  background: #0d0f13;
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+:root[data-theme='light'] .source-preview {
+  color: #213025;
+  background: #f3f5ee;
+}
+
+.file-panel-state {
+  padding: 12px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.file-panel-state--error {
+  color: var(--danger);
+}
+</style>

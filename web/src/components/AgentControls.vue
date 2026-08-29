@@ -151,3 +151,125 @@ function changePreset(event: Event): void {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 会话控制条：模型/思考等级下拉、压缩按钮、上下文用量与重试提示 */
+.agent-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.agent-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.control-field {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+}
+
+.control-field > span {
+  padding-left: 8px;
+  color: #686f7a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+:root[data-theme='light'] .control-field > span {
+  color: var(--muted);
+}
+
+.control-field select {
+  max-width: 170px;
+  padding: 6px 8px 6px 5px;
+  border: 0;
+  outline: 0;
+  color: #f2f3f5;
+  color-scheme: dark;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.control-field select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.control-field option {
+  color: #f2f3f5;
+  background: #171a20;
+}
+
+:root[data-theme='light'] .control-field select,
+:root[data-theme='light'] .control-field option {
+  color: var(--muted);
+  color-scheme: light;
+  background: transparent;
+}
+
+:root[data-theme='light'] .control-field option {
+  background: #ffffff;
+}
+
+:root[data-theme='light'] .control-field {
+  background: #f7f8f3;
+}
+
+.compact-button {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: #9da3ae;
+  background: var(--panel);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+:root[data-theme='light'] .compact-button {
+  color: var(--muted);
+  background: transparent;
+}
+
+.compact-button--active {
+  border-color: var(--line-strong);
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.compact-button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.retry-indicator {
+  flex: 0 0 auto;
+  color: #ffc18e;
+  font-size: 10px;
+}
+
+.context-meter {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #292d35;
+}
+
+.context-meter span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+</style>

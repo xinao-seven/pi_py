@@ -70,3 +70,82 @@ function choose(approved: boolean): void {
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 审批弹窗私有部分；弹窗骨架（config-*）在 globals.css 中共享 */
+.approval-dialog {
+  width: min(560px, 100%);
+  min-height: 0;
+}
+
+.approval-reason {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.approval-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.approval-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.approval-hint {
+  margin: 10px 0 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.approval-footer {
+  gap: 8px;
+}
+
+.approval-footer .danger-action {
+  border-color: rgba(255, 129, 120, 0.35);
+  color: var(--danger);
+}
+
+/* 命令内容展示区（与 ToolCallBlock 的 tool-section 同款） */
+.tool-section {
+  padding: 4px 0 9px 12px;
+}
+
+.tool-label {
+  margin: 2px 0 6px;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tool-section pre {
+  max-height: 260px;
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #aeb4be;
+  background: #0d0f13;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+}
+
+:root[data-theme='light'] .tool-section pre {
+  color: #213025;
+  background: #f3f5ee;
+}
+</style>

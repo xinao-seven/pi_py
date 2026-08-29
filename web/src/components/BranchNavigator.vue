@@ -138,3 +138,167 @@ function messageText(message: AgentMessage): string {
     </details>
   </div>
 </template>
+
+<style scoped>
+/* 分支导航：分支切换下拉与合并弹层 */
+.branch-navigator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.branch-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.branch-field select {
+  width: min(36vw, 340px);
+  min-height: 30px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel);
+}
+
+:root[data-theme='light'] .branch-field select {
+  color: var(--text);
+  background: #fbfcf8;
+}
+
+.branch-action {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.branch-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:root[data-theme='light'] .branch-action,
+:root[data-theme='light'] .merge-menu summary,
+:root[data-theme='light'] .merge-popover button {
+  color: var(--muted);
+  background: #f8f9f5;
+}
+
+:root[data-theme='light'] .branch-action:hover,
+:root[data-theme='light'] .merge-menu summary:hover {
+  background: #edf1e5;
+}
+
+.merge-menu {
+  position: relative;
+}
+
+.merge-menu summary {
+  display: grid;
+  place-items: center;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.merge-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.merge-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 9px;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-theme='light'] .merge-popover {
+  background: #ffffff;
+}
+
+.merge-popover label {
+  display: grid;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.merge-popover select {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel);
+}
+
+:root[data-theme='light'] .merge-popover select {
+  color: var(--text);
+  background: #fbfcf8;
+}
+
+.merge-popover button {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.merge-popover button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:root[data-theme='light'] .merge-popover button {
+  color: var(--muted);
+  background: #f8f9f5;
+}
+
+@media (max-width: 760px) {
+  .branch-navigator {
+    flex-wrap: wrap;
+  }
+
+  .branch-field {
+    flex: 1 1 100%;
+  }
+
+  .branch-field > span {
+    display: none;
+  }
+
+  .branch-field select {
+    width: 100%;
+  }
+}
+</style>

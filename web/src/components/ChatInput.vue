@@ -202,3 +202,203 @@ onBeforeUnmount(clearImages);
     </div>
   </form>
 </template>
+
+<style scoped>
+/* 输入区：composer、图片附件、拖拽遮罩与发送/中止按钮 */
+.composer {
+  position: relative;
+  padding: 8px 10px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: none;
+  transition: border-color 150ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--line-strong);
+}
+
+.composer--dragging {
+  border-color: var(--accent);
+}
+
+.composer-input {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  max-height: 180px;
+  padding: 1px 2px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+textarea.composer-input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.composer-input::placeholder {
+  color: #737985;
+}
+
+:root[data-theme='light'] .composer-input::placeholder {
+  color: #65715f;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.composer-hint {
+  margin-right: auto;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.attach-button {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.image-attachments {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 0;
+  overflow-x: auto;
+}
+
+.image-attachment {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.image-attachment img {
+  width: 62px;
+  height: 62px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  object-fit: cover;
+}
+
+.image-attachment button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #252932;
+  cursor: pointer;
+}
+
+.image-error {
+  padding: 7px 12px 0;
+  color: var(--danger);
+  font-size: 10px;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  background: rgba(12, 14, 18, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+:root[data-theme='light'] .drop-overlay {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.queue-button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: #9da3ae;
+  background: var(--panel);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+:root[data-theme='light'] .queue-button {
+  color: var(--muted);
+  background: transparent;
+}
+
+.queue-button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.send-button,
+.abort-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.send-button {
+  border: 0;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.send-button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.abort-button {
+  border: 1px solid rgba(255, 129, 120, 0.25);
+  color: #ffc0ba;
+  background: rgba(255, 129, 120, 0.08);
+}
+
+:root[data-theme='light'] .abort-button {
+  border-color: #db9892;
+  color: #8f2522;
+  background: #fff0ee;
+}
+
+@media (max-width: 760px) {
+  .composer-hint {
+    display: none;
+  }
+}
+</style>

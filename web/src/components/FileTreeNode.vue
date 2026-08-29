@@ -83,3 +83,63 @@ function joinPath(parent: string, name: string): string {
     </ul>
   </li>
 </template>
+
+<style scoped>
+/* 文件树节点：行、图标、名称与错误提示 */
+.file-tree-root,
+.file-tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 29px;
+  padding-right: 8px;
+  border: 0;
+  color: #c8cbd3;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-tree-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='light'] .file-tree-row {
+  color: var(--text);
+}
+
+:root[data-theme='light'] .file-tree-row:hover {
+  background: #edf2df;
+}
+
+.file-tree-icon {
+  flex: 0 0 12px;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.file-tree-name {
+  overflow: hidden;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-note {
+  padding: 12px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.file-tree-note--error {
+  color: var(--danger);
+}
+</style>

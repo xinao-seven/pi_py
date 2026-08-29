@@ -253,3 +253,60 @@ function messageOf(cause: unknown): string {
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 模型列表：行内表单与增删按钮；弹窗骨架（config-*）在 globals.css 中共享 */
+.model-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 8px;
+}
+
+.model-list-heading button {
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 90px auto 28px;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.model-row > input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: #0e1014;
+}
+
+:root[data-theme='light'] .model-row > input {
+  color: var(--text);
+  background: #fbfcf8;
+}
+
+.model-row > button {
+  border: 0;
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .model-row {
+    grid-template-columns: 1fr;
+  }
+
+  .model-row > button {
+    justify-self: end;
+  }
+}
+</style>
