@@ -84,6 +84,8 @@ export interface CreateSessionInput {
     approval?: boolean; // 危险命令人工审批
     planMode?: boolean; // Web Plan 模式
   };
+  /** MCP 服务白名单；null/缺省 = 全部，[] = 禁用，非空数组 = 服务名白名单（预设的 mcpServers 字段）。 */
+  mcpServers?: string[] | null;
 }
 
 /** 磁盘上持久化会话的元信息（从 SessionManager.listAll 的 SessionInfo 转换而来）。 */
@@ -249,7 +251,12 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       cwd: input.cwd,
       agentDir: this.agentDir,
       modelRuntime: runtime,
-      resourceLoader: await this.loader(input.cwd, input.systemPrompt, input.extensions),
+      resourceLoader: await this.loader(
+        input.cwd,
+        input.systemPrompt,
+        input.extensions,
+        input.mcpServers,
+      ),
       ...(model === undefined ? {} : { model }),
       ...(input.thinkingLevel
         ? { thinkingLevel: input.thinkingLevel as AgentSession['thinkingLevel'] }
@@ -328,6 +335,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     cwd: string,
     systemPrompt?: string,
     extensions?: CreateSessionInput['extensions'],
+    mcpServers?: CreateSessionInput['mcpServers'],
   ): Promise<DefaultResourceLoader> {
     // 内联扩展：不走 jiti、闭包直连服务单例，使多个会话共享同一连接/审批中枢，
     // 并支持按预设开关动态启用/禁用。仍保留 SDK 的自动发现（与 TUI 平级）加载
@@ -338,8 +346,10 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
     if (extensions?.approval !== false && this.approvals)
       factories.push(this.approvals.buildExtension());
-    // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）。
-    if (this.mcpService) factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals));
+    // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
+    // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
+    if (this.mcpService)
+      factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals, mcpServers ?? null));
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: this.agentDir,

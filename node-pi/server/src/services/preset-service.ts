@@ -41,6 +41,7 @@ export interface PresetInput {
   provider: string;
   modelId: string;
   thinkingLevel: string;
+  mcpServers: string[] | null; // null = 全部 MCP 服务；[] = 禁用；否则为服务名白名单
 }
 
 /** 返回给前端的预设视图（含内置标志）。 */
@@ -68,6 +69,7 @@ const BUILTIN_CODING_AGENT: SessionPreset = {
   provider: '',
   modelId: '',
   thinkingLevel: '',
+  mcpServers: null,
 };
 
 export class PresetService {
@@ -163,7 +165,16 @@ function parsePresetInput(value: unknown): PresetInput {
   if (thinkingLevel && !THINKING_LEVELS.has(thinkingLevel)) {
     throw new ApiError(422, 'validation_error', 'unsupported thinking level');
   }
-  return { name, systemPrompt, toolNames, compaction, provider, modelId, thinkingLevel };
+  return {
+    name,
+    systemPrompt,
+    toolNames,
+    compaction,
+    provider,
+    modelId,
+    thinkingLevel,
+    mcpServers: parseMcpServers(value.mcpServers),
+  };
 }
 
 /** 可选字符串字段：undefined 归一化为空串。 */
@@ -176,6 +187,18 @@ function parseToolNames(value: unknown): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some((name) => typeof name !== 'string' || !name.trim())) {
     throw new ApiError(422, 'validation_error', 'toolNames must be an array of strings');
+  }
+  return [...new Set(value.map((name) => name.trim()))];
+}
+
+/**
+ * MCP 服务白名单：null/缺省 = 全部；空数组 = 禁用全部；
+ * 非空数组 = 服务名白名单（未知的名字在创建会话时由扩展过滤，自然失效）。
+ */
+function parseMcpServers(value: unknown): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.some((name) => typeof name !== 'string' || !name.trim())) {
+    throw new ApiError(422, 'validation_error', 'mcpServers must be null or an array of strings');
   }
   return [...new Set(value.map((name) => name.trim()))];
 }

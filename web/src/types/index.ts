@@ -180,7 +180,7 @@ export interface SkillsResponse {
 
 export type McpTransport = 'stdio' | 'streamable-http';
 export type McpScope = 'user' | 'workspace';
-export type McpServerStatus = 'connected' | 'connecting' | 'error' | 'disabled';
+export type McpServerStatus = 'connected' | 'connecting' | 'error' | 'disabled' | 'idle';
 
 export interface McpServerTool {
   name: string;
@@ -254,6 +254,7 @@ export interface SessionPresetInput {
   provider?: string; // 空串/缺省 = 用目录默认模型
   modelId?: string;
   thinkingLevel?: string; // 空串/缺省 = 用设置默认思考等级
+  mcpServers?: string[] | null; // null/缺省 = 全部 MCP 服务；[] = 禁用；非空数组 = 服务名白名单
 }
 
 export interface SessionPreset extends SessionPresetInput {

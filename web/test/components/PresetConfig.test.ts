@@ -75,6 +75,7 @@ describe('PresetConfig', () => {
       provider: '',
       modelId: '',
       thinkingLevel: '',
+      mcpServers: null,
     });
   });
 });

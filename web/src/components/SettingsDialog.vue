@@ -149,6 +149,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
           />
           <PresetConfig
             v-else-if="activeSection === 'presets'"
+            :cwd="cwd"
             embedded
             @close="activeSection = 'general'"
           />

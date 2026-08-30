@@ -98,6 +98,14 @@ export class McpConfig {
     return [...byName.values()];
   }
 
+  /** 仅用户级配置条目（不合并工作区、不依赖 cwd，供无工作区上下文的列表用）。 */
+  userServers(): ResolvedServer[] {
+    const user = this.read(this.userPath());
+    return Object.entries(user)
+      .filter(([, config]) => isServerConfig(config))
+      .map(([name, config]) => ({ ...config, name, scope: 'user' as const }));
+  }
+
   /** 写入/更新一个 server 到指定作用域的文件（读-改-写）。 */
   upsert(cwd: string, scope: McpScope, name: string, server: McpServerConfig): void {
     const path = scope === 'workspace' ? this.workspacePath(cwd) : this.userPath();

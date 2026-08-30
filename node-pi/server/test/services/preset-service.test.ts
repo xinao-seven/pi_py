@@ -33,6 +33,7 @@ describe('PresetService', () => {
       provider: '',
       modelId: '',
       thinkingLevel: 'high',
+      mcpServers: null,
       ...overrides,
     };
   }
@@ -51,6 +52,7 @@ describe('PresetService', () => {
       provider: '',
       modelId: '',
       thinkingLevel: '',
+      mcpServers: null,
     });
   });
 
@@ -127,9 +129,28 @@ describe('PresetService', () => {
       input({ provider: 'anthropic', modelId: '' }), // provider 与 modelId 不成对
       input({ thinkingLevel: 'turbo' }), // 非法思考等级
       input({ toolNames: ['read', 42] as unknown as string[] }),
+      input({ mcpServers: 'web-search' as unknown as string[] }), // 必须是 null 或数组
+      input({ mcpServers: [42] as unknown as string[] }),
     ];
     for (const bad of cases) {
       await expect(presets.create(bad)).rejects.toMatchObject({ code: 'validation_error' });
     }
+  });
+
+  it('normalizes, persists and round-trips the mcpServers whitelist', async () => {
+    const { presets, agentDir } = service();
+    // 缺省 → null（全部）；数组去重；空数组保持禁用语义。
+    const all = await presets.create(input({ name: '全部' }));
+    const custom = await presets.create(input({ name: '自选', mcpServers: ['b', 'a', 'b'] }));
+    const none = await presets.create(input({ name: '禁用', mcpServers: [] }));
+
+    expect(all.mcpServers).toBeNull();
+    expect(custom.mcpServers).toEqual(['b', 'a']);
+    expect(none.mcpServers).toEqual([]);
+
+    // 重启后（新实例）从磁盘恢复时保留原值。
+    const restarted = await new PresetService(agentDir).list();
+    expect(restarted.find((preset) => preset.id === custom.id)?.mcpServers).toEqual(['b', 'a']);
+    expect(restarted.find((preset) => preset.id === none.id)?.mcpServers).toEqual([]);
   });
 });

@@ -16,6 +16,13 @@
 - 文件面板：目录浏览、UTF-8 文本预览和图片/音频预览；仅允许已注册工作区，且屏蔽 `.env`、凭据、密钥和大型生成目录。
 - 模型配置：`GET/PUT /api/models-config` 读取和原子写入原版 Pi 的 `models.json`；密钥只能是 `$ENV_VAR` 引用，保存后刷新新建会话使用的模型运行时。
 - Skills：`GET/PATCH /api/skills` 使用原版 Pi 的 Skills 发现逻辑，并支持切换 `disable-model-invocation` 后重载活动会话资源。
+- 会话预设：`~/.pi/agent/node-server-presets.json` 存储自定义预设（系统提示词、工具、压缩策略、默认模型与思考等级）。
+  预设支持 MCP 服务白名单 `mcpServers`：`null`/缺省 = 使用全部已配置的 MCP 服务，`[]` = 禁用，
+  非空数组 = 只注入名单内 server 的工具（`POST /api/agent/new` 也可直接传 `mcpServers`）。
+  白名单只影响注入会话的工具集合；MCP 连接池与工具名映射始终按全量配置维护，不同预设的会话互不污染。
+- MCP 列表接口：`GET /api/mcp/servers?cwd=<工作区>` 返回合并配置与实时连接状态；
+  省略 `cwd` 时只返回用户级配置（状态为新增的 `idle`，表示"仅配置、未建立连接"），
+  供预设编辑等没有工作区上下文的界面选择 MCP 白名单。
 
 ## 工具审批
 

@@ -175,6 +175,7 @@ export async function createAgent(input: {
   images?: Array<{ type: 'image'; data: string; mimeType: string }>;
   systemPrompt?: string;
   compaction?: PresetCompaction;
+  mcpServers?: string[] | null;
 }): Promise<string> {
   // 创建新 Agent 会话并发送首条消息，返回 sessionId
   const result = await request<{ success: true; sessionId: string }>('/api/agent/new', {
@@ -267,9 +268,11 @@ export async function sendPlanCommand(
   await sendAgentCommand(sessionId, { type: `plan_${action}`, ...(message ? { message } : {}) });
 }
 
-export async function getMcpServers(cwd: string): Promise<McpServersResponse> {
-  const query = new URLSearchParams({ cwd });
-  return request(`/api/mcp/servers?${query.toString()}`);
+export async function getMcpServers(cwd?: string): Promise<McpServersResponse> {
+  // cwd 可选：缺省时后端只返回用户级配置（不连接、状态 idle），供预设编辑等
+  // 没有工作区上下文的界面选择 MCP 白名单。
+  const query = cwd ? new URLSearchParams({ cwd }) : '';
+  return request(`/api/mcp/servers${query ? `?${query}` : ''}`);
 }
 
 export async function upsertMcpServer(input: McpServerInput): Promise<void> {

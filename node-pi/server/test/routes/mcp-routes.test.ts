@@ -2,7 +2,7 @@
  * /api/mcp/* 路由集成测试：验证嵌套 server 配置的 REST 形状、试连与启停。
  * 使用真实 McpService（临时 agentDir + 本地 stdio fixture），会话注册表用假工厂避免真实 Pi 会话。
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -176,6 +176,45 @@ describe('/api/mcp routes', () => {
       });
       expect(response.statusCode).toBe(422);
       expect(response.json()).toMatchObject({ error: { code: 'validation_error' } });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('无 cwd 时只列用户级配置（状态 idle，不建立连接）', async () => {
+    const agentDir = makeTemp('pi-agent-');
+    // 直接写入用户级 mcp.json（等价于 McpConfig.upsert 的落盘结果）
+    writeFileSync(
+      join(agentDir, 'mcp.json'),
+      JSON.stringify({
+        servers: {
+          'user-server': {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [fixturePath],
+          },
+        },
+      }),
+      'utf8',
+    );
+    const mcpService = new McpService(new McpConfig(agentDir));
+    const registry = new AgentRegistry(new StubPiSessionFactory());
+    const app = createApp({ agentDir, registry, mcpService });
+    try {
+      await app.ready();
+      const response = await app.inject({ method: 'GET', url: '/api/mcp/servers' });
+      expect(response.statusCode).toBe(200);
+      const servers = response.json().servers;
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({
+        name: 'user-server',
+        scope: 'user',
+        status: 'idle',
+        toolCount: 0,
+      });
+      // 空串 cwd 视同缺省（前端在无工作区时这样调用）
+      const empty = await app.inject({ method: 'GET', url: '/api/mcp/servers?cwd=' });
+      expect(empty.json().servers).toHaveLength(1);
     } finally {
       await app.close();
     }

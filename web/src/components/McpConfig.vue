@@ -246,8 +246,13 @@ function linesToMap(lines: string): Record<string, string> {
 
 function statusLabel(status: McpServerView['status']): string {
   return (
-    { connected: '已连接', connecting: '连接中', error: '连接失败', disabled: '已禁用' }[status] ??
-    status
+    {
+      connected: '已连接',
+      connecting: '连接中',
+      error: '连接失败',
+      disabled: '已禁用',
+      idle: '未连接',
+    }[status] ?? status
   );
 }
 
@@ -299,44 +304,34 @@ function messageOf(cause: unknown): string {
         <article class="provider-card mcp-form">
           <div class="provider-grid">
             <label>名称<input v-model="draft.name" placeholder="如 filesystem" /></label>
-            <label
-              >作用域
+            <label>作用域
               <select v-model="draft.scope">
                 <option value="user">用户级（~/.pi/agent/mcp.json）</option>
                 <option value="workspace">工作区级（.pi/mcp.json）</option>
               </select>
             </label>
-            <label
-              >传输方式
+            <label>传输方式
               <select v-model="draft.transport">
                 <option value="stdio">stdio（本地子进程）</option>
                 <option value="streamable-http">streamable-http（远程）</option>
               </select>
             </label>
-            <label class="checkbox-field mcp-switch"
-              ><input v-model="draft.enabled" type="checkbox" />启用</label
-            >
+            <label class="checkbox-field mcp-switch"><input v-model="draft.enabled" type="checkbox" />启用</label>
           </div>
 
           <template v-if="draft.transport === 'stdio'">
             <div class="provider-grid">
               <label>启动命令<input v-model="draft.command" placeholder="如 npx" /></label>
-              <label
-                >参数（空格分隔）<input
-                  v-model="draft.args"
-                  placeholder="-y @modelcontextprotocol/server-filesystem E:/code"
+              <label>参数（空格分隔）<input
+                v-model="draft.args"
+                placeholder="-y @modelcontextprotocol/server-filesystem E:/code"
               /></label>
             </div>
             <div class="provider-grid">
-              <label
-                >工作目录（可选）<input v-model="draft.cwd" placeholder="默认使用当前工作区"
-              /></label>
-              <label class="checkbox-field mcp-switch"
-                ><input v-model="draft.approval" type="checkbox" />工具调用需人工审批</label
-              >
+              <label>工作目录（可选）<input v-model="draft.cwd" placeholder="默认使用当前工作区" /></label>
+              <label class="checkbox-field mcp-switch"><input v-model="draft.approval" type="checkbox" />工具调用需人工审批</label>
             </div>
-            <label class="mcp-line-field"
-              >环境变量（每行 KEY=value 或 KEY: value）
+            <label class="mcp-line-field">环境变量（每行 KEY=value 或 KEY: value）
               <textarea
                 v-model="draft.env"
                 rows="3"
@@ -347,11 +342,8 @@ function messageOf(cause: unknown): string {
           </template>
 
           <template v-else>
-            <label class="mcp-line-field"
-              >Endpoint URL<input v-model="draft.url" placeholder="https://example.com/mcp"
-            /></label>
-            <label class="mcp-line-field"
-              >请求头（每行 Header: value）
+            <label class="mcp-line-field">Endpoint URL<input v-model="draft.url" placeholder="https://example.com/mcp" /></label>
+            <label class="mcp-line-field">请求头（每行 Header: value）
               <textarea
                 v-model="draft.headers"
                 rows="3"
@@ -359,9 +351,7 @@ function messageOf(cause: unknown): string {
                 spellcheck="false"
               />
             </label>
-            <label class="checkbox-field mcp-switch"
-              ><input v-model="draft.approval" type="checkbox" />工具调用需人工审批</label
-            >
+            <label class="checkbox-field mcp-switch"><input v-model="draft.approval" type="checkbox" />工具调用需人工审批</label>
           </template>
 
           <p class="config-help mcp-help">
@@ -401,9 +391,7 @@ function messageOf(cause: unknown): string {
                   ? `${server.command ?? ''} ${(server.args ?? []).join(' ')}`
                   : (server.url ?? '')
               }}</code>
-              <span v-if="server.approval === 'required'" class="mcp-badge mcp-badge--approval"
-                >需审批</span
-              >
+              <span v-if="server.approval === 'required'" class="mcp-badge mcp-badge--approval">需审批</span>
             </p>
             <p v-if="server.status === 'error' && server.error" class="mcp-error">
               {{ server.error }}
@@ -514,6 +502,9 @@ function messageOf(cause: unknown): string {
 .mcp-badge--error .mcp-dot {
   background: #e74c3c;
 }
+.mcp-badge--idle .mcp-dot {
+  background: var(--faint);
+}
 .mcp-badge--disabled .mcp-dot {
   background: var(--muted);
 }
@@ -615,7 +606,7 @@ function messageOf(cause: unknown): string {
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--text);
-  background: #0e1014;
+  background: var(--input-bg);
   font-size: 11px;
   font-family: inherit;
 }

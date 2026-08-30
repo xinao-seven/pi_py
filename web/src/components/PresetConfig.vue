@@ -2,10 +2,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
-import { createPreset, deletePreset, getModels, getPresets, updatePreset } from '@/lib/api';
+import {
+  createPreset,
+  deletePreset,
+  getModels,
+  getMcpServers,
+  getPresets,
+  updatePreset,
+} from '@/lib/api';
 import type { ModelCatalog, PresetCompaction, SessionPreset, SessionPresetInput } from '@/types';
 
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const props = withDefaults(defineProps<{ embedded?: boolean; cwd?: string | null }>(), {
+  embedded: false,
+  cwd: '',
+});
 const emit = defineEmits<{ close: [] }>();
 
 // 压缩策略档位 → 具体 token 数值（与后端 SDK 的 CompactionSettings 语义一致）。
@@ -25,6 +35,9 @@ const STRATEGY_LABELS: Record<CompactionStrategy, string> = {
 const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const BUILTIN_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
+// MCP 服务选择模式：all = 全部（后端默认）；none = 禁用；custom = 按名单勾选。
+type McpMode = 'all' | 'none' | 'custom';
+
 interface PresetDraft {
   id: string | null; // null = 新建
   name: string;
@@ -34,10 +47,13 @@ interface PresetDraft {
   provider: string; // '' = 默认模型
   modelId: string;
   thinkingLevel: string; // '' = 默认思考等级
+  mcpMode: McpMode;
+  mcpServers: string[]; // mode = custom 时生效
 }
 
 const presets = ref<SessionPreset[]>([]);
 const catalog = ref<ModelCatalog | null>(null);
+const mcpServerNames = ref<string[]>([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -53,6 +69,10 @@ async function load(): Promise<void> {
     const [list, models] = await Promise.all([getPresets(), getModels()]);
     presets.value = list;
     catalog.value = models;
+    // MCP 服务清单：优先取当前工作区的合并配置；无工作区（未打开会话）时
+    // 后端回退为用户级配置列表，保证预设界面随时可选 MCP 白名单。
+    const mcp = await getMcpServers(props.cwd || undefined);
+    mcpServerNames.value = mcp.servers.map((server) => server.name);
   } catch (cause) {
     error.value = messageOf(cause);
   } finally {
@@ -83,7 +103,15 @@ function toDraft(preset: SessionPreset): PresetDraft {
     provider: preset.provider ?? '',
     modelId: preset.modelId ?? '',
     thinkingLevel: preset.thinkingLevel ?? '',
+    mcpMode: mcpModeOf(preset),
+    mcpServers: preset.mcpServers ? [...preset.mcpServers] : [],
   };
+}
+
+/** 预设的 mcpServers → UI 模式：null/缺省 = all；[] = none；非空数组 = custom。 */
+function mcpModeOf(preset: SessionPreset): McpMode {
+  if (preset.mcpServers === null || preset.mcpServers === undefined) return 'all';
+  return preset.mcpServers.length === 0 ? 'none' : 'custom';
 }
 
 function addPreset(): void {
@@ -96,6 +124,8 @@ function addPreset(): void {
     provider: '',
     modelId: '',
     thinkingLevel: '',
+    mcpMode: 'all',
+    mcpServers: [],
   };
   formOpen.value = true;
   error.value = null;
@@ -128,6 +158,12 @@ async function save(): Promise<void> {
     provider: draft.value.provider,
     modelId: draft.value.modelId,
     thinkingLevel: draft.value.thinkingLevel,
+    mcpServers:
+      draft.value.mcpMode === 'all'
+        ? null
+        : draft.value.mcpMode === 'none'
+          ? []
+          : draft.value.mcpServers,
   };
   saving.value = true;
   try {
@@ -195,6 +231,13 @@ function modelName(preset: SessionPreset): string {
   return item ? `${item.name} · ${item.provider}` : `${preset.provider}/${preset.modelId}`;
 }
 
+/** 预设的 MCP 服务摘要（列表视图展示用）。 */
+function mcpLabel(preset: SessionPreset): string {
+  if (preset.mcpServers === null || preset.mcpServers === undefined) return '全部';
+  if (preset.mcpServers.length === 0) return '禁用';
+  return preset.mcpServers.join(', ');
+}
+
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : '预设操作失败';
 }
@@ -217,7 +260,7 @@ function messageOf(cause: unknown): string {
         <div>
           <div class="welcome-kicker">SESSION PRESETS</div>
           <h2 id="presets-title">会话预设</h2>
-          <p>新会话时可选择一套预设：系统提示词、工具、压缩策略、默认模型与思考等级。</p>
+          <p>新会话时可选择一套预设：系统提示词、工具、MCP 服务、压缩策略、默认模型与思考等级。</p>
         </div>
         <button type="button" aria-label="关闭预设配置" autofocus @click="emit('close')">×</button>
       </header>
@@ -231,8 +274,7 @@ function messageOf(cause: unknown): string {
         <article class="provider-card preset-form">
           <div class="provider-grid">
             <label>名称<input v-model="draft.name" placeholder="如 代码审查" /></label>
-            <label
-              >压缩策略
+            <label>压缩策略
               <select v-model="draft.strategy">
                 <option v-for="(label, key) in STRATEGY_LABELS" :key="key" :value="key">
                   {{ label }}
@@ -241,28 +283,49 @@ function messageOf(cause: unknown): string {
             </label>
           </div>
 
-          <label class="preset-line-field"
-            >系统提示词（留空 = 使用 SDK 默认提示词）
+          <label class="preset-line-field">系统提示词（留空 = 使用 SDK 默认提示词）
             <textarea
               v-model="draft.systemPrompt"
-              rows="4"
+              rows="5"
               placeholder="You are an expert coding assistant…"
               spellcheck="false"
             />
           </label>
 
-          <div class="preset-tools-field">
-            <span>可用工具（默认勾选 = SDK 默认工具集）</span>
-            <div class="preset-tool-options">
-              <label v-for="tool in BUILTIN_TOOLS" :key="tool" class="preset-tool-option">
+          <div class="preset-field">
+            <span class="preset-field-label">可用工具<span class="preset-field-hint">默认勾选 = SDK 默认工具集</span></span>
+            <div class="preset-chip-row">
+              <label v-for="tool in BUILTIN_TOOLS" :key="tool" class="preset-chip">
                 <input v-model="draft.toolNames" type="checkbox" :value="tool" />{{ tool }}
               </label>
             </div>
           </div>
 
+          <div class="preset-field">
+            <span class="preset-field-label">MCP 服务<span class="preset-field-hint">新建会话时向模型注入哪些 MCP server 的工具</span></span>
+            <div class="preset-chip-row">
+              <label class="preset-chip">
+                <input v-model="draft.mcpMode" type="radio" value="all" />全部
+              </label>
+              <label class="preset-chip">
+                <input v-model="draft.mcpMode" type="radio" value="none" />禁用
+              </label>
+              <label class="preset-chip">
+                <input v-model="draft.mcpMode" type="radio" value="custom" />自选
+              </label>
+            </div>
+            <div v-if="draft.mcpMode === 'custom'" class="preset-chip-row preset-chip-row--nested">
+              <span v-if="mcpServerNames.length === 0" class="preset-mcp-empty">
+                当前未配置任何 MCP 服务（可在「MCP」页添加）
+              </span>
+              <label v-for="server in mcpServerNames" :key="server" class="preset-chip">
+                <input v-model="draft.mcpServers" type="checkbox" :value="server" />{{ server }}
+              </label>
+            </div>
+          </div>
+
           <div class="provider-grid">
-            <label
-              >默认模型
+            <label>默认模型
               <select :value="modelKey" @change="onModelChange">
                 <option value="">默认（跟随目录设置）</option>
                 <option
@@ -274,8 +337,7 @@ function messageOf(cause: unknown): string {
                 </option>
               </select>
             </label>
-            <label
-              >默认思考等级
+            <label>默认思考等级
               <select v-model="draft.thinkingLevel">
                 <option value="">默认（跟随设置）</option>
                 <option v-for="level in thinkingLevels" :key="level" :value="level">
@@ -306,12 +368,15 @@ function messageOf(cause: unknown): string {
             <p v-if="preset.systemPrompt" class="preset-preview" :title="preset.systemPrompt">
               提示词：{{ preset.systemPrompt }}
             </p>
-            <p class="preset-meta">
-              工具：{{ preset.toolNames.length ? preset.toolNames.join(', ') : '无' }} · 压缩：{{
-                STRATEGY_LABELS[strategyOf(preset)]
-              }}
-              · 模型：{{ modelName(preset) }} · 思考：{{ preset.thinkingLevel || '默认' }}
-            </p>
+            <div class="preset-meta">
+              <span class="preset-meta-item">
+                工具：{{ preset.toolNames.length ? preset.toolNames.join(', ') : '无' }}
+              </span>
+              <span class="preset-meta-item">压缩：{{ STRATEGY_LABELS[strategyOf(preset)] }}</span>
+              <span class="preset-meta-item">模型：{{ modelName(preset) }}</span>
+              <span class="preset-meta-item">思考：{{ preset.thinkingLevel || '默认' }}</span>
+              <span class="preset-meta-item">MCP：{{ mcpLabel(preset) }}</span>
+            </div>
           </div>
           <div v-if="!preset.builtin" class="preset-actions">
             <button type="button" @click="editPreset(preset)">编辑</button>
@@ -346,53 +411,105 @@ function messageOf(cause: unknown): string {
 <style scoped>
 .preset-form {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .preset-line-field {
-  display: grid;
-  gap: 5px;
-  color: var(--faint);
-  font-size: 9px;
-}
-
-.preset-line-field input,
-.preset-line-field textarea,
-.preset-tools-field select,
-.provider-grid select {
-  min-width: 0;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--text);
-  background: #0e1014;
-  font-size: 11px;
-  font-family: inherit;
-}
-
-.preset-line-field textarea {
-  resize: vertical;
-}
-
-.preset-tools-field {
   display: grid;
   gap: 6px;
   color: var(--faint);
   font-size: 9px;
 }
 
-.preset-tool-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.preset-line-field input,
+.preset-line-field textarea,
+.provider-grid select {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--input-bg);
+  font-size: 11px;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
 }
 
-.preset-tool-option {
+.preset-line-field input:focus-visible,
+.preset-line-field textarea:focus-visible,
+.provider-grid select:focus-visible {
+  border-color: var(--line-strong);
+}
+
+.preset-line-field textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.preset-field {
+  display: grid;
+  gap: 7px;
+}
+
+.preset-field-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.preset-field-hint {
+  color: var(--faint);
+  opacity: 0.75;
+}
+
+.preset-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset-chip-row--nested {
+  margin-left: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.preset-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  color: var(--text);
+  gap: 5px;
+  padding: 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--input-bg);
   font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.preset-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.preset-chip:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.preset-chip input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.preset-mcp-empty {
+  color: var(--faint);
+  font-size: 10px;
 }
 
 .preset-title-row {
@@ -426,9 +543,22 @@ function messageOf(cause: unknown): string {
 }
 
 .preset-meta {
-  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.preset-meta-item {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--faint);
-  font-size: 10px;
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .preset-actions {

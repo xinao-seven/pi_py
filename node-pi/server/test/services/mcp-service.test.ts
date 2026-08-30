@@ -128,6 +128,36 @@ describe('McpService（stdio 集成）', () => {
       await service.dispose();
     }
   });
+
+  it('toolsFor 按白名单过滤定义，但 toolIndex 始终全量（多预设互不污染）', async () => {
+    const agentDir = makeTemp('pi-agent-');
+    const cwd = makeTemp('pi-cwd-');
+    const config = new McpConfig(agentDir);
+    config.upsert(cwd, 'user', 'test-server', {
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixturePath],
+    });
+    const service = new McpService(config);
+    try {
+      await service.ensure(cwd);
+      // 空白名单（禁用全部）：无定义返回，但 index 仍解析全部工具名
+      expect(service.toolsFor(cwd, new Set())).toHaveLength(0);
+      // 名单外的 server：同样无定义；全量 index 不被过滤后的重建覆盖
+      expect(service.toolsFor(cwd, new Set(['other-server']))).toHaveLength(0);
+      expect(service.resolveTool(cwd, 'mcp__test_server__echo')).toEqual({
+        server: 'test-server',
+        tool: 'echo',
+      });
+      // 命中名单：定义正常返回
+      const tools = service.toolsFor(cwd, new Set(['test-server']));
+      expect(tools.map((tool) => tool.name)).toContain('mcp__test_server__echo');
+      // null（缺省语义）等价于全部
+      expect(service.toolsFor(cwd, null)).toHaveLength(3);
+    } finally {
+      await service.dispose();
+    }
+  });
 });
 
 describe('MCP 内联扩展（审批联动）', () => {
@@ -224,6 +254,45 @@ describe('MCP 内联扩展（审批联动）', () => {
         ctx,
       );
       expect(bash).toBeUndefined();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it('扩展工厂按 allowedServers 白名单注册工具（预设 MCP 过滤）', async () => {
+    const agentDir = makeTemp('pi-agent-');
+    const cwd = makeTemp('pi-cwd-');
+    const config = new McpConfig(agentDir);
+    config.upsert(cwd, 'user', 'test-server', {
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixturePath],
+    });
+    const service = new McpService(config);
+    const fakePi = {
+      handlers: new Map<string, (event: unknown, ctx: unknown) => unknown>(),
+      registerTool() {},
+      on() {},
+    };
+    try {
+      // 名单不含 test-server：不注册任何工具
+      const excluded = buildMcpExtension(service, cwd, undefined, ['other-server']);
+      await (excluded as (pi: typeof fakePi) => Promise<void>)(fakePi as never);
+      // 空数组 = 禁用全部：同样不注册
+      const disabled = buildMcpExtension(service, cwd, undefined, []);
+      await (disabled as (pi: typeof fakePi) => Promise<void>)(fakePi as never);
+      // null = 全部：注册 test-server 的工具
+      const registered: string[] = [];
+      const collecting = {
+        ...fakePi,
+        registerTool(tool: { name: string }) {
+          registered.push(tool.name);
+        },
+      };
+      const all = buildMcpExtension(service, cwd, undefined, null);
+      await (all as (pi: typeof collecting) => Promise<void>)(collecting as never);
+      expect(registered).toContain('mcp__test_server__echo');
+      expect(registered).toContain('mcp__test_server__add');
     } finally {
       await service.dispose();
     }

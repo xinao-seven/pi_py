@@ -67,6 +67,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   const selectedPreset = ref(BUILTIN_PRESET_ID);
   const presetSystemPrompt = ref('');
   const presetCompaction = ref<PresetCompaction | null>(null);
+  const presetMcpServers = ref<string[] | null>(null);
   // 思考等级是否被显式选择过（用户改下拉或预设指定）：为 true 才随创建请求发送，
   // 避免默认的 'off' 占位值把新会话的思考意外关掉（后端现在会把 'off' 透传给 SDK）。
   const thinkingExplicit = ref(false);
@@ -380,6 +381,8 @@ export function useAgentSession(options: AgentSessionOptions) {
           images: imageBlocks,
           ...(presetSystemPrompt.value ? { systemPrompt: presetSystemPrompt.value } : {}),
           ...(presetCompaction.value ? { compaction: presetCompaction.value } : {}),
+          // mcpServers 仅在预设显式配置（非 null）时发送；null/缺省 = 后端默认全部
+          ...(presetMcpServers.value !== null ? { mcpServers: presetMcpServers.value } : {}),
         });
         activeSessionId.value = sessionId;
         options.onSessionCreated?.(sessionId);
@@ -481,6 +484,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     selectedPreset.value = preset.id;
     presetSystemPrompt.value = preset.systemPrompt;
     presetCompaction.value = { ...preset.compaction };
+    presetMcpServers.value = preset.mcpServers ?? null;
     activeTools.value = [...preset.toolNames];
     // 预设指定了模型就用它，否则退回目录默认模型。
     newSessionModel.value =
@@ -576,6 +580,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       selectedPreset.value = BUILTIN_PRESET_ID;
       presetSystemPrompt.value = '';
       presetCompaction.value = null;
+      presetMcpServers.value = null;
       thinkingExplicit.value = false;
       retryInfo.value = null;
       compacting.value = false;
@@ -601,6 +606,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       selectedPreset.value = BUILTIN_PRESET_ID;
       presetSystemPrompt.value = '';
       presetCompaction.value = null;
+      presetMcpServers.value = null;
       thinkingExplicit.value = false;
       assignStream({ ...INITIAL_STREAM_STATE });
       error.value = null;

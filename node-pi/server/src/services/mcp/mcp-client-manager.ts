@@ -19,8 +19,8 @@ import type { ServiceLogger } from '../service-logger.js';
 import type { McpServerConfig } from './mcp-config.js';
 import { fingerprintOf, interpolateEnvMap } from './mcp-tools.js';
 
-/** 连接状态（前端徽标用）。 */
-export type ServerStatus = 'connected' | 'connecting' | 'error' | 'disabled';
+/** 连接状态（前端徽标用）。idle = 仅配置、未建立连接（无 cwd 上下文的列表）。 */
+export type ServerStatus = 'connected' | 'connecting' | 'error' | 'disabled' | 'idle';
 
 /** 连接池中的一个受管 server。 */
 export interface ManagedServer {

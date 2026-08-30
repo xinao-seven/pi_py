@@ -30,8 +30,13 @@ interface McpBody extends Record<string, unknown> {
 
 export const mcpRoutes: FastifyPluginAsync<McpRouteOptions> = async (app, options) => {
   // GET /api/mcp/servers?cwd=<工作区> —— 合并配置 + 实时连接状态 + 工具清单。
+  // cwd 可选：缺省时只列用户级配置（不连接，状态 idle）——供预设编辑等
+  // 没有工作区上下文的界面选择 MCP 白名单。
   app.get<{ Querystring: { cwd?: string } }>('/servers', async (request) => {
-    return { servers: await options.service.listServers(await requiredCwd(request.query.cwd)) };
+    const cwd = request.query.cwd ? await requiredCwd(request.query.cwd) : undefined;
+    return {
+      servers: cwd ? await options.service.listServers(cwd) : options.service.listUserServers(),
+    };
   });
 
   // POST /api/mcp/servers —— 新增/更新一个 server。

@@ -8,6 +8,7 @@
  * 职责：
  * - 工厂被每个会话的资源加载器调用（会话创建/打开、reload_resources、MCP 配置变更后
  *   reloadResources）时：await service.ensure(cwd)（对账连接）→ 注册当前工具集；
+ *   allowedServers 为预设的 MCP 白名单（null = 全部，[] = 禁用，非空数组 = 服务名白名单）；
  * - 注册 tool_call 钩子：对 approval: "required" 的 server 的工具，直接调用
  *   broker.requestApproval() 挂起等待 Web 审批（决定/超时/中止/会话取消都会结算）。
  */
@@ -24,10 +25,12 @@ export function buildMcpExtension(
   service: McpService,
   cwd: string,
   approvals?: ToolApprovalBroker,
+  allowedServers: readonly string[] | null = null,
 ): InlineExtension {
+  const whitelist = allowedServers === null ? null : new Set(allowedServers);
   return async (pi: ExtensionAPI): Promise<void> => {
     await service.ensure(cwd);
-    for (const tool of service.toolsFor(cwd)) {
+    for (const tool of service.toolsFor(cwd, whitelist)) {
       pi.registerTool(tool);
     }
 

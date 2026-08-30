@@ -13,7 +13,12 @@ import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-
 import { ApiError } from '../../errors.js';
 import type { ServiceLogger } from '../service-logger.js';
 import { McpClientManager, type McpProbeResult, type ServerStatus } from './mcp-client-manager.js';
-import { McpConfig, type McpScope, type McpServerConfig } from './mcp-config.js';
+import {
+  McpConfig,
+  type McpScope,
+  type McpServerConfig,
+  type ResolvedServer,
+} from './mcp-config.js';
 import {
   buildMcpToolDefinition,
   mcpResultToPi,
@@ -61,13 +66,20 @@ export class McpService {
     await this.manager.sync(cwd, desired);
   }
 
-  /** 构建当前 cwd 下所有已连接 server 的工具定义（供扩展注册进会话）。 */
-  toolsFor(cwd: string): ToolDefinition[] {
-    const definitions: ToolDefinition[] = [];
+  /**
+   * 构建当前 cwd 下所有已连接 server 的工具定义（供扩展注册进会话）。
+   * allowedServers 为 MCP 服务名白名单（null = 全部，[] = 禁用）。
+   * 中文说明：工具名的分配与 toolIndex 始终基于"全部已连接 server"计算，
+   * 白名单只决定哪些定义返回 —— 不同预设的会话共享同一 toolIndex，互不污染；
+   * 否则按各自白名单重建 index 会互相覆盖，导致其他会话工具解析失败。
+   */
+  toolsFor(cwd: string, allowedServers?: ReadonlySet<string> | null): ToolDefinition[] {
     const used = new Set<string>();
     const index: ToolIndex = new Map();
+    const definitions: Array<ToolDefinition | undefined> = [];
     for (const server of this.manager.status(cwd)) {
       if (server.status !== 'connected') continue;
+      const included = !allowedServers || allowedServers.has(server.name);
       for (const tool of server.tools) {
         const base = serializeMcpToolName(server.name, tool.name);
         let fullName = base;
@@ -75,18 +87,20 @@ export class McpService {
         used.add(fullName);
         index.set(fullName, { server: server.name, tool: tool.name });
         definitions.push(
-          buildMcpToolDefinition({
-            name: fullName,
-            serverName: server.name,
-            toolName: tool.name,
-            tool,
-            callTool: (args, signal) => this.callTool(cwd, fullName, args, signal),
-          }),
+          included
+            ? buildMcpToolDefinition({
+                name: fullName,
+                serverName: server.name,
+                toolName: tool.name,
+                tool,
+                callTool: (args, signal) => this.callTool(cwd, fullName, args, signal),
+              })
+            : undefined,
         );
       }
     }
     this.toolIndex.set(cwd, index);
-    return definitions;
+    return definitions.filter((definition) => definition !== undefined);
   }
 
   /** 解析 Pi 工具名 → server/tool：优先 toolIndex，回退命名解析。 */
@@ -119,29 +133,45 @@ export class McpService {
     const managed = this.manager.status(cwd);
     return this.config.effective(cwd).map((server) => {
       const entry = managed.find((item) => item.name === server.name);
-      const status: ServerStatus =
-        server.enabled === false ? 'disabled' : (entry?.status ?? 'connecting');
-      return {
-        name: server.name,
-        scope: server.scope,
-        enabled: server.enabled !== false,
-        status,
-        error: entry?.error,
-        toolCount: entry?.tools.length ?? 0,
-        tools: (entry?.tools ?? []).map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-        })),
-        transport: server.transport,
-        command: server.command,
-        args: server.args,
-        env: server.env,
-        cwd: server.cwd,
-        url: server.url,
-        headers: server.headers,
-        approval: server.approval,
-      };
+      return this.viewOf(server, entry?.status ?? 'connecting', entry);
     });
+  }
+
+  /**
+   * REST：仅列出用户级 server 配置（无 cwd 上下文时用，如预设编辑界面）。
+   * 中文说明：不建立连接——连接池按 cwd 分键，没有工作区就没有连接语义；
+   * status 固定 idle，真实连接状态需带 cwd 调 listServers()。
+   */
+  listUserServers(): McpServerView[] {
+    return this.config.userServers().map((server) => this.viewOf(server, 'idle'));
+  }
+
+  /** 组装 REST 视图：配置 + 状态 + 工具清单（禁用的 server 一律标 disabled）。 */
+  private viewOf(
+    server: ResolvedServer,
+    status: ServerStatus,
+    entry?: { error?: string; tools: Array<{ name: string; description?: string }> },
+  ): McpServerView {
+    return {
+      name: server.name,
+      scope: server.scope,
+      enabled: server.enabled !== false,
+      status: server.enabled === false ? 'disabled' : status,
+      error: entry?.error,
+      toolCount: entry?.tools.length ?? 0,
+      tools: (entry?.tools ?? []).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+      })),
+      transport: server.transport,
+      command: server.command,
+      args: server.args,
+      env: server.env,
+      cwd: server.cwd,
+      url: server.url,
+      headers: server.headers,
+      approval: server.approval,
+    };
   }
 
   /** REST：新增/更新 server 并同步连接。 */

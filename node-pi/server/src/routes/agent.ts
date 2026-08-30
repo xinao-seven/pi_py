@@ -45,6 +45,7 @@ interface NewAgentBody {
   systemPrompt?: unknown;
   compaction?: unknown;
   images?: unknown;
+  mcpServers?: unknown;
 }
 
 // ---- 下面是一组"手写校验"辅助函数 ------------------------------------------
@@ -75,6 +76,18 @@ function optionalStringArray(value: unknown): string[] | undefined {
     throw new ApiError(422, 'validation_error', 'toolNames must be an array of strings');
   }
   return value;
+}
+
+/**
+ * 可选 MCP 服务白名单：null/undefined = 全部（缺省）；
+ * 数组（可空）= 服务名白名单，空数组表示禁用全部。
+ */
+function optionalMcpServers(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new ApiError(422, 'validation_error', 'mcpServers must be null or an array of strings');
+  }
+  return [...new Set(value.map((item) => (item as string).trim()))];
 }
 
 /** 可选压缩策略：enabled 布尔，keepRecentTokens/reserveTokens 正整数。 */
@@ -196,6 +209,7 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       toolNames: optionalStringArray(body.toolNames),
       systemPrompt: optionalString(body.systemPrompt, 'systemPrompt'),
       compaction: optionalCompaction(body.compaction),
+      mcpServers: optionalMcpServers(body.mcpServers),
     });
     await options.registry.command(entry.session.sessionId, {
       type: 'prompt',
