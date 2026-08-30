@@ -10,9 +10,9 @@
 - **`pi-python`（复刻/学习）**：Python + FastAPI 三层内核复刻（`pi_ai → pi_agent → pi_coding_agent`），监听 `8000`。
 - **`web`（共享前端）**：Vue 3 + Vite + Pinia + Tailwind，通过 `VITE_BACKEND_URL` 切换后端（默认 `8000`，Node 版为 `8001`）。
 
-**核心约束**：两个后端必须对共享 Vue 前端维持**同一套 `/api` REST + SSE + 错误契约**。改动任何路径、响应、SSE 载荷或状态字段前，须同时检查 `web/src/lib/api.ts`、`web/src/lib/agent-events.ts`、Pinia store 与另一个后端实现。
+**核心约束**：Node 后端对共享 Vue 前端维持**同一套 `/api` REST + SSE + 错误契约**。改动任何路径、响应、SSE 载荷或状态字段前，须检查 `web/src/lib/api.ts`、`web/src/lib/agent-events.ts` 与 Pinia store。
 
-`pi-python` 是对原版内核的学习性复刻，没有明确的读取限制，可作为行为对照参考；生产运行走 `node-pi`。
+`pi-python` 是对原版内核的学习性复刻，生产运行走 `node-pi`。**`pi-python` 已停止同步开发：没有明确需求不得改动 `pi-python/` 下的任何文件**，只能作为只读的行为对照参考。
 
 ## 目录结构
 
