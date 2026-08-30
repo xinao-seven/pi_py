@@ -198,8 +198,7 @@ function messageOf(cause: unknown): string {
         >
           <div class="provider-grid">
             <label>名称<input v-model="provider.name" /></label>
-            <label
-              >协议
+            <label>协议
               <select v-model="provider.api">
                 <option value="openai-completions">OpenAI Compatible</option>
                 <option value="anthropic-messages">Anthropic Messages</option>
@@ -207,9 +206,7 @@ function messageOf(cause: unknown): string {
               </select>
             </label>
             <label>Base URL<input v-model="provider.baseUrl" placeholder="https://…/v1" /></label>
-            <label
-              >API Key 引用<input v-model="provider.apiKey" placeholder="$OPENAI_API_KEY"
-            /></label>
+            <label>API Key 引用<input v-model="provider.apiKey" placeholder="$OPENAI_API_KEY" /></label>
           </div>
           <div class="model-list-heading">
             <strong>模型</strong>
@@ -226,9 +223,7 @@ function messageOf(cause: unknown): string {
               min="1"
               placeholder="context"
             />
-            <label class="checkbox-field"
-              ><input v-model="model.reasoning" type="checkbox" />推理</label
-            >
+            <label class="checkbox-field"><input v-model="model.reasoning" type="checkbox" />推理</label>
             <button
               type="button"
               aria-label="删除模型"
@@ -285,12 +280,7 @@ function messageOf(cause: unknown): string {
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--text);
-  background: #0e1014;
-}
-
-:root[data-theme='light'] .model-row > input {
-  color: var(--text);
-  background: #fbfcf8;
+  background: var(--input-bg);
 }
 
 .model-row > button {

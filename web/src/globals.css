@@ -28,6 +28,7 @@
   --panel: #111318;
   --panel-raised: #181b22;
   --panel-soft: #20242c;
+  --input-bg: #0e1014;
   --line: rgba(255, 255, 255, 0.08);
   --line-strong: rgba(255, 255, 255, 0.13);
   --text: #ececf0;
@@ -45,6 +46,7 @@
   --panel: #ffffff;
   --panel-raised: #f5f6f0;
   --panel-soft: #e9ebe3;
+  --input-bg: #fbfcf8;
   --line: rgba(28, 34, 22, 0.1);
   --line-strong: rgba(28, 34, 22, 0.17);
   --text: #20231d;
@@ -62,6 +64,7 @@
   --panel: #ffffff;
   --panel-raised: #f2f4ec;
   --panel-soft: #e7eadf;
+  --input-bg: #fbfcf8;
   --line: rgba(31, 48, 27, 0.16);
   --line-strong: rgba(31, 48, 27, 0.28);
   --text: #172017;
@@ -77,6 +80,7 @@
   --panel: #151515;
   --panel-raised: #1d1d1d;
   --panel-soft: #292929;
+  --input-bg: #0e1014;
   --line: rgba(255, 255, 255, 0.1);
   --line-strong: rgba(255, 255, 255, 0.18);
   --text: #f2f2f2;
@@ -91,6 +95,7 @@
   --panel: #ffffff;
   --panel-raised: #f7f7f7;
   --panel-soft: #ececec;
+  --input-bg: #f2f2f2;
   --line: #dedede;
   --line-strong: #c9c9c9;
   --text: #202020;
@@ -343,7 +348,7 @@ select:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--text);
-  background: #0e1014;
+  background: var(--input-bg);
 }
 
 .checkbox-field {
@@ -377,12 +382,6 @@ select:focus-visible {
 :root[data-theme='light'] .file-panel-shell,
 :root[data-theme='light'] .config-dialog {
   background: #ffffff;
-}
-
-:root[data-theme='light'] .provider-grid input,
-:root[data-theme='light'] .provider-grid select {
-  color: var(--text);
-  background: #fbfcf8;
 }
 
 :root[data-theme='light'] .provider-card,
