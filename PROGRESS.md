@@ -5,10 +5,10 @@
 
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
-| 当前里程碑 | **M2 已完成** → 下一步 **M3 断点续跑**                           |
-| 上一提交   | `f44b419 fix(node): 客户端请求错误不再返回 500`                  |
+| 当前里程碑 | **M3 已完成** → 下一步 **M4 Plan 重构**                           |
+| 上一提交   | `19ffd3f fix(node): 修正恢复清单的 requiresConfirmation 判定`     |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **179** / Web **74**，全绿                             |
+| 测试基线   | Node 后端 **206** / Web **80**，全绿                             |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -30,8 +30,8 @@
 | **M0.5** 持久化边界整改 | ✅ **取消** | 重新审计后无阻塞项，详见 3.2          |
 | **M1** 可观测底座       | ✅ **完成** | SessionLedger + 存储 + 4 个 REST + 用量面板，详见 3.6 |
 | **M2** 任务领域         | ✅ **完成** | 领域 + 存储 + 8 个 REST + SSE + 任务面板，详见 3.7 |
-| **M3** 断点续跑         | ⬜ 下一步   | 见第 5 节；依赖 M2 的 `execution` 字段  |
-| M4 Plan 重构            | ⬜          | 依赖 M3；**前置项已完成**（见 3.3）   |
+| **M3** 断点续跑         | ✅ **完成** | 租约 + 在飞动作 + 恢复清单 + 一键续跑，详见 3.8 |
+| **M4** Plan 重构        | ⬜ 下一步   | 见第 5 节；前置项已完成（见 3.3）      |
 | M5 Subagent             | ⬜          | 需先决策与官方扩展的关系（见第 6 节） |
 
 ---
@@ -222,6 +222,50 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
+### 3.8 M3 断点续跑（已完成，`docs/node-task-recovery-m3.md`）
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 租约 | `services/task-lease.ts`：owner = `pid-bootId`、TTL 30s、每 10s 续期、`TaskLeaseKeeper` |
+| 在飞动作 | `services/task-recovery-extension.ts`：turn/tool 钩子 → `execution.inFlight`；副作用分级在 `task-recovery.ts` |
+| 恢复判定 | `services/task-recovery.ts`：扫描、`assertResumable`、只读产物验证、`markInterrupted` |
+| 续跑 | `services/task-runner.ts`：校验 → 取租约 → 注入 `[TASK RESUME]` → 发 prompt → 续期保活 |
+| 接口 | `GET /api/tasks/recovery`、`POST /api/tasks/:id/resume`（202）、SSE `task_recovery_required` |
+| 前端 | 任务面板「上次运行被中断」+ [继续执行]/[重试当前步骤]，409 确认流 |
+
+#### 已冻结的决策
+
+1. **恢复清单只列不跑**：启动扫描只写日志，续跑必须由人点（模型可能在无人时做不可逆操作）。
+2. **比规划更保守的一处**：`lastSideEffect` 在步骤完成前一直保留（规划是
+   `tool_execution_end` 清 `inFlight` 就完事）——否则「写完文件、还没打勾就被杀」
+   会被判成「两步之间」而自动重跑，正是重复副作用的来源。它只在属于当前步骤本次尝试时生效。
+3. **`bash` 副作用用审批规则判定**：命中危险/敏感规则 → `write`；未命中 → `unknown`
+   （普通命令也可能是写，宁可多要一次确认）。
+4. **产物验证只做只读 stat**：`verification.kind='command'` 等于绕过审批跑任意 shell → 留给 M4。
+5. **产物在 → 补记完成（绝不重跑）；不在 → 标 blocked**；`retry_step` 是唯一逃生门。
+6. **`replan` 不占位**：直接 409 `replan_unavailable`（M4 接管）。
+7. **执行态写入也走 `TaskService`（乐观锁 + 广播）**：否则面板手里的 `revision` 会静默落后，
+   用户下一次点击就会莫名 409；前端也顺手做了「409 自动刷新后重试一次」。
+
+#### 真机验证（临时目录 + `kill -9`）
+
+启动日志 `WARN count=1` → `GET /recovery` 给出 `sideEffect=write`/`action=manual_only`/
+`requiresConfirmation=true` → 不带确认 resume 得 `409 task_needs_confirmation` →
+声明了 file 产物的任务在产物存在时把步骤**补记为 completed（附证据）**、
+随后因会话文件缺失得 `409 task_session_missing` 且任务 blocked（不崩）。
+「202 + 模型真的跑起来」由 fake session 集成测试覆盖（真机无模型凭据）。
+
+#### 顺带修掉的两个问题
+
+- **漏提交文件导致 HEAD 不能编译**：上一个提交漏了 `session-ledger.ts` 里的联合成员，
+  本地工作区能过、HEAD 过不了。教训写进提交信息：提交前要跑完整门禁，别只看工作区。
+- **`requiresConfirmation` 判定错误**：产物已存在时执行器会直接补记完成、不需要人确认，
+  清单却仍标 `true`，面板白提示一次。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -248,37 +292,40 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
-## 5. 下一步：M3 断点续跑
+## 5. 下一步：M4 Plan 重构
 
-> M2 的任务清单已全部完成，DoD 对照见 `docs/node-task-domain-m2.md` §9。
-> 本节改写为 M3 的开工清单（细节以 `docs/node-platform-plan.md` §4.3 为准）。
+> M3 的任务清单已全部完成，DoD 对照见 `docs/node-task-recovery-m3.md` §7。
+> 本节改写为 M4 的开工清单（细节以 `docs/node-platform-plan.md` §4.4 与 §2 的 P1–P8 为准）。
 
-### 5.1 任务清单（待按规划 §4.3 细化）
+### 5.1 任务清单
 
 | 任务 | 落点 |
 | --- | --- |
-| 执行租约与心跳（`execution.lease` / `lastHeartbeatAt`） | `services/task-service.ts` + 新建 `services/task-runner.ts` |
-| 在飞动作登记（`inFlight`：turn/tool + `sideEffect`） | 账本 hook + `AgentRegistry` 事件回调 |
-| 崩溃恢复扫描（启动时找 `running` 任务与过期租约） | `app.ts` 的 `onReady`（M0 已预留接入点） |
-| `POST /api/tasks/:id/resume`（continue / retry_step / replan）→ 202 | `routes/tasks.ts` + runner |
-| `GET /api/tasks/recovery` + SSE `task_recovery_required` | 同上（**必须同步** `web/src/lib/agent-events.ts`） |
-| 重启后任务面板提示可恢复 | `web/src/components/TaskPanel.vue` |
-| 清理残留 `running` run（M1 已知遗留） | 恢复扫描顺带收尾 |
+| 计划改用工具产出：`submit_plan` / `update_plan` / `complete_step` / `block_step`（TypeBox schema） | `services/plan-mode-service.ts` 重构 + 新 `services/plan-tools.ts` |
+| 删除正则：`extractPlan()` / `markDone()` / `[DONE:n]` | 同上（P2 的根治） |
+| 步骤完成带**证据**，`verification` 由服务端校验（含 `kind='command'` 走工具调用 + 审批） | `task-service.ts` + 完成工具 |
+| 计划落为 Task（`origin: 'plan'`），JSONL 只留 `planId` 指针 | `plan-mode-service.ts` ↔ `TaskService` |
+| 执行方式改为发送时选择（`mode: plan \| direct`），取消预开关；新会话也能规划 | `web/src/components/{ChatInput,ChatWindow,AgentControls}.vue` + `types` |
+| 权限改为能力集声明（`planPolicy`）：退出回到会话当前工具集，验证类命令显式放行 | `plan-mode-service.ts`（P6） |
+| 前端 Plan 面板改为 Task 视图（可编辑、可 pause/resume、abandon 留档） | `PlanProgress.vue` → `PlanView` |
+| 评测 golden set（CI 的 `eval` job 已就绪，加 `npm run eval` 即生效） | 新 `eval/` + `package.json` |
 
 ### 5.2 必须遵守的实现要点
 
-1. **副作用不可猜测**：崩溃时无法判定副作用是否落地 → `sideEffect: 'unknown'` 的动作必须
-   人工确认后再续跑，绝不自动重放写操作。
-2. 恢复扫描只读不写共享态；「租约过期」判定用服务端时钟。
-3. `task_updated` 之外新增的 SSE 事件必须同步 `agent-events.ts` 的规约函数与前端类型。
-4. 续跑走 `AgentRegistry` 的既有命令通道（`prompt`/`follow_up`），不要另起执行器。
-5. M3 不改 `plan_*` 命令契约——那是 M4 的事。
+1. **Plan 是 Task 的视图**：不要再建第二套模型；`plan_*` 命令的 SSE 契约变更要同步
+   `web/src/lib/agent-events.ts`、`types/index.ts` 与 Pinia store。
+2. 计划期间的工具限制要**显式放行只读验证命令**（`tsc --noEmit`、`npm run build`、测试命令），
+   这是 P6 的唯一剩余成因。
+3. 完成一步必须带证据（命令 + 退出码 / 产物 / 摘要），服务端能校验时就不信模型自报。
+4. 沿用 M3 的租约与在飞动作：计划执行同样可能崩，恢复路径不能绕开 `TaskService`。
+5. JSONL 兼容：CLI 侧读到的会话仍要能正常工作（不删除 `web-plan-mode` 既有条目，
+   新写入改为指针）。
 
-### 5.3 M3 的 DoD（来自规划 §4.3，开工时再核对）
+### 5.3 M4 的 DoD（开工时按规划 §4.4 复核）
 
-- 进程重启后能列出可恢复任务，并明确区分「可自动续跑」与「必须人工确认」；
-- 续跑不会重复已落地的副作用；
-- 面板能提示恢复项并一键续跑。
+- 不预开开关也能规划（新会话同样支持）；
+- 计划是结构化数据（工具产出），服务端能校验步骤完成；
+- 评测 golden set 在 CI 里跑通并给出可比较的指标。
 
 ---
 
@@ -297,11 +344,11 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 179 passed / 构建成功 / 8 个 spike 全过
+#   → 期望：format OK / 无类型错误 / 206 passed / 构建成功 / 8 个 spike 全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 74 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 80 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -315,19 +362,6 @@ cd web && npm run dev                 # http://127.0.0.1:5173
 ---
 
 ## 8. 文件地图
-
-### 本次新增
-
-```
-.github/workflows/ci.yml                      CI 三 job
-node-pi/server/.prettierignore                排除 dist/，修掉原本红色的 format:check
-node-pi/server/spike/00..06-plan-session-start.mjs   8 个 M0 验证/守护脚本
-node-pi/server/test/services/agent-registry-extensions.test.ts
-docs/node-platform-plan.md                    用户提供的平台化规划（M0–M5）
-docs/node-platform-m0-spike.md                M0 报告：验证结论 + 边界审计 + 存储选型
-docs/node-plan-extension-ownership.md         Plan 扩展归属决策 + session_start 修复
-PROGRESS.md                                   本文件
-```
 
 ### M1 新增（可观测底座，2026-08-21）
 
@@ -352,6 +386,27 @@ node-pi/server/test/routes/observability-routes.test.ts
 web/src/components/ObservabilityPanel.vue
 web/test/components/ObservabilityPanel.test.ts
 docs/node-observability-m1.md                  M1 实现说明（口径/取舍/契约/DoD 对照）
+```
+
+### M1 改动（关键位置）
+
+```
+node-pi/server/src/services/agent-registry.ts
+  · publish() 尾部调用 ledger.record()        ← 唯一插桩点
+  · close()/remove() 收尾未结算 run            · start() 上报 prompt() 失败
+  · state() 透传 getContextUsage/getSessionStats（零成本修复）
+node-pi/server/src/services/tool-approval.ts
+  · ApprovalTraceSink（挂起/结算上报）          · settle 区分 user/timeout/abort/session/disposed
+node-pi/server/src/services/plan-mode-service.ts
+  · PlanTraceSink（规划期拦截上报 blocked_by）
+node-pi/server/src/app.ts
+  · PlatformStore + SessionLedger 装配          · /api/observability 注册      · onClose 关存储
+node-pi/server/src/config.ts / src/server.ts
+  · PI_NODE_DATA_DIR + PI_NODE_TRACE_* 配置     · server.ts 传入 config.trace
+web/src/components/{SettingsDialog,AgentControls,ChatWindow}.vue
+  · 设置新增「用量」分类                         · ContextUsage 可空处理（不再显示 NaN%）
+web/src/types/index.ts / src/lib/api.ts
+  · 可观测性类型与 4 个接口封装
 ```
 
 ### M2 新增（任务领域，2026-08-21）
@@ -388,42 +443,35 @@ web/src/components/ChatWindow.vue        · 任务面板接线与 6 类操作
 web/src/types/index.ts / src/lib/api.ts  · 任务类型与 7 个接口封装
 ```
 
-### M1 改动（关键位置）
+### M3 新增（断点续跑，2026-08-21）
 
 ```
-node-pi/server/src/services/agent-registry.ts
-  · publish() 尾部调用 ledger.record()        ← 唯一插桩点
-  · close()/remove() 收尾未结算 run            · start() 上报 prompt() 失败
-  · state() 透传 getContextUsage/getSessionStats（零成本修复）
-node-pi/server/src/services/tool-approval.ts
-  · ApprovalTraceSink（挂起/结算上报）          · settle 区分 user/timeout/abort/session/disposed
-node-pi/server/src/services/plan-mode-service.ts
-  · PlanTraceSink（规划期拦截上报 blocked_by）
-node-pi/server/src/app.ts
-  · PlatformStore + SessionLedger 装配          · /api/observability 注册      · onClose 关存储
-node-pi/server/src/config.ts / src/server.ts
-  · PI_NODE_DATA_DIR + PI_NODE_TRACE_* 配置     · server.ts 传入 config.trace
-web/src/components/{SettingsDialog,AgentControls,ChatWindow}.vue
-  · 设置新增「用量」分类                         · ContextUsage 可空处理（不再显示 NaN%）
-web/src/types/index.ts / src/lib/api.ts
-  · 可观测性类型与 4 个接口封装
+node-pi/server/src/services/task-lease.ts                租约与续期（owner = pid-bootId）
+node-pi/server/src/services/task-recovery.ts             恢复清单、副作用分级、产物验证
+node-pi/server/src/services/task-recovery-extension.ts   在飞动作内联扩展 + 隐藏恢复上下文注入
+node-pi/server/src/services/task-runner.ts               续跑执行器（校验→租约→注入→prompt→保活）
+node-pi/server/test/services/task-recovery.test.ts
+node-pi/server/test/services/task-recovery-extension.test.ts
+node-pi/server/test/services/task-runner.test.ts         重启恢复 / 防双跑 / 副作用四类分支
+web/test/components/TaskPanel.test.ts                    （新增恢复块用例）
+docs/node-task-recovery-m3.md                            M3 实现说明 + DoD 验证记录
 ```
 
-### 本次改动（M0，关键位置）
+### M3 改动（关键位置）
 
 ```
-node-pi/server/src/services/agent-registry.ts
-  · PiSession.bindExtensions 门面            · register() 派发 session_start
-  · INLINE_OWNED_EXTENSION_DIRS / dropInlineOwnedExtensions（已导出）
-  · loader() 接入 extensionsOverride          · 新增可选 logger 参数
-  · publish()                        ← M1 的唯一插桩点
-  · state() 的 contextUsage/sessionStats  ← M1 零成本修复目标
-node-pi/server/src/services/plan-mode-service.ts
-  · 新增 context 钩子                  · M4 要删除 extractPlan/markDone/[DONE:n]
-node-pi/server/src/app.ts
-  · OriginalPiSessionFactory 传入 app.log     · onReady 钩子 ← M3 恢复扫描接入点
-node-pi/server/package.json
-  · devDep @earendil-works/pi-ai@0.83.0       · npm run spike
+node-pi/server/src/services/platform/task-model.ts   · TaskLease/currentStep/isLeaseActive/isInterrupted
+                                                     · execution.lastSideEffect（比规划保守的一处）
+node-pi/server/src/services/task-service.ts          · acquireLease/renewLease/releaseLease/setInFlight
+                                                     · markInterrupted/resetCurrentStep/completeStepWithEvidence
+                                                     · mutate()：执行态写入也走乐观锁 + 广播
+node-pi/server/src/services/agent-registry.ts        · 工厂第 7 参（恢复扩展）· announceRecovery/hasSubscribers
+node-pi/server/src/routes/tasks.ts                   · GET /recovery、POST /:id/resume（202）
+node-pi/server/src/routes/agent.ts                   · SSE 首个连接补推 task_recovery_required（remindRecovery）
+node-pi/server/src/app.ts                            · 装配 owner/tracker/recovery/runner；onReady 扫描；onClose 释放租约
+web/src/composables/useAgentSession.ts               · recovery ref + refreshRecovery + SSE 归约
+web/src/components/{TaskPanel,ChatWindow}.vue        · 中断提示与一键继续；409 自动刷新重试
+web/src/types/index.ts / src/lib/api.ts              · TaskRecoveryItem 等类型与 2 个接口封装
 ```
 
 ### 与前端共享的契约文件（任何接口改动都必须同步）
@@ -455,3 +503,7 @@ web/src/components/{PlanProgress,ChatWindow,ChatInput,AgentControls}.vue   ← M
 | 任务与 run 的关联时机 | 只在 run **开始**时写 `runs.task_id`；执行中绑定任务不会回溯已有 run | M3 可选 |
 | `verification` 只存不校验 | M2 记录声明，实际校验（跑命令/查产物）由 M4 的完成工具做 | M4 |
 | 任务面板无跨会话视图 | 面板只显示当前会话任务；`GET /api/tasks` 已支持跨会话查询，UI 按需再加 | 可选 |
+| `verification.kind='command'` 不自动执行 | M3 只做只读 stat；命令类校验等于跑任意 shell，接进 M4 的完成工具（含审批链路） | M4 |
+| `replan` 未实现 | `POST /resume` 的 replan 返回 `409 replan_unavailable`，由 M4 的 Plan 重构接管 | M4 |
+| 一次 resume 只推进当前步骤 | 多步连跑依赖模型在会话里继续；M4 的计划执行会更细 | M4 |
+| 租约 TTL 写死 30s/10s | 暂不需要配置项；若将来要调，走 `PI_NODE_*` 并补文档 | 可选 |

@@ -36,7 +36,7 @@ pi_py/
 │   │   │   ├── config.ts   # 环境变量基础设施配置（PI_NODE_*）
 │   │   │   ├── errors.ts   # 统一 API 错误
 │   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/tasks/workspaces
-│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/task-service/mcp/...
+│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/task-{service,lease,recovery,runner}/mcp/...
 │   │   │       ├── platform/       # SQLite/内存存储（M1/M2）：migrations/trace-model/trace-repository/task-* /store
 │   │   │       └── observability/  # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
 │   │   ├── spike/          # M0 验证脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
@@ -88,6 +88,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 新能力落点：新 API → 新增 `routes/<resource>.ts` + 对应 service，在 `app.ts` 显式注册；新会话能力 → `AgentRegistry`；新工具/事件钩子 → `extensions/`（不要为加载单个扩展改 `app.ts`）。
 - 可观测性（M1）：采集只在 `AgentRegistry.publish()` 一处插桩（→ `SessionLedger`）；存储与聚合在 `services/platform/`（SQLite/内存双实现 + 写入队列）；查询走 `routes/observability.ts` → `services/observability/metrics.ts`。不要在其他地方新增 trace 写入点。
 - 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
+- 断点续跑（M3）：`task-lease.ts`（租约，owner = pid + bootId）→ `task-recovery-extension.ts`（在飞动作与副作用分级）→ `task-recovery.ts`（恢复清单与判定）→ `task-runner.ts`（续跑：校验 → 取租约 → 注入 `[TASK RESUME]` 隐藏上下文 → 发 prompt → 续期保活）。三条不可让步的规则：**只列不跑**（恢复清单不自动执行）、**无法判定副作用必须人工确认**、**产物在就补记完成、绝不重跑**。任何执行态写入都要经 `TaskService`（乐观锁 + 广播），不要绕开它直接写库。
 
 ### Python 三层内核（pi-python/src）
 
@@ -155,6 +156,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
 | `docs/node-observability-m1.md` | **M1 可观测底座**：采集口径（run 边界/TTFT/策略拦截归因）、存储与聚合取舍、REST 契约、配置与降级 |
 | `docs/node-task-domain-m2.md` | **M2 任务领域**：状态聚合语义（唯一真相源＝步骤）、乐观并发、任务 REST/SSE 契约、面板 |
+| `docs/node-task-recovery-m3.md` | **M3 断点续跑**：执行租约、在飞动作与副作用分级、恢复清单与一键续跑、DoD 验证记录 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |

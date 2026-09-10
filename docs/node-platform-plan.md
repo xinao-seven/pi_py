@@ -545,6 +545,25 @@ routes/tasks.ts
 
 **DoD**：手工 kill 掉进程后重启，任务面板提示「1 个任务中断」，可一键继续且不产生重复副作用。
 
+#### 4.3.4 实施修订（2026-08-21，M3 落地后回填）
+
+以 [`node-task-recovery-m3.md`](node-task-recovery-m3.md) 为准。本节设计基本原样落地（租约、
+在飞标记、恢复清单、`[TASK RESUME]` 注入、`/resume` 202），三处做了明确化/收紧：
+
+1. **比规划更保守的写副作用判定**：§4.3.1 写的是 `tool_execution_end` 清除 in-flight。
+   但那一刻步骤还没被标记完成——「写完文件、还没打勾就被杀」只看 inFlight 会被判成
+   「两步之间」而自动续跑，正是重复副作用的来源。实现里额外保留 `execution.lastSideEffect`，
+   且只在它属于**当前步骤的本次尝试**（`at >= step.startedAt`）时生效；`retry_step`
+   重置步骤后自然失效（不需要额外清理代码）。
+2. **`kind='command'` 的验证不自动执行**：执行任意 shell 等于绕过审批链路，M3 只做只读
+   `stat`（`kind='file'`）；命令类校验由 M4 的完成工具接进工具调用与审批。
+3. **`replan` 不占位**：直接 `409 replan_unavailable`（M4 接管），不做「返回 202 但什么都不做」。
+4. **执行态写入也走 TaskService 的乐观锁并广播** `task_updated`：否则面板手里的 `revision`
+   会静默落后，用户下一次操作会莫名 409。
+
+另外两点实现的边界：恢复清单**只列不跑**（启动扫描只记日志）；写副作用产物缺失时
+除了 `retry_step`（用户显式要求重做）之外一律把任务标 blocked 并拒绝续跑。
+
 ---
 
 ### M4 Plan 模式重构

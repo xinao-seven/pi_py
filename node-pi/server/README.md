@@ -47,3 +47,11 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 推给相关会话。任务与 trace 共用一个 `platform.db`（同库不同表），因此重启不丢，
 `runs.task_id` 可把运行成本关联到任务；任务的持久化与 `PI_NODE_TRACE` 开关无关
 （trace 只控制观测明细）。设计说明见 [`docs/node-task-domain-m2.md`](../../docs/node-task-domain-m2.md)。
+
+**断点续跑（M3）**：进程崩溃或重启后，`GET /api/tasks/recovery` 给出**待恢复清单**
+（只列不跑），前端面板提示「上次运行被中断」，`POST /api/tasks/:id/resume`（202）可一键继续。
+执行期用**租约**防双跑（owner = pid + 启动 id，TTL 30s 自动过期），执行中的动作会写
+`execution.inFlight` 并做**副作用分级**：只读可直接继续；写操作若步骤声明了
+`verification.kind='file'` 则先验证产物（在就补记完成、绝不重跑），否则必须人工确认
+（`confirmSideEffect: true`）。SSE 在会话首个连接时补推 `task_recovery_required`。
+设计说明见 [`docs/node-task-recovery-m3.md`](../../docs/node-task-recovery-m3.md)。

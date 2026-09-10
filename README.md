@@ -109,6 +109,21 @@ $env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 d
 
 实现说明见 [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md)。
 
+## 断点续跑（M3）
+
+进程崩溃/重启后不会「忘记跑到哪」：任务有**执行租约**（防双跑、崩溃后自动过期），
+执行中的动作会留下**在飞标记与副作用分级**（只读 / 写入 / 未知）。
+重启时启动扫描给出**待恢复清单**（只列不跑），前端面板提示「上次运行被中断」并提供
+[继续执行] / [重试当前步骤]：
+
+- 中断在两步之间 → 可直接继续；
+- 中断在写操作上且步骤声明了产物（`verification.kind='file'`）→ 先验证产物：
+  **在就补记完成（绝不重跑）**，不在就把任务标为 blocked 要人确认；
+- 无法判定副作用 → 必须显式确认（`confirmSideEffect`），不会自动重放写操作。
+
+接口：`GET /api/tasks/recovery`、`POST /api/tasks/:id/resume`（202）+ SSE `task_recovery_required`。
+说明见 [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md)。
+
 ## 测试
 
 ```powershell
@@ -146,5 +161,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md) | M0 验证报告：存储选型与 `~/.pi/agent` 只读边界审计 |
 | [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合语义、乐观并发、任务 REST/SSE 与面板 |
+| [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md) | M3 断点续跑：执行租约、在飞动作与副作用分级、恢复清单与一键续跑 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
