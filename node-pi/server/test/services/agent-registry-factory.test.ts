@@ -55,7 +55,15 @@ describe('OriginalPiSessionFactory', () => {
     expect(mocks.createAgentSession).toHaveBeenCalledTimes(1);
     const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
     expect(loaderOptions?.systemPrompt).toBe('custom prompt');
-    expect(options.tools).toEqual([]);
+    // M4：预设白名单会并入内联扩展注册的工具（SDK 的 tools 是可用工具白名单，
+    // 不在名单里的工具连调用都失败 —— 计划工具必须并进去）。
+    expect(options.tools).toEqual([
+      'submit_plan',
+      'update_plan',
+      'complete_step',
+      'block_step',
+      'ask_user',
+    ]);
     expect(options.thinkingLevel).toBe('off');
     expect(options.settingsManager).toBeDefined();
     expect(mocks.SettingsManager.create).toHaveBeenCalledWith('/tmp/workspace', agentDir);

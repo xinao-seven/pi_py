@@ -1,6 +1,8 @@
 // M0-⑥: 端到端验证两个修复（用真实 SDK + 真实 AgentRegistry + 真实 PlanModeService）
-//   [修复 A] register() 派发 session_start —— 修复前 plan_enable 永远 409 plan_unavailable
+//   [修复 A] register() 派发 session_start —— 修复前 plan 命令永远 409 plan_unavailable
 //   [修复 B] context 钩子清理陈旧 plan 上下文 —— 修复前 web-plan-context 无上限累积
+// M4 更新：计划改由工具产出（submit_plan）、状态存在任务库里，因此这里注入真实
+// TaskService（内存仓储），并用 plan_start / plan_abandon 取代 enable / disable。
 // 离线、临时目录，不触网、不碰真实 ~/.pi/agent。
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,6 +16,8 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { AgentRegistry, dropInlineOwnedExtensions } from '../dist/services/agent-registry.js';
 import { PlanModeService } from '../dist/services/plan-mode-service.js';
+import { TaskService } from '../dist/services/task-service.js';
+import { MemoryTaskRepository } from '../dist/services/platform/task-repository.js';
 
 const root = mkdtempSync(join(tmpdir(), 'pi-spike-start-'));
 const agentDir = join(root, 'agent');
@@ -34,6 +38,9 @@ const model = runtime.getModel(faux.provider.id, faux.getModel().id);
 
 const plans = new PlanModeService();
 plans.setListener(() => undefined);
+// M4：计划就是 origin='plan' 的任务，没有任务服务扩展工厂会直接失败。
+const tasks = new TaskService(new MemoryTaskRepository());
+plans.setTaskService(tasks);
 let sessionManager;
 
 /**
@@ -46,7 +53,8 @@ function contextProbe(pi) {
   pi.on('context', (event) => {
     probeState.calls++;
     const planMessages = event.messages.filter((m) => PLAN_TYPES.has(m.customType));
-    if (plans.state(sessionManager.getSessionId()).mode === 'planning') {
+    const status = plans.state(sessionManager.getSessionId()).status;
+    if (status === 'drafting' || status === 'proposed') {
       probeState.lastPlanningCount = planMessages.length;
     } else {
       probeState.lastNormalCount = planMessages.length;
@@ -87,17 +95,23 @@ const sessionId = entry.session.sessionId;
 // ── 修复 A：session_start 是否真的派发 ──────────────────────────────────────
 console.log('=== 修复 A：session_start 派发 ===');
 console.log(`  注册表 planState 初始值: ${JSON.stringify(registry.planState(sessionId))}`);
-let enableError;
+let startError;
 try {
-  await registry.command(sessionId, { type: 'plan_enable' });
+  await registry.command(sessionId, { type: 'plan_start', message: '规划一下这个需求' });
 } catch (error) {
-  enableError = error;
+  startError = error;
 }
-if (enableError) {
-  console.log(`  ❌ plan_enable 失败: ${enableError.code ?? enableError.message}`);
+if (startError) {
+  console.log(`  ❌ plan_start 失败: ${startError.code ?? startError.message}`);
 } else {
-  console.log('  ✅ plan_enable 成功（修复前会抛 409 plan_unavailable）');
+  console.log('  ✅ plan_start 成功（修复前会抛 409 plan_unavailable）');
   console.log(`     planState 现在: ${JSON.stringify(registry.planState(sessionId))}`);
+  console.log(
+    `     计划已落库为任务: ${tasks
+      .list({ sessionId })
+      .map((task) => task.id)
+      .join(', ')}`,
+  );
 }
 
 // ── 修复 B：多轮规划后 plan 上下文是否清理干净 ─────────────────────────────
@@ -108,7 +122,7 @@ faux.setResponses([fauxAssistantMessage('方案讨论中')]);
 await entry.session.prompt('继续讨论');
 faux.setResponses([fauxAssistantMessage('再讨论一轮')]);
 await entry.session.prompt('再继续');
-await registry.command(sessionId, { type: 'plan_disable' });
+await registry.command(sessionId, { type: 'plan_abandon' });
 faux.setResponses([fauxAssistantMessage('已退出规划')]);
 await entry.session.prompt('好了不规划了');
 

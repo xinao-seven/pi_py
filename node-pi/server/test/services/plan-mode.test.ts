@@ -327,6 +327,22 @@ describe('工具差集恢复（P6）', () => {
   });
 });
 
+describe('计划结束时收回计划工具', () => {
+  it('withdraws the plan tools once the plan completes (no lingering submit_plan)', async () => {
+    const { service, pi } = makeHarness();
+    service.startPlanning('session-1', 'P');
+    await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
+    await service.command('session-1', 'execute');
+    expect(pi.getActiveTools()).toContain('complete_step');
+
+    await pi.callTool('complete_step', { stepId: 's1', evidence: { summary: '做完了' } });
+    // 全部步骤完成后计划终态：计划工具收回，写工具保留。
+    expect(pi.getActiveTools()).not.toContain('complete_step');
+    expect(pi.getActiveTools()).not.toContain('submit_plan');
+    expect(pi.getActiveTools()).toEqual(expect.arrayContaining(['edit', 'write', 'read']));
+  });
+});
+
 describe('重启后接管（P8）', () => {
   it('adopts an unfinished plan from the store when the session reopens', async () => {
     const repository = new MemoryTaskRepository();

@@ -14,7 +14,7 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "spike": "node spike/00-resolve.mjs && node spike/01-sqlite-p95.mjs && node spike/02-faux-agentloop.mjs && node spike/03-parent-session.mjs && node spike/04-tool-hook-order.mjs && node spike/04b-block-semantics.mjs && node spike/05-extension-conflict.mjs && node spike/06-plan-session-start.mjs"
+    "spike": "node spike/00-resolve.mjs && node spike/01-sqlite-p95.mjs && node spike/02-faux-agentloop.mjs && node spike/03-parent-session.mjs && node spike/04-tool-hook-order.mjs && node spike/04b-block-semantics.mjs && node spike/05-extension-conflict.mjs && node spike/06-plan-session-start.mjs && node spike/07-plan-tool-loop.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.83.0",

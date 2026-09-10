@@ -4,6 +4,7 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
+  withInlineTools,
 } from '../../src/services/agent-registry.js';
 
 /** 带 SDK 指标的假会话：只实现 state() 需要用到的那部分能力。 */
@@ -81,5 +82,23 @@ describe('AgentRegistry.state() facade metrics', () => {
     await registry.create({ cwd: '/workspace' });
 
     expect(registry.state('session-stats')).toMatchObject({ contextUsage: null });
+  });
+});
+
+describe('withInlineTools（M4：预设白名单必须并入内联扩展的工具）', () => {
+  it('appends inline tools and de-duplicates', () => {
+    expect(withInlineTools(['read', 'bash'], ['submit_plan', 'read'])).toEqual([
+      'read',
+      'bash',
+      'submit_plan',
+    ]);
+  });
+
+  it('keeps the SDK default (undefined) when no preset tool list was given', () => {
+    expect(withInlineTools(undefined, ['submit_plan'])).toBeUndefined();
+  });
+
+  it('works when the preset list is empty (still needs the inline tools)', () => {
+    expect(withInlineTools([], ['submit_plan'])).toEqual(['submit_plan']);
   });
 });

@@ -297,8 +297,17 @@ class PlanSession {
     return undefined;
   }
 
-  /** 状态变化后广播视图（服务层转成 SSE `plan_updated`）。 */
+  /**
+   * 状态变化后广播视图（服务层转成 SSE `plan_updated`）。
+   * 中文说明：计划自然跑完（步骤全完成）时不会有「退出计划」的显式动作，
+   * 因此在这里顺手收回计划工具——否则 `submit_plan` 会永远留在 activeTools 里，
+   * 变成「已经在做的计划旁边还挂着一个可随时新建计划的入口」。
+   */
   publish(): void {
+    const status = this.status();
+    if ((status === 'completed' || status === 'abandoned') && this.toolsAdded.length > 0) {
+      this.restorePlanTools();
+    }
     this.service.publishState(this.view());
   }
 
@@ -334,8 +343,9 @@ class PlanSession {
       this.toolsDisabled = [];
     }
     for (const name of PLAN_TOOL_NAMES) {
-      if (active.has(name)) continue;
-      active.add(name);
+      if (!active.has(name)) active.add(name);
+      // 即使已经在 activeTools 里也要登记（可能是上一个计划周期留下的，
+      // 或者用户自己开过）：计划结束后必须由我们收回，不能只撤销「这次新加的」。
       if (!this.toolsAdded.includes(name)) this.toolsAdded.push(name);
     }
     this.pi.setActiveTools([...active]);

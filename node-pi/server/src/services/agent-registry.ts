@@ -38,6 +38,7 @@ import type { ServiceLogger } from './service-logger.js';
 import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
 import { PlanModeService } from './plan-mode-service.js';
+import { PLAN_TOOL_NAMES } from './plan-tools.js';
 import { emptyPlanView, type PlanView } from './platform/plan-model.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
@@ -332,6 +333,14 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
           return manager;
         })()
       : undefined;
+    // 预设若指定了工具子集，SDK 的 `tools` 选项会把它当成**可用工具白名单**——
+    // 不在名单里的工具连调用都会失败（"Tool xxx not found"）。因此这里必须并入
+    // 内联扩展注册的工具（计划工具 / MCP 工具），否则「带预设的会话」里
+    // Plan 完全不可用、MCP 工具也调不动（M4 spike 抓到的真实缺陷）。
+    const effectiveTools = withInlineTools(input.toolNames, [
+      ...PLAN_TOOL_NAMES,
+      ...this.mcpToolNames(input.cwd, input.mcpServers),
+    ]);
     // 调用 Pi SDK 创建会话；"off" 透传给 SDK（clampThinkingLevel 对任何模型都接受）。
     const session = await createAgentSession({
       cwd: input.cwd,
@@ -347,11 +356,24 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       ...(input.thinkingLevel
         ? { thinkingLevel: input.thinkingLevel as AgentSession['thinkingLevel'] }
         : {}),
-      ...(input.toolNames === undefined ? {} : { tools: input.toolNames }),
+      ...(effectiveTools === undefined ? {} : { tools: effectiveTools }),
       ...(settingsManager === undefined ? {} : { settingsManager }),
     });
     // createAgentSession 返回 { session, agent, ... }，这里只把 session 暴露出去。
     return session.session as unknown as PiSession;
+  }
+
+  /** 当前 cwd 下已连接的 MCP 工具名（预设白名单内；未启用 MCP 时为空）。 */
+  private mcpToolNames(cwd: string, allowed?: string[] | null): string[] {
+    if (this.mcpService === undefined) return [];
+    try {
+      return this.mcpService
+        .toolsFor(cwd, allowed === undefined || allowed === null ? null : new Set(allowed))
+        .map((tool) => tool.name);
+    } catch {
+      // MCP 是增量能力：拿不到工具名不该让会话建不起来。
+      return [];
+    }
   }
 
   /** 列出磁盘上所有持久化会话（递归子目录去重）。 */
@@ -487,6 +509,23 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
  *   请求直接复用同一个 Promise，避免重复打开同一会话文件；
  * - 事件双缓冲：SDK 事件先进 events 数组（供重放），同时广播给所有 subscribers。
  */
+/**
+ * 把内联扩展注册的工具并入预设的工具白名单。
+ *
+ * 中文说明：SDK 的 `tools` 选项是**可用工具白名单**——不在名单里的工具不只是「不激活」，
+ * 而是调用时直接 "Tool xxx not found"。M4 的 spike ⑦ 就抓到了这个缺陷：带预设
+ * （指定了 toolNames）的会话里 `submit_plan` 根本调不动，MCP 工具同理。
+ * 因此预设白名单必须并入内联扩展的工具名；`toolNames` 未指定时返回 undefined
+ * （让 SDK 用发现到的全部工具，保持原有语义）。
+ */
+export function withInlineTools(
+  toolNames: string[] | undefined,
+  inlineTools: readonly string[],
+): string[] | undefined {
+  if (toolNames === undefined) return undefined;
+  return [...new Set([...toolNames, ...inlineTools])];
+}
+
 export class AgentRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly opening = new Map<string, Promise<RegistryEntry>>();
