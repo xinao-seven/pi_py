@@ -13,11 +13,13 @@ import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
 import {
   addTaskStep,
+  ApiError,
   cancelTask,
   createTask,
   deleteTaskStep,
   forkSession,
   mergeSession,
+  resumeTask,
   sendPlanCommand,
   updateTaskStep,
 } from '@/lib/api';
@@ -58,7 +60,9 @@ const {
   stream,
   contextUsage,
   task,
+  recovery,
   refreshTask,
+  refreshRecovery,
   catalog,
   thinkingLevel,
   activeTools,
@@ -211,12 +215,27 @@ async function mergeFrom(sourceSessionId: string): Promise<void> {
 const taskBusy = ref(false);
 const taskError = ref<string | null>(null);
 
-/** 统一的任务写入包装：成功后用服务端返回的权威记录刷新面板。 */
-async function actTask(action: () => Promise<void>): Promise<void> {
+/**
+ * 统一的任务写入包装：成功后用服务端返回的权威记录刷新面板。
+ *
+ * 中文说明：执行器（续跑/在飞动作）也会写任务并升高 revision，所以用户点击时
+ * 手里的版本可能刚刚落后。这里对 409 task_conflict 自动刷新一次再重试——
+ * 否则用户会遇到「我什么都没改却被拒绝」的困惑。重试只做一次，避免反复抢。
+ */
+async function actTask(build: () => Promise<void>): Promise<void> {
   taskBusy.value = true;
   taskError.value = null;
   try {
-    await action();
+    try {
+      await build();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'task_conflict') {
+        await refreshTask();
+        await build();
+      } else {
+        throw cause;
+      }
+    }
     await refreshTask();
   } catch (cause) {
     taskError.value = cause instanceof Error ? cause.message : '任务操作失败';
@@ -234,9 +253,9 @@ function createSessionTask(payload: { title: string; goal: string }): void {
 }
 
 function addSessionStep(payload: { title: string }): void {
-  const current = task.value;
-  if (!current) return;
   void actTask(async () => {
+    const current = task.value;
+    if (!current) return;
     await addTaskStep(current.id, { title: payload.title, ifRevision: current.revision });
   });
 }
@@ -246,9 +265,9 @@ function setSessionStepStatus(payload: {
   status: TaskStepStatus;
   reason?: string;
 }): void {
-  const current = task.value;
-  if (!current) return;
   void actTask(async () => {
+    const current = task.value;
+    if (!current) return;
     await updateTaskStep(current.id, payload.step.id, {
       status: payload.status,
       ...(payload.reason ? { blockedReason: payload.reason } : {}),
@@ -258,9 +277,9 @@ function setSessionStepStatus(payload: {
 }
 
 function removeSessionStep(payload: { step: TaskStep; force: boolean }): void {
-  const current = task.value;
-  if (!current) return;
   void actTask(async () => {
+    const current = task.value;
+    if (!current) return;
     await deleteTaskStep(current.id, payload.step.id, {
       ifRevision: current.revision,
       ...(payload.force ? { force: true } : {}),
@@ -269,11 +288,43 @@ function removeSessionStep(payload: { step: TaskStep; force: boolean }): void {
 }
 
 function cancelSessionTask(): void {
+  void actTask(async () => {
+    const current = task.value;
+    if (!current) return;
+    await cancelTask(current.id, { ifRevision: current.revision });
+  });
+}
+
+/**
+ * 续跑/重试任务（M3）。
+ *
+ * 中文说明：服务端可能因为「未决副作用」拒绝（409 task_needs_confirmation /
+ * task_artifact_unverified）。前者由用户显式确认后重试；后者表示产物状态未知，
+ * 服务端已把任务标为 blocked，这里只提示（不再自动重放写操作）。
+ */
+function resumeSessionTask(payload: { mode: 'continue' | 'retry_step' }): void {
   const current = task.value;
   if (!current) return;
   void actTask(async () => {
-    await cancelTask(current.id, { ifRevision: current.revision });
+    const target = task.value;
+    if (!target) return;
+    try {
+      await resumeTask(target.id, { mode: payload.mode });
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'task_needs_confirmation') {
+        const confirmed = window.confirm(
+          `${cause.message}
+
+确认已了解风险并继续？（不会自动重放写操作）`,
+        );
+        if (!confirmed) return;
+        await resumeTask(target.id, { mode: payload.mode, confirmSideEffect: true });
+      } else {
+        throw cause;
+      }
+    }
   });
+  void refreshRecovery();
 }
 
 async function actPlan(
@@ -520,9 +571,10 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           @refine="(message) => actPlan('refine', message)"
         />
         <TaskPanel
-          v-if="sessionId || task"
+          v-if="sessionId || task || recovery.length"
           :task="task"
           :session-id="sessionId"
+          :recovery="recovery"
           :busy="taskBusy"
           :error="taskError"
           @create="createSessionTask"
@@ -530,6 +582,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           @set-step-status="setSessionStepStatus"
           @remove-step="removeSessionStep"
           @cancel="cancelSessionTask"
+          @resume="resumeSessionTask"
           @refresh="refreshTask"
         />
         <AgentControls

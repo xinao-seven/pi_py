@@ -287,6 +287,8 @@ export interface AgentEvent {
   contextUsage?: ContextUsage | null;
   /** 任务变更（M2 SSE：task_updated）。 */
   task?: TaskRecord;
+  /** 待恢复任务清单（M3 SSE：task_recovery_required）。 */
+  tasks?: TaskRecoveryItem[];
   [key: string]: unknown;
 }
 
@@ -542,7 +544,49 @@ export interface TaskExecution {
     toolCallId?: string;
     startedAt: string;
     sideEffect: 'none' | 'write' | 'unknown';
+    toolName?: string;
   };
+  /** 最近一次有副作用的动作：步骤完成前一直保留，恢复时需要人工确认。 */
+  lastSideEffect?: {
+    stepId?: string;
+    toolName: string;
+    sideEffect: 'write' | 'unknown';
+    at: string;
+  };
+}
+
+/** 恢复动作：可自动继续 / 需先验证产物 / 只能人工确认。 */
+export type TaskRecoveryAction = 'auto_resume' | 'verify_then_resume' | 'manual_only';
+/** 副作用等级。 */
+export type TaskSideEffect = 'none' | 'write' | 'unknown';
+
+export interface TaskLeaseView {
+  active: boolean;
+  owner?: string;
+  expiresAt?: string;
+  /** 是否被**其它**进程持有且仍活跃（→ 任务目前只读）。 */
+  heldByOther: boolean;
+}
+
+/** 重启后「疑似中断」的任务（GET /api/tasks/recovery）。 */
+export interface TaskRecoveryItem {
+  taskId: string;
+  title: string;
+  goal: string;
+  status: TaskStatus;
+  sessionId?: string;
+  cwd?: string;
+  attempt: number;
+  updatedAt: string;
+  lastHeartbeatAt?: string;
+  lease: TaskLeaseView;
+  inFlightTool?: string;
+  step?: { id: string; title: string; status: TaskStepStatus };
+  sideEffect: TaskSideEffect;
+  action: TaskRecoveryAction;
+  reason: string;
+  artifact?: { path: string; exists: boolean };
+  requiresConfirmation: boolean;
 }
 
 export interface TaskRecord {

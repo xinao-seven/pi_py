@@ -104,3 +104,15 @@ describe('task_updated reduction', () => {
     expect(afterTask).toEqual(busy);
   });
 });
+
+describe('task_recovery_required reduction', () => {
+  it('leaves the streaming state untouched (recovery list is tracked separately)', () => {
+    const busy = reduceAgentEvent(INITIAL_STREAM_STATE, { type: 'agent_start' });
+    const afterRecovery = reduceAgentEvent(busy, {
+      type: 'task_recovery_required',
+      tasks: [{ taskId: 'task-1', action: 'auto_resume' }],
+    });
+
+    expect(afterRecovery).toEqual(busy);
+  });
+});

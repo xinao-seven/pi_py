@@ -9,10 +9,12 @@ import {
   getAuthStatus,
   getObservabilityRun,
   getObservabilitySummary,
+  getTaskRecovery,
   listObservabilityRuns,
   listSessions,
   listTasks,
   pruneObservabilityRuns,
+  resumeTask,
   updateTask,
   updateTaskStep,
 } from '@/lib/api';
@@ -254,6 +256,46 @@ describe('task endpoints', () => {
     await expect(updateTask('task-1', { title: 'x', ifRevision: 1 })).rejects.toMatchObject({
       status: 409,
       code: 'task_conflict',
+    });
+  });
+});
+
+describe('task recovery endpoints (M3)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('loads the recovery list and resumes with confirmation', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ tasks: [{ taskId: 'task-1', action: 'auto_resume' }] }, 200),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getTaskRecovery()).resolves.toEqual([{ taskId: 'task-1', action: 'auto_resume' }]);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/tasks/recovery');
+
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, task: { id: 'task-1' } }, 202));
+    await expect(
+      resumeTask('task-1', { mode: 'continue', confirmSideEffect: true }),
+    ).resolves.toMatchObject({ id: 'task-1' });
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe('/api/tasks/task-1/resume');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ mode: 'continue', confirmSideEffect: true });
+
+    // 需要确认时后端返回 409 task_needs_confirmation，统一解析成 ApiError。
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: 'task_needs_confirmation', message: 'needs confirmation' } },
+        409,
+      ),
+    );
+    await expect(resumeTask('task-1', { mode: 'retry_step' })).rejects.toMatchObject({
+      status: 409,
+      code: 'task_needs_confirmation',
     });
   });
 });

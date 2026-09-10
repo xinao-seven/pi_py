@@ -25,6 +25,7 @@ import type {
   PlanSnapshot,
   TaskEvidence,
   TaskRecord,
+  TaskRecoveryItem,
   TaskStatus,
   TaskStepStatus,
   TaskVerification,
@@ -527,6 +528,30 @@ export async function deleteTaskStep(
   const result = await request<{ task: TaskRecord }>(
     `/api/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(stepId)}`,
     { method: 'DELETE', body: JSON.stringify(input) },
+  );
+  return result.task;
+}
+
+// ---- 任务断点续跑（M3） -----------------------------------------------------
+
+/** 重启后待恢复的任务清单（只读，不会自动执行）。 */
+export async function getTaskRecovery(): Promise<TaskRecoveryItem[]> {
+  const result = await request<{ tasks: TaskRecoveryItem[] }>('/api/tasks/recovery');
+  return result.tasks;
+}
+
+/**
+ * 续跑/重试一个任务。
+ * 中文说明：`confirmSideEffect` 只在用户明确知悉「上次可能已写入」时才传——
+ * 服务端在没有它的情况下会返回 409 task_needs_confirmation，不会自行开跑。
+ */
+export async function resumeTask(
+  taskId: string,
+  input: { mode: 'continue' | 'retry_step'; confirmSideEffect?: boolean },
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/resume`,
+    { method: 'POST', body: JSON.stringify(input) },
   );
   return result.task;
 }

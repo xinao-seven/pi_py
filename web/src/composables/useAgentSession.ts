@@ -11,6 +11,7 @@ import {
   getPlan,
   getPresets,
   getSession,
+  getTaskRecovery,
   listTasks,
   sendAgentCommand,
 } from '@/lib/api';
@@ -30,6 +31,7 @@ import type {
   SessionDetail,
   SessionPreset,
   TaskRecord,
+  TaskRecoveryItem,
 } from '@/types';
 
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
@@ -61,6 +63,8 @@ export function useAgentSession(options: AgentSessionOptions) {
   const plan = ref<PlanSnapshot | null>(null);
   // 当前会话的任务（M2）：由 REST 首次加载 + SSE task_updated 增量更新。
   const task = ref<TaskRecord | null>(null);
+  // 待恢复任务清单（M3）：重启后由 SSE 补推或 REST 拉取，只展示不自动执行。
+  const recovery = ref<TaskRecoveryItem[]>([]);
   const stream = reactive<AgentStreamState>({ ...INITIAL_STREAM_STATE });
   const contextUsage = ref<ContextUsage | null>(null);
   const catalog = ref<ModelCatalog | null>(null);
@@ -123,7 +127,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     const sequence = ++loadSequence;
     if (showLoading) loading.value = true;
     try {
-      const [nextDetail, state, planSnapshot, taskRecord] = await Promise.all([
+      const [nextDetail, state, planSnapshot, taskRecord, recoveryItems] = await Promise.all([
         getSession(sessionId),
         getAgentState(sessionId),
         getPlan(sessionId)
@@ -133,11 +137,14 @@ export function useAgentSession(options: AgentSessionOptions) {
         listTasks({ sessionId, limit: 20 })
           .then((tasks) => tasks.find((item) => item.status !== 'cancelled') ?? tasks[0] ?? null)
           .catch(() => null),
+        // 待恢复清单是全局的，面板只展示与会话相关的那几条。
+        getTaskRecovery().catch(() => []),
       ]);
       if (sequence !== loadSequence || activeSessionId.value !== sessionId) return;
       detail.value = nextDetail;
       plan.value = planSnapshot;
       task.value = taskRecord;
+      recovery.value = recoveryItems;
       messages.value = nextDetail.context.messages;
       entryIds.value = nextDetail.context.entryIds;
       contextUsage.value = state.state?.contextUsage ?? null;
@@ -329,6 +336,9 @@ export function useAgentSession(options: AgentSessionOptions) {
     } else if (event.type === 'task_updated' && event.task) {
       // 任务变更实时刷新面板（本会话的任务；其它会话的任务不会推到这里）。
       task.value = event.task as TaskRecord;
+    } else if (event.type === 'task_recovery_required' && event.tasks) {
+      // 重启后首个连接时后端补推的待恢复清单（之后由 REST 保持）。
+      recovery.value = event.tasks;
     } else if (event.type === 'auto_retry_start') {
       retryInfo.value = {
         attempt: event.attempt ?? 0,
@@ -669,6 +679,15 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
+  /** 重新拉取待恢复清单（续跑成功后调用）。 */
+  async function refreshRecovery(): Promise<void> {
+    try {
+      recovery.value = await getTaskRecovery();
+    } catch {
+      // 恢复清单是增量能力：拉取失败不影响会话本身。
+    }
+  }
+
   function startCatalogRecovery(): void {
     if (catalogRetryTimer !== undefined) return;
     catalogRetryTimer = setInterval(() => void loadCatalog(), 2_000);
@@ -697,7 +716,9 @@ export function useAgentSession(options: AgentSessionOptions) {
     error,
     plan,
     task,
+    recovery,
     refreshTask,
+    refreshRecovery,
     stream,
     contextUsage,
     catalog,

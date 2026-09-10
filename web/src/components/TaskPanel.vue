@@ -2,11 +2,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-import type { TaskRecord, TaskStep, TaskStepStatus } from '@/types';
+import type { TaskRecord, TaskRecoveryItem, TaskStep, TaskStepStatus } from '@/types';
 
 const props = defineProps<{
   task: TaskRecord | null;
   sessionId: string | null;
+  /** 待恢复清单（M3）：面板只展示与当前任务/会话相关的那几条。 */
+  recovery?: TaskRecoveryItem[];
   /** 正在写入（父组件串行化写入，避免 ifRevision 竞争）。 */
   busy?: boolean;
   error?: string | null;
@@ -19,6 +21,8 @@ const emit = defineEmits<{
   'remove-step': [payload: { step: TaskStep; force: boolean }];
   cancel: [];
   refresh: [];
+  /** M3：续跑（continue）或重试当前步骤（retry_step）；服务端可能回 409 要确认。 */
+  resume: [payload: { mode: 'continue' | 'retry_step' }];
 }>();
 
 const collapsed = ref(false);
@@ -58,6 +62,19 @@ const currentStepId = computed(
 );
 const locked = computed(
   () => props.task?.status === 'cancelled' || props.task?.status === 'completed',
+);
+/** 与当前任务相关的恢复条目（同任务，或同会话且任务未绑定）。 */
+const recoveryItem = computed<TaskRecoveryItem | null>(() => {
+  const current = props.task;
+  const items = props.recovery ?? [];
+  if (current) return items.find((item) => item.taskId === current.id) ?? null;
+  return (
+    items.find((item) => item.sessionId === undefined || item.sessionId === props.sessionId) ?? null
+  );
+});
+/** 需要展示「继续/重试」入口：有中断项，或任务被阻塞（产物待确认等）。 */
+const showRecovery = computed(
+  () => recoveryItem.value !== null || props.task?.status === 'blocked',
 );
 
 // 任务被替换（切换会话或切换任务）时收起临时输入，避免误提交到别的任务上。
@@ -144,6 +161,15 @@ function stepTitle(step: TaskStep): string {
           新建任务
         </button>
         <button
+          v-if="task && !locked && showRecovery"
+          type="button"
+          class="task-resume"
+          :disabled="busy"
+          @click="emit('resume', { mode: 'continue' })"
+        >
+          继续执行
+        </button>
+        <button
           v-if="task && !locked"
           type="button"
           class="task-cancel"
@@ -157,6 +183,34 @@ function stepTitle(step: TaskStep): string {
 
     <div v-if="!collapsed" class="task-panel-body">
       <p v-if="error" class="task-error" role="alert">{{ error }}</p>
+
+      <section v-if="showRecovery" class="task-recovery">
+        <header>
+          <span aria-hidden="true">⚠</span>
+          <strong>{{ recoveryItem ? '上次运行被中断' : '任务被阻塞' }}</strong>
+          <span v-if="recoveryItem?.step" class="task-recovery-step">
+            当前步骤：[{{ recoveryItem.step.id }}] {{ recoveryItem.step.title }}
+          </span>
+        </header>
+        <p v-if="recoveryItem">{{ recoveryItem.reason }}</p>
+        <p v-else-if="task?.blockedReason">{{ task.blockedReason }}</p>
+        <p v-if="recoveryItem?.artifact" class="task-recovery-artifact">
+          待验证产物：{{ recoveryItem.artifact.path }}（{{
+            recoveryItem.artifact.exists ? '已存在' : '未找到'
+          }}）
+        </p>
+        <div class="task-recovery-actions">
+          <button type="button" :disabled="busy" @click="emit('resume', { mode: 'continue' })">
+            继续执行
+          </button>
+          <button type="button" :disabled="busy" @click="emit('resume', { mode: 'retry_step' })">
+            重试当前步骤
+          </button>
+          <span v-if="recoveryItem?.requiresConfirmation" class="task-recovery-hint">
+            需要你确认副作用风险后再继续
+          </span>
+        </div>
+      </section>
 
       <form v-if="!task && draftOpen" class="task-draft" @submit.prevent="submitDraft">
         <input v-model="draftTitle" placeholder="任务标题（如：重构 Plan 模式）" maxlength="200" />
@@ -373,6 +427,53 @@ function stepTitle(step: TaskStep): string {
 
 .task-cancel {
   color: var(--danger);
+}
+
+.task-resume {
+  color: var(--accent);
+}
+
+/* 中断恢复提示块（M3）：只提示与入口，真正的判定在服务端 */
+.task-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  border: 1px solid rgba(216, 178, 95, 0.35);
+  border-radius: 8px;
+  background: rgba(216, 178, 95, 0.08);
+}
+
+.task-recovery header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: #d8b25f;
+}
+
+.task-recovery-step {
+  color: var(--muted);
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+.task-recovery p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.task-recovery-artifact {
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+.task-recovery-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.task-recovery-hint {
+  color: #d8b25f;
 }
 
 .task-panel-body {

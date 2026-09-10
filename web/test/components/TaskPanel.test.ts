@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 
 import TaskPanel from '@/components/TaskPanel.vue';
-import type { TaskRecord, TaskStep } from '@/types';
+import type { TaskRecoveryItem, TaskRecord, TaskStep } from '@/types';
 
 function step(overrides: Partial<TaskStep> = {}): TaskStep {
   return {
@@ -206,5 +206,96 @@ describe('TaskPanel', () => {
     await wrapper.find('.task-panel-toggle').trigger('click');
     expect(wrapper.find('.task-panel-body').exists()).toBe(false);
     expect(wrapper.text()).toContain('重构 Plan 模式');
+  });
+});
+
+describe('TaskPanel recovery (M3)', () => {
+  function recoveryItem(overrides: Partial<TaskRecoveryItem> = {}): TaskRecoveryItem {
+    return {
+      taskId: 'task-1',
+      title: '重构 Plan 模式',
+      goal: 'g',
+      status: 'in_progress',
+      sessionId: 'session-1',
+      attempt: 2,
+      updatedAt: '2026-08-21T10:05:00.000Z',
+      lease: { active: false, heldByOther: false },
+      step: { id: 's2', title: '设计工具契约', status: 'in_progress' },
+      sideEffect: 'none',
+      action: 'auto_resume',
+      reason: '中断发生在两次动作之间（没有未决副作用），可安全继续。',
+      requiresConfirmation: false,
+      ...overrides,
+    };
+  }
+
+  it('shows the interruption and emits resume / retry commands', async () => {
+    const wrapper = mount(TaskPanel, {
+      props: { task: task(), sessionId: 'session-1', recovery: [recoveryItem()] },
+    });
+
+    expect(wrapper.find('.task-recovery').text()).toContain('上次运行被中断');
+    expect(wrapper.find('.task-recovery').text()).toContain('[s2] 设计工具契约');
+    expect(wrapper.find('.task-recovery').text()).toContain('可安全继续');
+
+    const buttons = wrapper.findAll('.task-recovery-actions button');
+    expect(buttons.map((button) => button.text())).toEqual(['继续执行', '重试当前步骤']);
+    await buttons[0].trigger('click');
+    expect(wrapper.emitted('resume')).toEqual([[{ mode: 'continue' }]]);
+    await buttons[1].trigger('click');
+    expect(wrapper.emitted('resume')?.at(-1)).toEqual([{ mode: 'retry_step' }]);
+  });
+
+  it('warns about side effects and shows the artifact to verify', () => {
+    const wrapper = mount(TaskPanel, {
+      props: {
+        task: task(),
+        sessionId: 'session-1',
+        recovery: [
+          recoveryItem({
+            sideEffect: 'write',
+            action: 'verify_then_resume',
+            requiresConfirmation: true,
+            inFlightTool: 'write',
+            artifact: { path: '/workspace/db/migration.sql', exists: false },
+            reason: '中断时正在执行写操作（write）；将先验证产物，存在则补记为已完成，不重跑。',
+          }),
+        ],
+      },
+    });
+
+    const text = wrapper.find('.task-recovery').text();
+    expect(text).toContain('需要你确认副作用风险');
+    expect(text).toContain('待验证产物：/workspace/db/migration.sql（未找到）');
+    // 头部工具条也有一个「继续执行」，方便一眼看到。
+    expect(wrapper.find('.task-resume').exists()).toBe(true);
+  });
+
+  it('offers resume for a blocked task even without a recovery entry', async () => {
+    const wrapper = mount(TaskPanel, {
+      props: {
+        task: task({ status: 'blocked', blockedReason: '上次执行中断，产物状态需人工确认' }),
+        sessionId: 'session-1',
+        recovery: [],
+      },
+    });
+
+    const block = wrapper.find('.task-recovery');
+    expect(block.text()).toContain('任务被阻塞');
+    expect(block.text()).toContain('产物状态需人工确认');
+    await block.findAll('button')[0].trigger('click');
+    expect(wrapper.emitted('resume')).toEqual([[{ mode: 'continue' }]]);
+  });
+
+  it('ignores recovery entries of other tasks and sessions', () => {
+    const wrapper = mount(TaskPanel, {
+      props: {
+        task: task(),
+        sessionId: 'session-1',
+        recovery: [recoveryItem({ taskId: 'other-task' })],
+      },
+    });
+    expect(wrapper.find('.task-recovery').exists()).toBe(false);
+    expect(wrapper.find('.task-resume').exists()).toBe(false);
   });
 });

@@ -14,6 +14,8 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): Ag
   // agent_start 进入等待；message_update 显示流式回复；
   // tool_execution_start 进入工具阶段；tool_call_pending 挂起等待人工确认；
   // tool_execution_end / tool_execution_blocked 回到等待；agent_end 回到空闲。
+  // 注意：task_updated（M2）与 task_recovery_required（M3）刻意不在这里处理——
+  // 任务与恢复清单由 useAgentSession 的独立 ref 维护，不能污染「Agent 在不在跑」的判断。
   switch (event.type) {
     case 'agent_start':
       return { ...INITIAL_STREAM_STATE, running: true, phase: 'waiting' };
