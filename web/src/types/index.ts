@@ -89,9 +89,10 @@ export interface SessionDetail {
 }
 
 export interface ContextUsage {
-  tokens: number;
+  // 上下文占用：SDK 在「刚压缩完、下一次响应前」会返回 tokens/percent 为 null（占用未知）
+  tokens: number | null;
   contextWindow: number;
-  percent: number;
+  percent: number | null;
 }
 
 export interface AgentState {
@@ -369,4 +370,126 @@ export interface FileTab {
   // 已打开文件标签
   path: string;
   name: string;
+}
+
+// ---- 可观测性（M1：trace / 成本账本）-----------------------------------------
+
+/** trace 存储状态：off＝未开启；degraded＝SQLite 连续写入失败后已丢弃。 */
+export interface ObservabilityStoreState {
+  mode: 'sqlite' | 'memory' | 'off';
+  degraded: boolean;
+  pending: number;
+  dropped: number;
+}
+
+export interface ObservabilitySummary {
+  totals: {
+    runs: number;
+    turns: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    costUsd: number;
+    p50DurationMs: number;
+    p95DurationMs: number;
+    p50TtftMs: number;
+    errorRate: number;
+  };
+  byModel: Array<{
+    provider: string | null;
+    model: string | null;
+    runs: number;
+    costUsd: number;
+    tokens: number;
+    p95DurationMs: number;
+  }>;
+  byTool: Array<{
+    toolName: string;
+    calls: number;
+    errors: number;
+    blocked: number;
+    errorRate: number;
+    p50DurationMs: number;
+    p95DurationMs: number;
+  }>;
+  byApproval: Array<{
+    rule: string;
+    risk: string;
+    approved: number;
+    denied: number;
+    timedOut: number;
+    p50WaitMs: number;
+  }>;
+  daily: Array<{
+    date: string;
+    runs: number;
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+  }>;
+  store?: ObservabilityStoreState;
+}
+
+export type ObservabilityRunStatus = 'running' | 'completed' | 'aborted' | 'error';
+
+export interface ObservabilityRun {
+  id: string;
+  sessionId: string;
+  parentRunId: string | null;
+  taskId: string | null;
+  cwd: string;
+  provider: string | null;
+  model: string | null;
+  thinkingLevel: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  status: ObservabilityRunStatus;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  ttftMs: number | null;
+  durationMs: number | null;
+  stopReason: string | null;
+  errorType: string | null;
+  errorMessage: string | null;
+  meta: Record<string, unknown> | null;
+}
+
+export interface ObservabilityStep {
+  kind: 'llm_call' | 'tool_call' | 'approval' | 'compaction' | 'branch_summary' | 'memory_write';
+  turnIndex: number;
+  toolName: string | null;
+  toolCallId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  isError: boolean;
+  /** 非空＝被策略拦下（审批拒绝/超时、规划期只读），不算工具失败。 */
+  blockedBy: string | null;
+  errorType: string | null;
+  errorMessage: string | null;
+  argsDigest: string | null;
+  argsBytes: number | null;
+  resultDigest: string | null;
+  resultBytes: number | null;
+  approvalRule: string | null;
+  approvalRisk: string | null;
+  approvalDecision: string | null;
+  approvalWaitMs: number | null;
+  decidedBy: string | null;
+  meta: Record<string, unknown> | null;
+}
+
+export interface ObservabilityRunDetail {
+  run: ObservabilityRun;
+  steps: ObservabilityStep[];
+  children: ObservabilityRun[];
+}
+
+export interface ObservabilityRunList {
+  runs: ObservabilityRun[];
+  nextCursor: string | null;
 }

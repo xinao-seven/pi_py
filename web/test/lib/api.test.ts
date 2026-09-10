@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchAgentEvents, getAuthStatus, listSessions } from '@/lib/api';
+import {
+  fetchAgentEvents,
+  getAuthStatus,
+  getObservabilityRun,
+  getObservabilitySummary,
+  listObservabilityRuns,
+  listSessions,
+  pruneObservabilityRuns,
+} from '@/lib/api';
 import { clearToken, setToken, setUnauthorizedHandler } from '@/lib/session';
 
 function jsonResponse(body: unknown, status: number) {
@@ -103,5 +111,62 @@ describe('fetchAgentEvents', () => {
 
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Record<string, string>)['Last-Event-ID']).toBeUndefined();
+  });
+});
+
+describe('observability endpoints', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('builds the summary query from range, workspace and cursor', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          totals: {},
+          byModel: [],
+          byTool: [],
+          byApproval: [],
+          daily: [],
+        },
+        200,
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getObservabilitySummary({
+      from: '2026-08-20T00:00:00.000Z',
+      cwd: '/workspace with space',
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/observability/summary?from=2026-08-20T00%3A00%3A00.000Z&cwd=%2Fworkspace+with+space',
+    );
+
+    fetchMock.mockResolvedValue(jsonResponse({ runs: [], nextCursor: null }, 200));
+    await listObservabilityRuns({ limit: 20, sessionId: 's1', cursor: '100:run-1' });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      '/api/observability/runs?sessionId=s1&limit=20&cursor=100%3Arun-1',
+    );
+
+    await listObservabilityRuns();
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/observability/runs');
+  });
+
+  it('fetches a single run and prunes details explicitly', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ run: {}, steps: [] }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getObservabilityRun('run-1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/observability/runs/run-1');
+
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, deletedRuns: 3 }, 200));
+    await expect(pruneObservabilityRuns('2026-08-01T00:00:00.000Z')).resolves.toEqual({
+      ok: true,
+      deletedRuns: 3,
+    });
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe('/api/observability/runs?before=2026-08-01T00%3A00%3A00.000Z');
+    expect(init.method).toBe('DELETE');
   });
 });

@@ -4,11 +4,12 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import McpConfig from '@/components/McpConfig.vue';
 import ModelsConfig from '@/components/ModelsConfig.vue';
+import ObservabilityPanel from '@/components/ObservabilityPanel.vue';
 import PresetConfig from '@/components/PresetConfig.vue';
 import SkillsConfig from '@/components/SkillsConfig.vue';
 import { useAuthStore } from '@/stores/auth';
 
-type SettingsSection = 'general' | 'models' | 'presets' | 'skills' | 'mcp';
+type SettingsSection = 'general' | 'models' | 'presets' | 'skills' | 'mcp' | 'usage';
 
 const auth = useAuthStore();
 
@@ -95,6 +96,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
           >
             <span aria-hidden="true">⌁</span>MCP
           </button>
+          <button
+            type="button"
+            :class="{ 'settings-nav-button--active': activeSection === 'usage' }"
+            @click="selectSection('usage')"
+          >
+            <span aria-hidden="true">◵</span>用量
+          </button>
         </nav>
 
         <div class="settings-content">
@@ -165,6 +173,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
             embedded
             @close="activeSection = 'general'"
           />
+          <ObservabilityPanel v-else-if="activeSection === 'usage'" :cwd="cwd" />
         </div>
       </div>
 

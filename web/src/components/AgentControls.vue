@@ -32,6 +32,17 @@ const emit = defineEmits<{
 const modelKey = computed(() =>
   props.model ? `${props.model.provider}:${props.model.modelId}` : '',
 );
+// 上下文占用：SDK 在刚压缩完时返回 tokens/percent 为 null（占用未知），此时不显示仪表盘。
+const contextPercent = computed(() =>
+  props.contextUsage?.percent === null || props.contextUsage?.percent === undefined
+    ? null
+    : Math.min(100, props.contextUsage.percent),
+);
+const contextTitle = computed(() =>
+  props.contextUsage?.tokens
+    ? `${props.contextUsage.tokens.toLocaleString()} tokens`
+    : '上下文占用未知',
+);
 const availableThinkingLevels = computed(() =>
   // 当前模型支持的思考档位（来自模型目录）
   props.model
@@ -146,8 +157,8 @@ function changePreset(event: Event): void {
     <div v-if="retryInfo" class="retry-indicator" role="status">
       重试 {{ retryInfo.attempt }}/{{ retryInfo.maxAttempts }}
     </div>
-    <div v-else-if="contextUsage" class="context-meter" :title="`${contextUsage.tokens} tokens`">
-      <span :style="{ width: `${Math.min(100, contextUsage.percent)}%` }" />
+    <div v-else-if="contextPercent !== null" class="context-meter" :title="contextTitle">
+      <span :style="{ width: `${contextPercent}%` }" />
     </div>
   </div>
 </template>

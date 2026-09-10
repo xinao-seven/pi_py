@@ -98,6 +98,12 @@ const planActive = computed(
   () => plan.value?.mode === 'planning' || plan.value?.mode === 'executing',
 );
 const branchNodeCount = computed(() => countTreeNodes(detail.value?.tree ?? []));
+// 上下文占用徽标：percent 可能是 null（刚压缩完、占用未知），此时不显示。
+const contextPercentLabel = computed(() =>
+  contextUsage.value?.percent === null || contextUsage.value?.percent === undefined
+    ? null
+    : `${Math.round(contextUsage.value.percent)}%`,
+);
 const toolResults = computed(() =>
   // toolCallId -> toolResult 消息 的映射，供工具调用块展示结果
   Object.fromEntries(
@@ -327,8 +333,8 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         <span v-if="displayModel" class="model-chip">
           {{ displayModel.provider }}/{{ displayModel.modelId }}
         </span>
-        <span v-if="contextUsage" class="context-chip">
-          {{ Math.round(contextUsage.percent) }}%
+        <span v-if="contextPercentLabel" class="context-chip">
+          {{ contextPercentLabel }}
         </span>
       </div>
     </header>

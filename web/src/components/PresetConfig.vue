@@ -274,7 +274,8 @@ function messageOf(cause: unknown): string {
         <article class="provider-card preset-form">
           <div class="provider-grid">
             <label>名称<input v-model="draft.name" placeholder="如 代码审查" /></label>
-            <label>压缩策略
+            <label
+              >压缩策略
               <select v-model="draft.strategy">
                 <option v-for="(label, key) in STRATEGY_LABELS" :key="key" :value="key">
                   {{ label }}
@@ -283,7 +284,8 @@ function messageOf(cause: unknown): string {
             </label>
           </div>
 
-          <label class="preset-line-field">系统提示词（留空 = 使用 SDK 默认提示词）
+          <label class="preset-line-field"
+            >系统提示词（留空 = 使用 SDK 默认提示词）
             <textarea
               v-model="draft.systemPrompt"
               rows="5"
@@ -293,7 +295,9 @@ function messageOf(cause: unknown): string {
           </label>
 
           <div class="preset-field">
-            <span class="preset-field-label">可用工具<span class="preset-field-hint">默认勾选 = SDK 默认工具集</span></span>
+            <span class="preset-field-label"
+              >可用工具<span class="preset-field-hint">默认勾选 = SDK 默认工具集</span></span
+            >
             <div class="preset-chip-row">
               <label v-for="tool in BUILTIN_TOOLS" :key="tool" class="preset-chip">
                 <input v-model="draft.toolNames" type="checkbox" :value="tool" />{{ tool }}
@@ -302,7 +306,11 @@ function messageOf(cause: unknown): string {
           </div>
 
           <div class="preset-field">
-            <span class="preset-field-label">MCP 服务<span class="preset-field-hint">新建会话时向模型注入哪些 MCP server 的工具</span></span>
+            <span class="preset-field-label"
+              >MCP 服务<span class="preset-field-hint"
+                >新建会话时向模型注入哪些 MCP server 的工具</span
+              ></span
+            >
             <div class="preset-chip-row">
               <label class="preset-chip">
                 <input v-model="draft.mcpMode" type="radio" value="all" />全部
@@ -325,7 +333,8 @@ function messageOf(cause: unknown): string {
           </div>
 
           <div class="provider-grid">
-            <label>默认模型
+            <label
+              >默认模型
               <select :value="modelKey" @change="onModelChange">
                 <option value="">默认（跟随目录设置）</option>
                 <option
@@ -337,7 +346,8 @@ function messageOf(cause: unknown): string {
                 </option>
               </select>
             </label>
-            <label>默认思考等级
+            <label
+              >默认思考等级
               <select v-model="draft.thinkingLevel">
                 <option value="">默认（跟随设置）</option>
                 <option v-for="level in thinkingLevels" :key="level" :value="level">

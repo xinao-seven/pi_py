@@ -13,6 +13,9 @@ import type {
   MergeSessionResponse,
   ModelCatalog,
   ModelsConfigValue,
+  ObservabilityRunDetail,
+  ObservabilityRunList,
+  ObservabilitySummary,
   PresetCompaction,
   SessionDetail,
   SessionInfo,
@@ -348,4 +351,56 @@ function fileAccessUrl(root: string, path: string, type: 'list' | 'read' | 'medi
   const encodedPath = normalized.split('/').filter(Boolean).map(encodeURIComponent).join('/');
   const query = new URLSearchParams({ root, type });
   return `/api/files/${encodedPath}?${query.toString()}`;
+}
+
+// ---- 可观测性（M1） ---------------------------------------------------------
+
+/** 可观测性查询参数：时间窗（ISO 字符串）与工作区。 */
+export interface ObservabilityQuery {
+  from?: string;
+  to?: string;
+  cwd?: string;
+}
+
+function observabilityQuery(params: ObservabilityQuery = {}): string {
+  const query = new URLSearchParams();
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  if (params.cwd) query.set('cwd', params.cwd);
+  const text = query.toString();
+  return text ? `?${text}` : '';
+}
+
+/** 汇总：成本、p95 延迟、工具成功率、审批命中率、每日用量。 */
+export function getObservabilitySummary(
+  params?: ObservabilityQuery,
+): Promise<ObservabilitySummary> {
+  return request(`/api/observability/summary${observabilityQuery(params)}`);
+}
+
+/** run 列表（按开始时间倒序，键集分页）。 */
+export function listObservabilityRuns(
+  params?: ObservabilityQuery & { sessionId?: string; limit?: number; cursor?: string },
+): Promise<ObservabilityRunList> {
+  const query = new URLSearchParams();
+  if (params?.from) query.set('from', params.from);
+  if (params?.to) query.set('to', params.to);
+  if (params?.cwd) query.set('cwd', params.cwd);
+  if (params?.sessionId) query.set('sessionId', params.sessionId);
+  if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.cursor) query.set('cursor', params.cursor);
+  const text = query.toString();
+  return request(`/api/observability/runs${text ? `?${text}` : ''}`);
+}
+
+/** run 详情（含 steps 与子 run）。 */
+export function getObservabilityRun(runId: string): Promise<ObservabilityRunDetail> {
+  return request(`/api/observability/runs/${encodeURIComponent(runId)}`);
+}
+
+/** 清理 before 之前的明细（预聚合历史保留）。 */
+export async function pruneObservabilityRuns(before: string): Promise<{ deletedRuns: number }> {
+  return request(`/api/observability/runs?before=${encodeURIComponent(before)}`, {
+    method: 'DELETE',
+  });
 }
