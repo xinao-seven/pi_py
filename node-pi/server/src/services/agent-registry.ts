@@ -188,6 +188,17 @@ export interface PiSession {
     };
   };
   getActiveToolNames(): string[];
+  /**
+   * 会话累计统计（SDK 的 AgentSession.getSessionStats）：消息数、工具调用数、
+   * token 用量与累计成本。可选：假会话/旧实现可能不提供。
+   */
+  getSessionStats?(): unknown;
+  /**
+   * 上下文占用（SDK 的 AgentSession.getContextUsage）：tokens / contextWindow / percent。
+   * 中文说明：SDK 在刚压缩完、下一次响应前会返回 tokens=null（占用未知），
+   * 这里原样透传，由前端自行决定展示方式。
+   */
+  getContextUsage?(): unknown;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void; // 返回取消订阅函数
   /**
    * 绑定扩展运行时（SDK 的 AgentSession.bindExtensions）。
@@ -767,8 +778,11 @@ export class AgentRegistry {
           ? null
           : { provider: session.model.provider, modelId: session.model.id },
       activeTools: session.getActiveToolNames(),
-      contextUsage: null, // 上下文用量暂不统计
-      sessionStats: {},
+      // 零成本修复：SDK 已经算好这两项（M0 实测返回 {tokens, contextWindow, percent}），
+      // 之前被硬编码成 null/{}，导致前端上下文仪表盘长期为空。
+      // 保持与 Python 后端字段兼容：能力不存在时仍返回 null / {}。
+      contextUsage: session.getContextUsage?.() ?? null,
+      sessionStats: (session.getSessionStats?.() ?? {}) as Record<string, unknown>,
       pendingToolCall:
         pending === undefined
           ? null
