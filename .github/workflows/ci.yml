@@ -1,0 +1,89 @@
+name: CI
+
+# 触发策略：master 分支推送 + 所有 PR + 手动。
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新提交取消旧运行，避免排队浪费。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Node 生产后端 ────────────────────────────────────────────────────────────
+  # 依赖顺序：格式 → 类型 → 测试 → 构建 → M0 spike 守护。
+  # spike 不是探索性脚本，而是"离线确定性能力"的回归门禁：它验证
+  # @earendil-works/pi-ai 可解析（fauxProvider 可用）、node:sqlite 可用、
+  # 父子会话与 tool_call 钩子链行为未变。M4/M5 的评测完全建立在这些之上，
+  # 一旦依赖升级破坏它们，必须在此处立刻失败。
+  node-backend:
+    name: node-pi/server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: node-pi/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: node-pi/server/package-lock.json
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: 离线确定性能力守护（M0 spike）
+        run: npm run spike
+
+  # ── 共享 Vue 前端 ────────────────────────────────────────────────────────────
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+
+  # ── 评测门禁（M4 接线）───────────────────────────────────────────────────────
+  # 现在 eval 脚本尚不存在，用 --if-present 让 job 变为 no-op 而不是红灯；
+  # M4 在 node-pi/server 加入 `npm run eval`（fauxProvider golden set）后
+  # 本 job 自动生效，无需再改 CI。
+  eval:
+    name: eval golden set
+    runs-on: ubuntu-latest
+    needs: node-backend
+    defaults:
+      run:
+        working-directory: node-pi/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: node-pi/server/package-lock.json
+
+      - run: npm ci
+      - name: 离线 golden set（M4 起生效）
+        run: npm run eval --if-present
