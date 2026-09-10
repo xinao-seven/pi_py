@@ -32,12 +32,12 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 `~/.pi/agent-node-server/platform.db`（不碰 `~/.pi/agent`），由前端「设置 → 用量」展示，
 查询接口在 `/api/observability/*`。默认不落对话正文、不落密钥。相关变量：
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `PI_NODE_TRACE` | `1` | `0` 关闭（写操作变空实现，接口返回空集） |
-| `PI_NODE_STORE` | `sqlite` | `memory` 时整体走内存实现 |
-| `PI_NODE_TRACE_DB` | `<PI_NODE_DATA_DIR>/platform.db` | 库文件路径 |
-| `PI_NODE_TRACE_CONTENT` | `0` | `1` 时额外保留已脱敏正文 |
-| `PI_NODE_TRACE_FLUSH_MS` / `_BATCH` / `_MAX_PENDING` | `250` / `200` / `5000` | 写入队列参数 |
+| 变量                                                 | 默认                             | 说明                                     |
+| ---------------------------------------------------- | -------------------------------- | ---------------------------------------- |
+| `PI_NODE_TRACE`                                      | `1`                              | `0` 关闭（写操作变空实现，接口返回空集） |
+| `PI_NODE_STORE`                                      | `sqlite`                         | `memory` 时整体走内存实现                |
+| `PI_NODE_TRACE_DB`                                   | `<PI_NODE_DATA_DIR>/platform.db` | 库文件路径                               |
+| `PI_NODE_TRACE_CONTENT`                              | `0`                              | `1` 时额外保留已脱敏正文                 |
+| `PI_NODE_TRACE_FLUSH_MS` / `_BATCH` / `_MAX_PENDING` | `250` / `200` / `5000`           | 写入队列参数                             |
 
 完整口径与取舍见 [`docs/node-observability-m1.md`](../../docs/node-observability-m1.md)。
