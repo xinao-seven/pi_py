@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 
-import type { AttachedImage } from '@/types';
+import type { AttachedImage, PromptMode } from '@/types';
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -10,17 +10,40 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const props = defineProps<{
   running: boolean;
   disabled?: boolean;
-  planActive?: boolean;
+  /** 会话/工作区就绪，可以「先规划」（新会话同样支持，缺工作区时禁用）。 */
+  planAvailable?: boolean;
 }>();
 
 const emit = defineEmits<{
-  send: [message: string, images?: AttachedImage[]];
+  /** mode 是消息级属性（M4）：direct 直接执行；plan 先进入只读规划。 */
+  send: [message: string, images: AttachedImage[] | undefined, mode: PromptMode];
   steer: [message: string, images?: AttachedImage[]];
   followUp: [message: string, images?: AttachedImage[]];
   abort: [];
 }>();
 
 const message = ref('');
+/**
+ * 发送方式（M4）：取代会话级的 Plan 预开关。
+ * 中文说明：记忆上次选择（localStorage），符合「我说了算、别每次都要重设」的直觉；
+ * 也支持在输入框里用 `/plan ` 前缀临时切一次（发送后自动去掉前缀）。
+ */
+const SEND_MODE_KEY = 'pi.sendMode';
+const mode = ref<PromptMode>(
+  typeof localStorage === 'undefined'
+    ? 'direct'
+    : localStorage.getItem(SEND_MODE_KEY) === 'plan'
+      ? 'plan'
+      : 'direct',
+);
+function setMode(next: PromptMode): void {
+  mode.value = next;
+  try {
+    localStorage.setItem(SEND_MODE_KEY, next);
+  } catch {
+    // 隐私模式下写不进去：只是不记忆，不影响功能。
+  }
+}
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const images = ref<AttachedImage[]>([]);
@@ -31,22 +54,29 @@ const canSend = computed(
   () => (message.value.trim().length > 0 || images.value.length > 0) && !props.disabled,
 );
 
-function submit(mode: 'send' | 'steer' | 'followUp' = props.running ? 'followUp' : 'send'): void {
+function submit(
+  kind: 'send' | 'steer' | 'followUp' = props.running ? 'followUp' : 'send',
+): void {
   // 提交：运行中默认排队跟进；steer 立即插入；发送后清空输入与图片
   if (!canSend.value) return;
-  const value = message.value.trim();
+  // `/plan` 前缀 = 这一次进入规划（不改变记忆的默认选择）。
+  const raw = message.value.trim();
+  const forcedPlan = /^\/plan(\s|$)/i.test(raw);
+  const value = forcedPlan ? raw.replace(/^\/plan\s*/i, '').trim() : raw;
+  if (forcedPlan && value.length === 0 && images.value.length === 0) return;
   const attached = images.value.length ? [...images.value] : undefined;
   message.value = '';
   clearImages();
   resize();
-  if (mode === 'steer') {
+  if (kind === 'steer') {
     if (attached) emit('steer', value, attached);
     else emit('steer', value);
-  } else if (mode === 'followUp') {
+  } else if (kind === 'followUp') {
     if (attached) emit('followUp', value, attached);
     else emit('followUp', value);
-  } else if (attached) emit('send', value, attached);
-  else emit('send', value);
+  } else {
+    emit('send', value, attached, forcedPlan ? 'plan' : mode.value);
+  }
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -161,9 +191,9 @@ onBeforeUnmount(clearImages);
       :placeholder="
         running
           ? '输入修正指令或排队消息…'
-          : planActive
-            ? '描述需求，Agent 将先生成 Plan…'
-            : '给 pi 发消息'
+          : mode === 'plan'
+            ? '描述需求，Agent 将先调研并提交计划…'
+            : '给 pi 发消息（可用 /plan 前缀先规划）'
       "
       aria-label="消息"
       @input="resize"
@@ -181,6 +211,29 @@ onBeforeUnmount(clearImages);
           ＋ 图片
         </button>
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles" />
+        <div v-if="!running" class="send-mode" role="group" aria-label="发送方式">
+          <button
+            type="button"
+            class="send-mode-option"
+            :class="{ 'send-mode-option--active': mode === 'direct' }"
+            :aria-pressed="mode === 'direct'"
+            title="直接执行：Agent 按你的要求直接动手"
+            @click="setMode('direct')"
+          >
+            直接执行
+          </button>
+          <button
+            type="button"
+            class="send-mode-option"
+            :class="{ 'send-mode-option--active': mode === 'plan' }"
+            :aria-pressed="mode === 'plan'"
+            :disabled="planAvailable === false"
+            title="先规划：Agent 只读调研，提交计划并等你确认后再动手"
+            @click="setMode('plan')"
+          >
+            先规划
+          </button>
+        </div>
         <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
       </div>
       <template v-if="running">
@@ -204,6 +257,33 @@ onBeforeUnmount(clearImages);
 </template>
 
 <style scoped>
+/* 发送方式选择器（M4）：两态小按钮，取代原来的 Plan 开关 */
+.send-mode {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.send-mode-option {
+  padding: 2px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.send-mode-option--active {
+  background: rgba(231, 255, 111, 0.12);
+  color: var(--accent);
+}
+
+.send-mode-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 /* 输入区：composer、图片附件、拖拽遮罩与发送/中止按钮 */
 .composer {
   position: relative;

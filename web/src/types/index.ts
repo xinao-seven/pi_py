@@ -307,18 +307,61 @@ export interface PendingToolCall {
   args: Record<string, unknown>;
 }
 
-export type PlanMode = 'normal' | 'planning' | 'executing';
-export interface PlanTodo {
-  step: number;
-  text: string;
-  completed: boolean;
+/**
+ * 计划状态（M4）：Plan 是 Task 的受控视图，不再是会话内的临时数据。
+ * completed / abandoned 由任务状态推导，drafting / proposed / executing / paused 是落库的意图。
+ */
+export type PlanStatus =
+  | 'drafting'
+  | 'proposed'
+  | 'executing'
+  | 'paused'
+  | 'completed'
+  | 'abandoned';
+
+export interface PlanStepView {
+  id: string;
+  title: string;
+  details?: string;
+  status: TaskStepStatus;
+  verification?: TaskVerification;
+  evidence?: TaskEvidence;
+  blockedReason?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
-export interface PlanSnapshot {
+
+/** SSE `plan_updated` 与 `GET /api/agent/:id` 的 `plan` 字段（M4 起）。 */
+export interface PlanView {
+  /** 稳定 id，与 taskId 相同（1:1）。空串表示该会话当前没有计划。 */
+  planId: string;
+  taskId: string;
   sessionId: string;
-  mode: PlanMode;
-  todos: PlanTodo[];
-  awaitingConfirmation: boolean;
+  status: PlanStatus;
+  /** 任务的乐观并发版本号：编辑/修订都要带上它。 */
+  revision: number;
+  title: string;
+  goal: string;
+  steps: PlanStepView[];
+  /** 需要用户动手：待确认、已暂停/阻塞、有澄清问题。 */
+  awaitingUserAction: boolean;
+  question?: string;
+  questionOptions?: string[];
+  draftingSince?: string;
+  updatedAt: string;
 }
+
+/** 计划命令（POST /api/agent/:id 的 type）。 */
+export type PlanCommandType =
+  | 'plan_start'
+  | 'plan_execute'
+  | 'plan_pause'
+  | 'plan_resume'
+  | 'plan_refine'
+  | 'plan_abandon';
+
+/** 发送方式（M4）：消息级属性，取代 M4 之前的会话级 Plan 预开关。 */
+export type PromptMode = 'direct' | 'plan';
 
 export interface AgentStreamState {
   // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误与待确认工具调用
@@ -574,6 +617,8 @@ export interface TaskRecoveryItem {
   title: string;
   goal: string;
   status: TaskStatus;
+  /** 计划任务可以 `replan`（M4），手工任务不行。 */
+  origin: 'user' | 'plan';
   sessionId?: string;
   cwd?: string;
   attempt: number;

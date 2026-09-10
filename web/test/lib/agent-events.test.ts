@@ -116,3 +116,25 @@ describe('task_recovery_required reduction', () => {
     expect(afterRecovery).toEqual(busy);
   });
 });
+
+describe('plan_updated（M4：载荷是 PlanView）', () => {
+  it('does not touch the streaming state machine (plan lives in its own ref)', () => {
+    const before = reduceAgentEvent(INITIAL_STREAM_STATE, { type: 'agent_start' });
+    const after = reduceAgentEvent(before, {
+      type: 'plan_updated',
+      plan: {
+        planId: 'task-1',
+        taskId: 'task-1',
+        sessionId: 'session-1',
+        status: 'executing',
+        revision: 3,
+        title: '重构 Plan 模式',
+        goal: 'G',
+        steps: [],
+        awaitingUserAction: false,
+        updatedAt: '2026-08-21T10:00:00.000Z',
+      },
+    });
+    expect(after).toBe(before);
+  });
+});

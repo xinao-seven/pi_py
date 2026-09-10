@@ -51,8 +51,6 @@ function baseProps() {
     running: false,
     retryInfo: null,
     contextUsage: null,
-    planActive: false,
-    planBusy: false,
   };
 }
 
@@ -81,5 +79,16 @@ describe('AgentControls', () => {
     const wrapper = mount(AgentControls, { props: { ...baseProps(), isNew: false } });
     const presetLabels = wrapper.findAll('.control-field span');
     expect(presetLabels.some((label) => label.text() === '预设')).toBe(false);
+  });
+});
+
+describe('AgentControls（M4：不再有 Plan 预开关）', () => {
+  it('has no Plan toggle button (planning is chosen when sending)', () => {
+    const wrapper = mount(AgentControls, { props: baseProps() });
+    const labels = wrapper.findAll('button').map((button) => button.text());
+    expect(labels).not.toContain('Plan');
+    expect(wrapper.emitted('togglePlan')).toBeUndefined();
+    // 压缩按钮仍在。
+    expect(labels.some((label) => label.includes('压缩上下文'))).toBe(true);
   });
 });

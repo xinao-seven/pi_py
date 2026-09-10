@@ -15,6 +15,7 @@ import {
   listTasks,
   pruneObservabilityRuns,
   resumeTask,
+  sendPlanCommand,
   updateTask,
   updateTaskStep,
 } from '@/lib/api';
@@ -297,5 +298,61 @@ describe('task recovery endpoints (M3)', () => {
       status: 409,
       code: 'task_needs_confirmation',
     });
+  });
+});
+
+describe('sendPlanCommand（M4 契约）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('maps actions to plan_* command types and returns the fresh PlanView', async () => {
+    const plan = {
+      planId: 'task-1',
+      taskId: 'task-1',
+      sessionId: 'session-1',
+      status: 'executing',
+      revision: 4,
+      title: '重构 Plan 模式',
+      goal: 'G',
+      steps: [],
+      awaitingUserAction: false,
+      updatedAt: '2026-08-21T10:00:00.000Z',
+    };
+    const fetchMock = vi.fn(async () => jsonResponse({ success: true, data: { plan } }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await sendPlanCommand('session-1', 'execute');
+    expect(result.plan).toMatchObject({ planId: 'task-1', status: 'executing' });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain('/api/agent/session-1');
+    expect(JSON.parse(String(init.body))).toEqual({ type: 'plan_execute' });
+  });
+
+  it('forwards the refinement message and tolerates a missing payload', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ success: true, data: undefined }, 200),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await sendPlanCommand('session-1', 'refine', '把第二步拆开');
+    expect(result.plan).toBeUndefined();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      type: 'plan_refine',
+      message: '把第二步拆开',
+    });
+  });
+
+  it('accepts replan as a resume mode', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ task: { id: 'task-1', status: 'pending' } }, 202),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const task = await resumeTask('task-1', { mode: 'replan' });
+    expect(task).toMatchObject({ id: 'task-1' });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ mode: 'replan' });
   });
 });

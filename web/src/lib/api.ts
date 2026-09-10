@@ -22,7 +22,8 @@ import type {
   SessionPreset,
   SessionPresetInput,
   SkillsResponse,
-  PlanSnapshot,
+  PlanView,
+  PromptMode,
   TaskEvidence,
   TaskRecord,
   TaskRecoveryItem,
@@ -177,6 +178,8 @@ export async function pickWorkspaceDirectory(): Promise<string | undefined> {
 export async function createAgent(input: {
   cwd: string;
   message: string;
+  /** 执行方式（M4）：direct 默认；plan 让这条消息进入只读规划（新会话也支持）。 */
+  mode?: PromptMode;
   provider?: string;
   modelId?: string;
   thinkingLevel?: string;
@@ -265,16 +268,25 @@ export async function setSkillDisabled(
   });
 }
 
-export function getPlan(sessionId: string): Promise<{ plan: PlanSnapshot }> {
+export function getPlan(sessionId: string): Promise<{ plan: PlanView }> {
   return request(`/api/agent/${encodeURIComponent(sessionId)}/plan`);
 }
 
+/**
+ * 下发计划命令（M4 契约）。
+ * 中文说明：响应体带上最新的 PlanView（服务端写入后立即返回），因此调用方可以马上
+ * 反映状态而不必等 SSE——SSE 仍是权威通道（别的客户端/执行器也会改计划）。
+ */
 export async function sendPlanCommand(
   sessionId: string,
-  action: 'enable' | 'disable' | 'execute' | 'refine',
+  action: 'start' | 'execute' | 'pause' | 'resume' | 'refine' | 'abandon',
   message?: string,
-): Promise<void> {
-  await sendAgentCommand(sessionId, { type: `plan_${action}`, ...(message ? { message } : {}) });
+): Promise<{ plan: PlanView }> {
+  const data = await sendAgentCommand(sessionId, {
+    type: `plan_${action}`,
+    ...(message ? { message } : {}),
+  });
+  return (data ?? {}) as { plan: PlanView };
 }
 
 export async function getMcpServers(cwd?: string): Promise<McpServersResponse> {
@@ -547,7 +559,7 @@ export async function getTaskRecovery(): Promise<TaskRecoveryItem[]> {
  */
 export async function resumeTask(
   taskId: string,
-  input: { mode: 'continue' | 'retry_step'; confirmSideEffect?: boolean },
+  input: { mode: 'continue' | 'retry_step' | 'replan'; confirmSideEffect?: boolean },
 ): Promise<TaskRecord> {
   const result = await request<{ task: TaskRecord }>(
     `/api/tasks/${encodeURIComponent(taskId)}/resume`,

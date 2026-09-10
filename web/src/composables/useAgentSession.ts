@@ -25,8 +25,9 @@ import type {
   ContextUsage,
   ModelCatalog,
   ModelRef,
-  PlanSnapshot,
+  PlanView,
   PresetCompaction,
+  PromptMode,
   RetryInfo,
   SessionDetail,
   SessionPreset,
@@ -60,7 +61,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   const entryIds = ref<string[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
-  const plan = ref<PlanSnapshot | null>(null);
+  const plan = ref<PlanView | null>(null);
   // 当前会话的任务（M2）：由 REST 首次加载 + SSE task_updated 增量更新。
   const task = ref<TaskRecord | null>(null);
   // 待恢复任务清单（M3）：重启后由 SSE 补推或 REST 拉取，只展示不自动执行。
@@ -120,6 +121,18 @@ export function useAgentSession(options: AgentSessionOptions) {
     stream.streamingMessage = next.streamingMessage;
     stream.error = next.error;
     stream.pendingToolCall = next.pendingToolCall;
+  }
+
+  /** 重新拉取计划视图（步骤编辑后立即刷新，避免等 SSE 的往返延迟）。 */
+  async function refreshPlan(): Promise<void> {
+    const sessionId = activeSessionId.value;
+    if (sessionId === null) return;
+    try {
+      const response = await getPlan(sessionId);
+      if (activeSessionId.value === sessionId) plan.value = response.plan;
+    } catch {
+      // 计划是增量信息：拉取失败保留旧视图，等 SSE 校正。
+    }
   }
 
   async function loadSession(sessionId: string, showLoading = false): Promise<void> {
@@ -332,7 +345,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (event.contextUsage !== undefined) contextUsage.value = event.contextUsage ?? null;
 
     if (event.type === 'plan_updated' && event.plan) {
-      plan.value = event.plan as PlanSnapshot;
+      plan.value = event.plan as PlanView;
     } else if (event.type === 'task_updated' && event.task) {
       // 任务变更实时刷新面板（本会话的任务；其它会话的任务不会推到这里）。
       task.value = event.task as TaskRecord;
@@ -374,7 +387,11 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
-  async function send(message: string, images: AttachedImage[] = []): Promise<void> {
+  async function send(
+    message: string,
+    images: AttachedImage[] = [],
+    mode: PromptMode = 'direct',
+  ): Promise<void> {
     // 发送消息：新会话先创建 Agent，历史会话直接发 prompt 命令
     const text = message.trim();
     if ((!text && images.length === 0) || stream.running) return;
@@ -395,6 +412,9 @@ export function useAgentSession(options: AgentSessionOptions) {
         const sessionId = await createAgent({
           cwd,
           message: text,
+          // 执行方式（M4）：消息级属性——「先规划」不再需要先切换全局开关，
+          // 新会话也能直接进入规划（修 P1）。
+          ...(mode === 'plan' ? { mode } : {}),
           provider: displayModel.value?.provider,
           modelId: displayModel.value?.modelId,
           // 默认路径（未显式选择思考）不发送 thinkingLevel，保持与改动前一致。
@@ -417,6 +437,7 @@ export function useAgentSession(options: AgentSessionOptions) {
           type: 'prompt',
           message: text,
           images: imageBlocks,
+          ...(mode === 'plan' ? { mode } : {}),
         });
         connectEvents(sessionId);
       }
@@ -715,6 +736,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     loading,
     error,
     plan,
+    refreshPlan,
     task,
     recovery,
     refreshTask,

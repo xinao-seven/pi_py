@@ -16,8 +16,6 @@ const props = defineProps<{
   running: boolean;
   retryInfo: RetryInfo | null;
   contextUsage: ContextUsage | null;
-  planActive: boolean;
-  planBusy: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,7 +24,6 @@ const emit = defineEmits<{
   toolsChange: [toolNames: string[]];
   presetChange: [preset: SessionPreset];
   compact: [];
-  togglePlan: [];
 }>();
 
 const modelKey = computed(() =>
@@ -136,17 +133,6 @@ function changePreset(event: Event): void {
 
     <button
       class="compact-button"
-      :class="{ 'compact-button--active': planActive }"
-      type="button"
-      :disabled="running || planBusy"
-      :aria-pressed="planActive"
-      @click="emit('togglePlan')"
-    >
-      Plan
-    </button>
-
-    <button
-      class="compact-button"
       type="button"
       :disabled="running || compacting"
       @click="emit('compact')"
@@ -154,7 +140,7 @@ function changePreset(event: Event): void {
       {{ compacting ? '压缩中…' : '压缩上下文' }}
     </button>
 
-    <div v-if="retryInfo" class="retry-indicator" role="status">
+    <div v-if="retryInfo" class="retry-indicator">
       重试 {{ retryInfo.attempt }}/{{ retryInfo.maxAttempts }}
     </div>
     <div v-else-if="contextPercent !== null" class="context-meter" :title="contextTitle">

@@ -61,6 +61,7 @@ const {
   contextUsage,
   task,
   recovery,
+  refreshPlan,
   refreshTask,
   refreshRecovery,
   catalog,
@@ -110,9 +111,6 @@ const title = computed(() => {
   return detail.value?.info.name || detail.value?.info.firstMessage || 'pi 会话';
 });
 const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? '');
-const planActive = computed(
-  () => plan.value?.mode === 'planning' || plan.value?.mode === 'executing',
-);
 const branchNodeCount = computed(() => countTreeNodes(detail.value?.tree ?? []));
 // 上下文占用徽标：percent 可能是 null（刚压缩完、占用未知），此时不显示。
 const contextPercentLabel = computed(() =>
@@ -327,46 +325,22 @@ function resumeSessionTask(payload: { mode: 'continue' | 'retry_step' }): void {
   void refreshRecovery();
 }
 
+/**
+ * 计划命令（M4）：start / execute / pause / resume / refine / abandon。
+ *
+ * 中文说明：响应体已经带上最新的 PlanView，所以先用它刷新面板（即时反馈），
+ * SSE `plan_updated` 到达后仍会校正（执行器/工具也会改计划，SSE 才是权威）。
+ */
 async function actPlan(
-  action: 'enable' | 'disable' | 'execute' | 'refine',
+  action: 'start' | 'execute' | 'pause' | 'resume' | 'refine' | 'abandon',
   message?: string,
 ): Promise<void> {
-  // 发送 Plan 命令并乐观更新面板状态；随后 SSE plan_updated 会校正权威状态。
   if (!props.sessionId) return;
   planBusy.value = true;
   error.value = null;
   try {
-    await sendPlanCommand(props.sessionId, action, message);
-    const current = plan.value;
-    if (action === 'enable') {
-      plan.value = {
-        sessionId: props.sessionId,
-        mode: 'planning',
-        todos: current?.todos ?? [],
-        awaitingConfirmation: false,
-      };
-    } else if (action === 'disable') {
-      plan.value = {
-        sessionId: props.sessionId,
-        mode: 'normal',
-        todos: [],
-        awaitingConfirmation: false,
-      };
-    } else if (action === 'execute') {
-      plan.value = {
-        sessionId: props.sessionId,
-        mode: 'executing',
-        todos: current?.todos ?? [],
-        awaitingConfirmation: false,
-      };
-    } else if (action === 'refine') {
-      plan.value = {
-        sessionId: props.sessionId,
-        mode: 'planning',
-        todos: current?.todos ?? [],
-        awaitingConfirmation: false,
-      };
-    }
+    const result = await sendPlanCommand(props.sessionId, action, message);
+    if (result.plan) plan.value = result.plan;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'Plan 操作失败';
   } finally {
@@ -374,22 +348,42 @@ async function actPlan(
   }
 }
 
-async function togglePlan(): Promise<void> {
-  // 新会话尚未有 Session JSONL，必须先发送首条普通消息创建会话。
-  if (!props.sessionId) {
-    error.value = '请先发送首条消息创建会话，再开启 Plan 模式。';
+/**
+ * 计划步骤编辑（改名/跳过/恢复/删除）。
+ * 中文说明：计划就是任务，所以直接走任务接口——复用 actTask 的乐观并发处理
+ * （409 冲突自动刷新后重试一次）。
+ */
+function patchPlanStep(payload: {
+  stepId: string;
+  patch: { title?: string; status?: TaskStepStatus };
+}): void {
+  void actTask(async () => {
+    const current = plan.value;
+    if (!current) return;
+    await updateTaskStep(current.taskId, payload.stepId, {
+      ...payload.patch,
+      ifRevision: current.revision,
+    });
+    await refreshPlan();
+  });
+}
+
+function removePlanStep(payload: { stepId: string }): void {
+  const current = plan.value;
+  if (!current) return;
+  const step = current.steps.find((item) => item.id === payload.stepId);
+  if (step?.status === 'completed' && !window.confirm('这一步已完成，删除会丢失它的证据，确定吗？')) {
     return;
   }
-  if (planActive.value) {
-    // 激活后开关即退出键；执行中退出会中断计划，先确认避免误退。
-    if (plan.value?.mode === 'executing') {
-      const ok = window.confirm('执行中退出会中断当前计划，确定退出 Plan 模式吗？');
-      if (!ok) return;
-    }
-    await actPlan('disable');
-    return;
-  }
-  await actPlan('enable');
+  void actTask(async () => {
+    const latest = plan.value;
+    if (!latest) return;
+    await deleteTaskStep(latest.taskId, payload.stepId, {
+      ifRevision: latest.revision,
+      ...(step?.status === 'completed' ? { force: true } : {}),
+    });
+    await refreshPlan();
+  });
 }
 
 watch(
@@ -566,9 +560,13 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           :plan="plan"
           :session-id="sessionId"
           :busy="planBusy"
-          @disable="actPlan('disable')"
           @execute="actPlan('execute')"
+          @pause="actPlan('pause')"
+          @resume="actPlan('resume')"
+          @abandon="actPlan('abandon')"
           @refine="(message) => actPlan('refine', message)"
+          @step-patch="patchPlanStep"
+          @step-remove="removePlanStep"
         />
         <TaskPanel
           v-if="sessionId || task || recovery.length"
@@ -597,19 +595,16 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           :running="stream.running"
           :retry-info="retryInfo"
           :context-usage="contextUsage"
-          :plan-active="planActive"
-          :plan-busy="planBusy"
           @model-change="changeModel"
           @thinking-change="changeThinkingLevel"
           @tools-change="changeTools"
           @preset-change="applyPreset"
           @compact="compact"
-          @toggle-plan="togglePlan"
         />
         <ChatInput
           :running="stream.running"
           :disabled="planBusy"
-          :plan-active="planActive"
+          :plan-available="Boolean(sessionId) || Boolean(newSessionCwd)"
           @send="send"
           @steer="steer"
           @follow-up="followUp"
