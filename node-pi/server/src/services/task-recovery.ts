@@ -225,7 +225,10 @@ export class TaskRecoveryService {
       action,
       reason: describeReason(action, sideEffect, inFlight?.toolName),
       ...(artifact === undefined ? {} : { artifact }),
-      requiresConfirmation: action !== 'auto_resume',
+      // 「需要确认」= 执行器真的会要人点头的场景：
+      // manual_only 一定要；verify_then_resume 只在产物**不在**时才要（在就直接补记完成）。
+      requiresConfirmation:
+        action === 'manual_only' || (artifact?.exists !== true && action === 'verify_then_resume'),
     };
   }
 

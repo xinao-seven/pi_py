@@ -214,6 +214,8 @@ describe('TaskRecoveryService scan', () => {
     // 产物存在 → 自动验证通过，并把该步骤补记为完成（绝不重跑）。
     writeFileSync(artifact, 'CREATE TABLE t;', 'utf8');
     const present = harness.recovery.describeItem(task.id);
+    // 产物在 → 执行器会直接补记完成，不需要人工确认（否则面板会白提示一次）。
+    expect(present.requiresConfirmation).toBe(false);
     expect(() => harness.recovery.assertResumable(present, resume('continue'))).not.toThrow();
     const verified = harness.recovery.applyArtifactVerification(present);
     expect(verified.verified).toBe(true);
