@@ -9,8 +9,9 @@
  *   `tool_execution_end(isError=true)`，缺这一列会把被正确拦下的调用统计成失败；
  * - `steps.day` / `runs.day`：预聚合按 UTC 日期分桶，读路径不再对原始表做全表扫描；
  * - `runs.parent_run_id`：M5 subagent 需要，建表时就加上，避免后续再迁移；
- * - 预聚合表（day_rollups / tool_rollups / approval_rollups）在**写入时**增量维护，
- *   明细被清理（prune）后仍保留长期聚合历史。
+ * - 预聚合表（run_rollups / tool_rollups / approval_rollups）在**写入时**增量维护，
+ *   因此聚合的时间分辨率为「天 + cwd」，明细被清理（prune）后仍保留长期聚合历史；
+ *   只有分位数样本走明细表（范围内最近 N 条，见 trace-repository.ts）。
  */
 
 import type { DatabaseSync } from 'node:sqlite';
@@ -90,9 +91,11 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run_id)`,
       `CREATE INDEX IF NOT EXISTS idx_steps_kind_time ON steps(kind, started_at)`,
       `CREATE INDEX IF NOT EXISTS idx_steps_tool ON steps(tool_name, started_at)`,
-      `CREATE TABLE IF NOT EXISTS day_rollups (
+      `CREATE TABLE IF NOT EXISTS run_rollups (
         day TEXT NOT NULL,
         cwd TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
         runs INTEGER NOT NULL DEFAULT 0,
         turns INTEGER NOT NULL DEFAULT 0,
         input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -100,7 +103,7 @@ export const MIGRATIONS: readonly Migration[] = [
         cache_read_tokens INTEGER NOT NULL DEFAULT 0,
         cost_usd REAL NOT NULL DEFAULT 0,
         errors INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (day, cwd)
+        PRIMARY KEY (day, cwd, provider, model)
       )`,
       `CREATE TABLE IF NOT EXISTS tool_rollups (
         day TEXT NOT NULL,

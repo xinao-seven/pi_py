@@ -168,17 +168,19 @@ export class SqliteTraceStorage implements TraceStorage {
 
   summary(query: TraceQuery): SummaryData {
     const filter = runFilter(query);
+    const rollups = rollupFilter(query);
     const sample = Math.min(Math.max(query.sampleLimit ?? DEFAULT_SAMPLE_LIMIT, 1), 10_000);
+    // 计数/成本/token 一律来自预聚合表（天 + cwd 分辨率），因此清理明细后历史口径仍完整。
     const totalsRow = this.statement(
-      `SELECT COUNT(*) AS runs,
-              SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errorRuns,
+      `SELECT SUM(runs) AS runs,
+              SUM(errors) AS errorRuns,
               SUM(turns) AS turns,
               SUM(input_tokens) AS inputTokens,
               SUM(output_tokens) AS outputTokens,
               SUM(cache_read_tokens) AS cacheReadTokens,
               SUM(cost_usd) AS costUsd
-       FROM runs ${filter.sql}`,
-    ).get(...filter.params);
+       FROM run_rollups ${rollups.sql}`,
+    ).get(...rollups.params);
     const totals = {
       runs: toNumber(totalsRow?.runs),
       errorRuns: toNumber(totalsRow?.errorRuns),
@@ -187,15 +189,16 @@ export class SqliteTraceStorage implements TraceStorage {
       outputTokens: toNumber(totalsRow?.outputTokens),
       cacheReadTokens: toNumber(totalsRow?.cacheReadTokens),
       costUsd: toNumber(totalsRow?.costUsd),
+      // 分位数是唯一走明细表的部分：范围内最近 N 条样本（有界索引扫描）。
       durationSamples: this.sampleRuns('duration_ms', filter, sample),
       ttftSamples: this.sampleRuns('ttft_ms', filter, sample),
     };
     return {
       totals,
-      byModel: this.modelAggregates(filter, sample),
+      byModel: this.modelAggregates(rollups, filter, sample),
       byTool: this.toolAggregates(query, sample),
       byApproval: this.approvalAggregates(query, sample),
-      daily: this.dailyAggregates(query),
+      daily: this.dailyAggregates(rollups),
     };
   }
 
@@ -312,7 +315,9 @@ export class SqliteTraceStorage implements TraceStorage {
 
   private updateRun(runId: string, patch: RunFinish): void {
     const row = this.statement(
-      `SELECT started_at AS startedAt, cwd AS cwd, status AS status FROM runs WHERE id = ?`,
+      `SELECT started_at AS startedAt, cwd AS cwd, status AS status,
+              provider AS provider, model AS model
+       FROM runs WHERE id = ?`,
     ).get(runId);
     this.statement(
       `UPDATE runs SET ended_at = :endedAt, status = :status, stop_reason = :stopReason,
@@ -338,16 +343,19 @@ export class SqliteTraceStorage implements TraceStorage {
       durationMs: bind(patch.durationMs),
       meta: patch.meta === undefined ? null : JSON.stringify(patch.meta),
     });
-    // run 只在第一次进入终态时计入日聚合，避免重复 finish 造成重复计数。
+    // run 只在第一次进入终态时计入聚合，避免重复 finish 造成重复计数。
     const previous = optionalString(row?.status);
     const startedAt = optionalNumber(row?.startedAt);
     if (startedAt === undefined || previous !== 'running') return;
     const cwd = optionalString(row?.cwd) ?? '';
+    // provider/model 在聚合表里用空串代替 NULL：SQLite 的 UNIQUE 把 NULL 视作互不相等，
+    // 直接存 NULL 会让 ON CONFLICT 匹配不上而写成多行。
     this.statement(
-      `INSERT INTO day_rollups (day, cwd, runs, turns, input_tokens, output_tokens,
-          cache_read_tokens, cost_usd, errors)
-       VALUES (:day, :cwd, 1, :turns, :inputTokens, :outputTokens, :cacheReadTokens, :costUsd, :errors)
-       ON CONFLICT(day, cwd) DO UPDATE SET
+      `INSERT INTO run_rollups (day, cwd, provider, model, runs, turns, input_tokens,
+          output_tokens, cache_read_tokens, cost_usd, errors)
+       VALUES (:day, :cwd, :provider, :model, 1, :turns, :inputTokens, :outputTokens,
+          :cacheReadTokens, :costUsd, :errors)
+       ON CONFLICT(day, cwd, provider, model) DO UPDATE SET
           runs = runs + 1,
           turns = turns + excluded.turns,
           input_tokens = input_tokens + excluded.input_tokens,
@@ -358,6 +366,8 @@ export class SqliteTraceStorage implements TraceStorage {
     ).run({
       day: dayOf(startedAt),
       cwd,
+      provider: optionalString(row?.provider) ?? '',
+      model: optionalString(row?.model) ?? '',
       turns: patch.turns,
       inputTokens: patch.inputTokens,
       outputTokens: patch.outputTokens,
@@ -467,19 +477,21 @@ export class SqliteTraceStorage implements TraceStorage {
   }
 
   private modelAggregates(
+    rollups: { sql: string; params: BindValue[] },
     filter: { sql: string; params: BindValue[] },
     sampleLimit: number,
   ): ModelAggregate[] {
     const rows = this.statement(
-      `SELECT provider, model, COUNT(*) AS runs, SUM(cost_usd) AS costUsd,
+      `SELECT provider, model, SUM(runs) AS runs, SUM(cost_usd) AS costUsd,
               SUM(input_tokens + output_tokens) AS tokens
-       FROM runs ${filter.sql}
+       FROM run_rollups ${rollups.sql}
        GROUP BY provider, model
        ORDER BY runs DESC, provider ASC, model ASC`,
-    ).all(...filter.params);
+    ).all(...rollups.params);
     return rows.map((row) => {
-      const provider = optionalString(row.provider);
-      const model = optionalString(row.model);
+      // 空串在聚合表里代表「未指定」，对外仍还原为缺失。
+      const provider = optionalString(row.provider) || undefined;
+      const model = optionalString(row.model) || undefined;
       const samples = this.statement(
         `SELECT duration_ms AS value FROM runs
          ${filter.sql ? `${filter.sql} AND` : 'WHERE'} provider IS ? AND model IS ? AND duration_ms IS NOT NULL
@@ -580,13 +592,12 @@ export class SqliteTraceStorage implements TraceStorage {
     });
   }
 
-  private dailyAggregates(query: TraceQuery): DailyAggregate[] {
-    const filter = rollupFilter(query);
+  private dailyAggregates(rollups: { sql: string; params: BindValue[] }): DailyAggregate[] {
     const rows = this.statement(
       `SELECT day AS date, SUM(runs) AS runs, SUM(cost_usd) AS costUsd,
               SUM(input_tokens) AS inputTokens, SUM(output_tokens) AS outputTokens
-       FROM day_rollups ${filter.sql} GROUP BY day ORDER BY day ASC`,
-    ).all(...filter.params);
+       FROM run_rollups ${rollups.sql} GROUP BY day ORDER BY day ASC`,
+    ).all(...rollups.params);
     return rows.map((row) => ({
       date: optionalString(row.date) ?? '',
       runs: toNumber(row.runs),

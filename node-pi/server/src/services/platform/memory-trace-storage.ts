@@ -31,9 +31,11 @@ import {
 } from './trace-repository.js';
 import { DEFAULT_SAMPLE_LIMIT } from './sqlite-trace-storage.js';
 
-interface DayRollup {
+interface RunRollup {
   day: string;
   cwd: string;
+  provider: string;
+  model: string;
   runs: number;
   turns: number;
   inputTokens: number;
@@ -84,7 +86,7 @@ function matchesStep(query: TraceQuery, step: StepRow, runCwd: string | undefine
 export class MemoryTraceStorage implements TraceStorage {
   private readonly runs = new Map<string, RunRow>();
   private readonly steps: StepRow[] = [];
-  private readonly dayRollups = new Map<string, DayRollup>();
+  private readonly runRollups = new Map<string, RunRollup>();
   private readonly toolRollups = new Map<string, ToolRollup>();
   private readonly approvalRollups = new Map<string, ApprovalRollup>();
   private closed = false;
@@ -101,14 +103,19 @@ export class MemoryTraceStorage implements TraceStorage {
   summary(query: TraceQuery): SummaryData {
     const sampleLimit = Math.min(Math.max(query.sampleLimit ?? DEFAULT_SAMPLE_LIMIT, 1), 10_000);
     const runs = [...this.runs.values()].filter((run) => matchesQuery(run, query));
+    const rollups = [...this.runRollups.values()].filter((rollup) =>
+      matchesRollup(query, rollup.day, rollup.cwd),
+    );
+    // 计数/成本/token 来自预聚合（天 + cwd 分辨率），所以清理明细后历史口径仍完整。
     const totals = {
-      runs: runs.length,
-      errorRuns: runs.filter((run) => run.status === 'error').length,
-      turns: sum(runs, (run) => run.turns),
-      inputTokens: sum(runs, (run) => run.inputTokens),
-      outputTokens: sum(runs, (run) => run.outputTokens),
-      cacheReadTokens: sum(runs, (run) => run.cacheReadTokens),
-      costUsd: sum(runs, (run) => run.costUsd),
+      runs: sum(rollups, (rollup) => rollup.runs),
+      errorRuns: sum(rollups, (rollup) => rollup.errors),
+      turns: sum(rollups, (rollup) => rollup.turns),
+      inputTokens: sum(rollups, (rollup) => rollup.inputTokens),
+      outputTokens: sum(rollups, (rollup) => rollup.outputTokens),
+      cacheReadTokens: sum(rollups, (rollup) => rollup.cacheReadTokens),
+      costUsd: sum(rollups, (rollup) => rollup.costUsd),
+      // 分位数是唯一走明细的部分（范围内最近 N 条样本）。
       durationSamples: samples(
         runs.filter((run) => run.durationMs !== undefined),
         (run) => run.durationMs!,
@@ -122,10 +129,10 @@ export class MemoryTraceStorage implements TraceStorage {
     };
     return {
       totals,
-      byModel: this.modelAggregates(runs, sampleLimit),
+      byModel: this.modelAggregates(rollups, runs, sampleLimit),
       byTool: this.toolAggregates(query, sampleLimit),
       byApproval: this.approvalAggregates(query, sampleLimit),
-      daily: this.dailyAggregates(query),
+      daily: this.dailyAggregates(rollups),
     };
   }
 
@@ -175,10 +182,14 @@ export class MemoryTraceStorage implements TraceStorage {
     const run = this.runs.get(runId);
     if (!run || run.status !== 'running') return;
     Object.assign(run, patch);
-    const key = `${dayOf(run.startedAt)}|${run.cwd}`;
-    const rollup = this.dayRollups.get(key) ?? {
-      day: dayOf(run.startedAt),
+    const day = dayOf(run.startedAt);
+    // provider/model 用空串代替缺失，与 SQL 后端保持一致。
+    const key = `${day}|${run.cwd}|${run.provider ?? ''}|${run.model ?? ''}`;
+    const rollup = this.runRollups.get(key) ?? {
+      day,
       cwd: run.cwd,
+      provider: run.provider ?? '',
+      model: run.model ?? '',
       runs: 0,
       turns: 0,
       inputTokens: 0,
@@ -194,7 +205,7 @@ export class MemoryTraceStorage implements TraceStorage {
     rollup.cacheReadTokens += patch.cacheReadTokens;
     rollup.costUsd += patch.costUsd;
     rollup.errors += patch.status === 'error' ? 1 : 0;
-    this.dayRollups.set(key, rollup);
+    this.runRollups.set(key, rollup);
   }
 
   private addStep(step: StepRow): void {
@@ -241,27 +252,42 @@ export class MemoryTraceStorage implements TraceStorage {
 
   // ---- 聚合读取 ----
 
-  private modelAggregates(runs: RunRow[], sampleLimit: number): ModelAggregate[] {
-    const groups = new Map<string, { provider?: string; model?: string; runs: RunRow[] }>();
-    for (const run of runs) {
-      const key = `${run.provider ?? '∅'}|${run.model ?? '∅'}`;
-      const group = groups.get(key) ?? { provider: run.provider, model: run.model, runs: [] };
-      group.runs.push(run);
+  private modelAggregates(
+    rollups: RunRollup[],
+    runs: RunRow[],
+    sampleLimit: number,
+  ): ModelAggregate[] {
+    const groups = new Map<string, { provider?: string; model?: string; runs: RunRollup[] }>();
+    for (const rollup of rollups) {
+      const key = `${rollup.provider}|${rollup.model}`;
+      const group = groups.get(key) ?? {
+        provider: rollup.provider || undefined,
+        model: rollup.model || undefined,
+        runs: [],
+      };
+      group.runs.push(rollup);
       groups.set(key, group);
     }
     return [...groups.values()]
-      .map((group) => ({
-        provider: group.provider,
-        model: group.model,
-        runs: group.runs.length,
-        costUsd: sum(group.runs, (run) => run.costUsd),
-        tokens: sum(group.runs, (run) => run.inputTokens + run.outputTokens),
-        durationSamples: samples(
-          group.runs.filter((run) => run.durationMs !== undefined),
-          (run) => run.durationMs!,
-          sampleLimit,
-        ),
-      }))
+      .map((group) => {
+        const matching = runs.filter(
+          (run) =>
+            (run.provider ?? '') === (group.provider ?? '') &&
+            (run.model ?? '') === (group.model ?? ''),
+        );
+        return {
+          provider: group.provider,
+          model: group.model,
+          runs: sum(group.runs, (item) => item.runs),
+          costUsd: sum(group.runs, (item) => item.costUsd),
+          tokens: sum(group.runs, (item) => item.inputTokens + item.outputTokens),
+          durationSamples: samples(
+            matching.filter((run) => run.durationMs !== undefined),
+            (run) => run.durationMs!,
+            sampleLimit,
+          ),
+        };
+      })
       .sort(
         (left, right) =>
           right.runs - left.runs ||
@@ -351,10 +377,9 @@ export class MemoryTraceStorage implements TraceStorage {
     );
   }
 
-  private dailyAggregates(query: TraceQuery): DailyAggregate[] {
+  private dailyAggregates(rollups: RunRollup[]): DailyAggregate[] {
     const days = new Map<string, DailyAggregate>();
-    for (const rollup of this.dayRollups.values()) {
-      if (!matchesRollup(query, rollup.day, rollup.cwd)) continue;
+    for (const rollup of rollups) {
       const aggregate = days.get(rollup.day) ?? {
         date: rollup.day,
         runs: 0,

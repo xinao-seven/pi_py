@@ -92,7 +92,12 @@ export interface StepRow {
   meta?: Record<string, unknown>;
 }
 
-/** 时间窗口 + 工作区过滤条件（Dashboard 查询用）。 */
+/**
+ * 时间窗口 + 工作区过滤条件（Dashboard 查询用）。
+ *
+ * 中文说明：计数/成本/token 这类聚合的时间分辨率为**天 + cwd**（预聚合表），
+ * 只有分位数样本按精确窗口从明细表取最近 N 条；未结算（running）的 run 不计入聚合。
+ */
 export interface TraceQuery {
   from?: number; // 毫秒时间戳（含）
   to?: number; // 毫秒时间戳（不含）

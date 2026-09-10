@@ -47,6 +47,7 @@ import { SessionService } from './services/session-service.js';
 import { openNullStore, openPlatformStore, type PlatformStore } from './services/platform/store.js';
 import { SessionLedger } from './services/observability/session-ledger.js';
 import { mcpRoutes } from './routes/mcp.js';
+import { observabilityRoutes } from './routes/observability.js';
 
 /**
  * createApp 的可选依赖注入参数。
@@ -223,6 +224,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.register(skillRoutes, { service: skillService, registry });
   app.register(mcpRoutes, { prefix: '/api/mcp', service: mcpService, registry });
   app.register(presetRoutes, { prefix: '/api/presets', service: presetService });
+  app.register(observabilityRoutes, {
+    prefix: '/api/observability',
+    traces: store.traces,
+    stats: () => store.stats(),
+  });
 
   // 前端静态托管：web 构建产物（默认 ../../web/dist）。显式 /api 路由优先于
   // @fastify/static 的 wildcard 路由，故不影响 API；找不到文件会触发下面的
