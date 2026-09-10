@@ -45,6 +45,7 @@ export type LedgerEvent =
   | { type: 'agent_end'; error: string }
   | { type: 'plan_updated'; plan: unknown }
   | { type: 'task_updated'; task: unknown }
+  | { type: 'task_recovery_required'; tasks: unknown[] }
   | {
       type: 'tool_call_pending';
       toolCallId: string;
