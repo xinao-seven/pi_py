@@ -380,6 +380,36 @@ describe.each([
     storage.close();
   });
 
+  it('keeps run-start meta when the run is finished without meta', () => {
+    // 回归（M5 实际踩到）：子会话的 preset/depth 在 run 开始时写进 meta，
+    // 收尾语句若无条件写 meta，就会把它抹成 NULL——执行树随即看不出「谁派出来的」。
+    const sqlite = applyTo(sqliteStorage(), [
+      {
+        op: 'run_start',
+        run: makeRun({ meta: { parentSessionId: 'parent', preset: 'scout', depth: 1 } }),
+      },
+      { op: 'run_finish', runId: 'run-1', patch: makeFinish() },
+    ] satisfies TraceOp[]);
+    expect(sqlite.getRun('run-1')?.run.meta).toEqual({
+      parentSessionId: 'parent',
+      preset: 'scout',
+      depth: 1,
+    });
+    sqlite.close();
+
+    // 内存后端行为必须一致
+    const memory = applyTo(memoryStorage(), [
+      {
+        op: 'run_start',
+        run: makeRun({ meta: { parentSessionId: 'parent', preset: 'scout', depth: 1 } }),
+      },
+      { op: 'run_finish', runId: 'run-1', patch: makeFinish({ meta: { retries: 1 } }) },
+    ] satisfies TraceOp[]);
+    // 收尾明确给出 meta 时以收尾为准（合并由账本负责）
+    expect(memory.getRun('run-1')?.run.meta).toEqual({ retries: 1 });
+    memory.close();
+  });
+
   it('keeps rollups when details are pruned', () => {
     const storage = applyTo(create(), sampleOps());
     const deleted = storage.prune(DAY + 30_000); // 删掉 run-1 的明细

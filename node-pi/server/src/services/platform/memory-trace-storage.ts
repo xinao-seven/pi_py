@@ -181,7 +181,10 @@ export class MemoryTraceStorage implements TraceStorage {
   private finishRun(runId: string, patch: RunFinish): void {
     const run = this.runs.get(runId);
     if (!run || run.status !== 'running') return;
-    Object.assign(run, patch);
+    // meta 未提供时保留原值：run 开始时的元信息（如子会话的 preset/depth）不该被收尾抹掉。
+    const { meta, ...rest } = patch;
+    Object.assign(run, rest);
+    if (meta !== undefined) run.meta = meta;
     const day = dayOf(run.startedAt);
     // provider/model 用空串代替缺失，与 SQL 后端保持一致。
     const key = `${day}|${run.cwd}|${run.provider ?? ''}|${run.model ?? ''}`;

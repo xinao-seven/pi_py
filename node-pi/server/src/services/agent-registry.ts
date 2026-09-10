@@ -46,6 +46,8 @@ import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
 import type { TaskRecord } from './platform/task-model.js';
 import type { TaskRecoveryItem } from './task-recovery.js';
+import { resolveSubagentModel, type ResolvedSubagentModel } from './subagent-models.js';
+import type { SubagentService } from './subagent-service.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -64,7 +66,7 @@ const MAX_REPLAY_EVENTS = 256;
  * 这里按**目录名**过滤掉被内联实现接管的那几个，只影响本服务的资源加载，
  * **不修改、不删除用户目录里的任何文件**（CLI 仍照常加载它们）。
  */
-export const INLINE_OWNED_EXTENSION_DIRS = ['plan-mode'] as const;
+export const INLINE_OWNED_EXTENSION_DIRS = ['plan-mode', 'subagent'] as const;
 
 /** 从 unknown 错误里取出可读消息（不泄露堆栈）。 */
 function messageOf(error: unknown): string {
@@ -128,6 +130,23 @@ export interface ImageAttachment {
   mimeType: string;
 }
 
+/** 子会话的委派链路（M5）：登记进注册表时带上，用于 trace 树、取消级联与「不递归」保证。 */
+export interface SubagentLink {
+  parentSessionId: string;
+  /** 父会话当前正在跑的 run id（账本把它写进子 run 的 parent_run_id）。 */
+  parentRunId?: string;
+  /** 预设名（`~/.pi/agent/agents/*.md` 的 name）。 */
+  preset: string;
+  /** 子会话自身的深度（父会话 0，子会话 1）。 */
+  depth: number;
+  /** 子会话 JSONL 落盘目录（默认由服务层给出 `~/.pi/agent-node-server/subagents`）。 */
+  sessionDir?: string;
+  /** 父会话的 JSONL 路径（写进子会话头部，形成 parentSession 链）。 */
+  parentSessionPath?: string;
+  /** 允许的最大深度；`depth >= maxDepth` 时子会话不再注册 `subagent` 工具（结构上不可递归）。 */
+  maxDepth: number;
+}
+
 /** 创建会话的输入参数（来自 POST /api/agent/new）。 */
 export interface CreateSessionInput {
   cwd: string; // 工作区目录
@@ -145,6 +164,8 @@ export interface CreateSessionInput {
   };
   /** MCP 服务白名单；null/缺省 = 全部，[] = 禁用，非空数组 = 服务名白名单（预设的 mcpServers 字段）。 */
   mcpServers?: string[] | null;
+  /** M5：本会话是某次委派的子会话时提供（缺省 = 用户会话）。 */
+  subagent?: SubagentLink;
 }
 
 /** 磁盘上持久化会话的元信息（从 SessionManager.listAll 的 SessionInfo 转换而来）。 */
@@ -238,6 +259,15 @@ export interface PiSessionFactory {
   listPersistedSessions?(): Promise<PersistedSessionInfo[]>;
   open?(input: OpenSessionInput): Promise<PiSession>;
   reloadModelRuntime?(): void;
+  /**
+   * 解析子会话预设里的 `model:`（M5）。
+   * 中文说明：模型目录（`getModels` / `hasConfiguredAuth`）属于持有 ModelRuntime 的工厂，
+   * 所以解析放在这里；返回的 `note` 说明是否发生了「回退父会话模型」。
+   */
+  resolveSubagentModel?(input: {
+    spec?: string;
+    fallback?: { provider: string; id: string };
+  }): Promise<ResolvedSubagentModel>;
 }
 
 /**
@@ -289,6 +319,8 @@ export interface RegistryEntry {
   turnStartedAt?: number;
   /** 本会话当前执行的任务 id（有值时账本会把它写进 run.task_id）。 */
   activeTaskId?: string;
+  /** M5：本会话是由某次委派创建的子会话时提供（用于 trace 树与取消级联）。 */
+  subagent?: SubagentLink;
 }
 
 /**
@@ -311,6 +343,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     private readonly taskRecovery?: { buildExtension(): InlineExtension },
     /** 提问通道扩展：注册 `ask_user` 工具并把挂起问题推给前端（M4.1，可选）。 */
     private readonly questions?: { buildExtension(): InlineExtension },
+    /** 子任务委派（M5）：按会话深度决定是否注册 `subagent` 工具。 */
+    private readonly subagents?: SubagentService,
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -343,11 +377,26 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     // 不在名单里的工具连调用都会失败（"Tool xxx not found"）。因此这里必须并入
     // 内联扩展注册的工具（计划工具 / MCP 工具），否则「带预设的会话」里
     // Plan 完全不可用、MCP 工具也调不动（M4 spike 抓到的真实缺陷）。
-    const effectiveTools = withInlineTools(input.toolNames, [
-      ...PLAN_TOOL_NAMES,
-      ASK_USER_TOOL_NAME,
-      ...this.mcpToolNames(input.cwd, input.mcpServers),
-    ]);
+    //
+    // 子会话（M5）是例外：子会话的工具集**就是预设的工具集**，不并入任何内联工具。
+    // 否则「只读预设」会因为被并入 MCP / 计划工具而不再只读，隔离性形同虚设。
+    const effectiveTools = input.subagent
+      ? input.toolNames
+      : withInlineTools(input.toolNames, [
+          ...PLAN_TOOL_NAMES,
+          ASK_USER_TOOL_NAME,
+          ...this.mcpToolNames(input.cwd, input.mcpServers),
+        ]);
+    // 子会话落盘：落在服务层指定的目录（默认 ~/.pi/agent-node-server/subagents），
+    // 并写 parentSession 链；**不落共享的 ~/.pi/agent/sessions**，否则 CLI 的会话列表
+    // 会凭空多出一堆子会话。
+    const sessionManager = input.subagent?.sessionDir
+      ? SessionManager.create(input.cwd, input.subagent.sessionDir, {
+          ...(input.subagent.parentSessionPath === undefined
+            ? {}
+            : { parentSession: input.subagent.parentSessionPath }),
+        })
+      : undefined;
     // 调用 Pi SDK 创建会话；"off" 透传给 SDK（clampThinkingLevel 对任何模型都接受）。
     const session = await createAgentSession({
       cwd: input.cwd,
@@ -358,7 +407,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
         input.systemPrompt,
         input.extensions,
         input.mcpServers,
+        input.subagent,
       ),
+      ...(sessionManager === undefined ? {} : { sessionManager }),
       ...(model === undefined ? {} : { model }),
       ...(input.thinkingLevel
         ? { thinkingLevel: input.thinkingLevel as AgentSession['thinkingLevel'] }
@@ -435,6 +486,15 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     this.runtimePromise = undefined;
   }
 
+  /** 解析子会话预设里的 `model:`（M5）：能解析就用，解析不了就回退父会话模型并说明原因。 */
+  async resolveSubagentModel(input: {
+    spec?: string;
+    fallback?: { provider: string; id: string };
+  }): Promise<ResolvedSubagentModel> {
+    const runtime = await this.getRuntime();
+    return resolveSubagentModel({ ...input, catalog: runtime });
+  }
+
   /** 惰性创建并缓存 ModelRuntime（并发调用共享同一个实例）。 */
   private getRuntime(): Promise<ModelRuntime> {
     this.runtimePromise ??= ModelRuntime.create({
@@ -451,6 +511,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     systemPrompt?: string,
     extensions?: CreateSessionInput['extensions'],
     mcpServers?: CreateSessionInput['mcpServers'],
+    subagent?: SubagentLink,
   ): Promise<DefaultResourceLoader> {
     // 内联扩展：不走 jiti、闭包直连服务单例，使多个会话共享同一连接/审批中枢，
     // 并支持按预设开关动态启用/禁用。仍保留 SDK 的自动发现（与 TUI 平级）加载
@@ -468,6 +529,10 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     // 提问通道（M4.1）：注册 ask_user；它不是 Plan 的一部分，默认始终启用。
     if (extensions?.questions !== false && this.questions)
       factories.push(this.questions.buildExtension());
+    // 子任务委派（M5）：「不能递归」在结构上保证——到达深度上限的子会话
+    // 根本不注册 `subagent` 工具，模型连试的机会都没有。
+    if (this.subagents && (subagent === undefined || subagent.depth < subagent.maxDepth))
+      factories.push(this.subagents.buildExtension({ depth: subagent?.depth ?? 0 }));
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
     if (this.mcpService)
@@ -573,7 +638,7 @@ export class AgentRegistry {
     if (existing !== undefined) {
       throw new ApiError(409, 'session_active', `Session ${session.sessionId} is already active`);
     }
-    return this.register(session, input.cwd, new Date());
+    return this.register(session, input.cwd, new Date(), undefined, input.subagent);
   }
 
   /**
@@ -647,6 +712,7 @@ export class AgentRegistry {
     cwd: string,
     createdAt: Date,
     persisted?: PersistedSessionInfo,
+    subagent?: SubagentLink,
   ): Promise<RegistryEntry> {
     if (this.entries.has(session.sessionId)) {
       throw new ApiError(409, 'session_active', `Session ${session.sessionId} is already active`);
@@ -661,7 +727,13 @@ export class AgentRegistry {
       subscribers: new Set(),
       persisted,
       toolStartTimes: new Map(),
+      ...(subagent === undefined ? {} : { subagent }),
     };
+    // 子会话继承父会话当前的任务绑定：这样它的 run/token 也会算在那条任务头上。
+    if (subagent !== undefined) {
+      const parentTaskId = this.entries.get(subagent.parentSessionId)?.activeTaskId;
+      if (parentTaskId !== undefined) entry.activeTaskId = parentTaskId;
+    }
     // 订阅 SDK 事件：所有事件先进缓存（publish 内部处理），再广播给订阅者。
     entry.unsubscribe = session.subscribe((event) => this.publish(entry, event));
     this.entries.set(session.sessionId, entry);
@@ -1108,6 +1180,17 @@ export class AgentRegistry {
       ...(session.model ? { provider: session.model.provider, model: session.model.id } : {}),
       thinkingLevel: session.thinkingLevel,
       ...(entry.activeTaskId === undefined ? {} : { taskId: entry.activeTaskId }),
+      // 子会话的 run 挂到父 run 下（M5）：M1 建表时已留 parent_run_id 列，无需迁移。
+      ...(entry.subagent?.parentRunId === undefined
+        ? {}
+        : { parentRunId: entry.subagent.parentRunId }),
+      ...(entry.subagent === undefined
+        ? {}
+        : {
+            parentSessionId: entry.subagent.parentSessionId,
+            subagentPreset: entry.subagent.preset,
+            subagentDepth: entry.subagent.depth,
+          }),
     };
   }
 

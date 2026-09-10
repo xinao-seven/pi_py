@@ -164,6 +164,17 @@ describe('OriginalPiSessionFactory 过滤被内联接管的文件扩展', () => 
     mocks.createAgentSession.mockResolvedValue({ session: new FakeSession() });
   });
 
+  it('过滤用户级与工作区级的 subagent（M5 接管同名工具），保留其他扩展', async () => {
+    const factory = new OriginalPiSessionFactory('/home/u/.pi/agent');
+    await factory.create({ cwd: '/tmp/ws' });
+    const kept = applyOverride([
+      extension('/home/u/.pi/agent/extensions/subagent/index.ts'),
+      extension('/tmp/ws/.pi/extensions/other/index.ts'),
+    ]);
+    expect(kept).toHaveLength(1);
+    expect((kept[0] as { path: string }).path).toContain('other');
+  });
+
   it('过滤用户级与工作区级的 plan-mode，保留其他扩展', async () => {
     const factory = new OriginalPiSessionFactory('/home/u/.pi/agent');
     await factory.create({ cwd: '/tmp/ws' });
@@ -228,6 +239,7 @@ describe('OriginalPiSessionFactory 过滤被内联接管的文件扩展', () => 
     applyOverride([extension('/home/u/.pi/agent/extensions/plan-mode/index.ts')]);
 
     expect(infos).toHaveLength(1);
-    expect(infos[0]).toMatchObject({ cwd: '/tmp/ws', ownedBy: ['plan-mode'] });
+    // M5 起 subagent 也被内联实现接管（工具名同名，避免两套并存）
+    expect(infos[0]).toMatchObject({ cwd: '/tmp/ws', ownedBy: ['plan-mode', 'subagent'] });
   });
 });

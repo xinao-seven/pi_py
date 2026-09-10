@@ -32,6 +32,11 @@ export interface LedgerSessionContext {
   thinkingLevel?: string;
   /** 会话当前执行的任务（M2 关联）：会在 run 开始时写进 runs.task_id。 */
   taskId?: string;
+  /** M5：本会话是子会话时，父会话当前那条 run 的 id（写进 runs.parent_run_id）。 */
+  parentRunId?: string;
+  parentSessionId?: string;
+  subagentPreset?: string;
+  subagentDepth?: number;
 }
 
 /**
@@ -117,10 +122,35 @@ interface RunState {
   blocks: Map<string, { blockedBy: BlockedBy; reason?: string }>;
   approvals: Map<string, { startedAt: number; rule: string; risk: string; toolName: string }>;
   compaction?: { startedAt: number; reason: string };
+  /** run 开始时写入的元信息（子会话的 preset/depth）：收尾时合并而不是覆盖。 */
+  meta?: Record<string, unknown>;
 }
 
 /** 已知的策略阻断文案（无法从事件本身区分拦截与失败时的兜底识别）。 */
 const BLOCK_REASON_MARKERS = ['Tool execution was not approved', 'Plan mode is read-only'];
+
+/** 记住多少个会话的最近 run id（防无界增长；远超实际并发会话数）。 */
+const MAX_LAST_RUN_IDS = 500;
+
+/**
+ * 收尾时写入的 meta = 开始时的 meta + 收尾才知道的信息（重试次数）。
+ * 中文说明：必须合并，否则 `{ retries }` 会把子会话的 preset/depth 覆盖掉。
+ */
+function finishMeta(state: RunState): Record<string, unknown> | undefined {
+  if (state.meta === undefined && state.retries === 0) return undefined;
+  return { ...(state.meta ?? {}), ...(state.retries > 0 ? { retries: state.retries } : {}) };
+}
+
+/** 子会话的 run 在 meta 里带上预设与深度：执行树能看出「这是谁派出来的、第几层」。 */
+function subagentMeta(context: LedgerSessionContext): Record<string, unknown> | undefined {
+  if (context.parentSessionId === undefined && context.subagentPreset === undefined)
+    return undefined;
+  return {
+    ...(context.parentSessionId === undefined ? {} : { parentSessionId: context.parentSessionId }),
+    ...(context.subagentPreset === undefined ? {} : { preset: context.subagentPreset }),
+    ...(context.subagentDepth === undefined ? {} : { depth: context.subagentDepth }),
+  };
+}
 
 /**
  * 会话账本：把一个会话的事件流沉淀成 runs / steps。
@@ -128,6 +158,18 @@ const BLOCK_REASON_MARKERS = ['Tool execution was not approved', 'Plan mode is r
  */
 export class SessionLedger implements ProviderObserver {
   private readonly runs = new Map<string, RunState>();
+  /** 会话 → 最近一次 run id（run 结束后仍保留，供子任务回报 runId 用）。 */
+  private readonly lastRunIds = new Map<string, string>();
+
+  /** 会话当前正在进行的 run id（父会话委派子任务时要把它写进 parent_run_id）。 */
+  currentRunId(sessionId: string): string | undefined {
+    return this.runs.get(sessionId)?.runId;
+  }
+
+  /** 会话最近一次 run id（已结束也保留）——子任务结束后回报给自己那条 run。 */
+  lastRunId(sessionId: string): string | undefined {
+    return this.lastRunIds.get(sessionId) ?? this.runs.get(sessionId)?.runId;
+  }
 
   constructor(
     private readonly repository: TraceRepository,
@@ -464,10 +506,12 @@ export class SessionLedger implements ProviderObserver {
 
   private createRun(context: LedgerSessionContext): RunState {
     const startedAt = this.now();
+    const meta = subagentMeta(context);
     const run: RunRow = {
       id: this.options.runIdFactory?.() ?? randomUUID(),
       sessionId: context.sessionId,
       cwd: context.cwd,
+      ...(context.parentRunId === undefined ? {} : { parentRunId: context.parentRunId }),
       ...(context.taskId === undefined ? {} : { taskId: context.taskId }),
       provider: context.provider,
       model: context.model,
@@ -480,11 +524,19 @@ export class SessionLedger implements ProviderObserver {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       costUsd: 0,
+      ...(meta === undefined ? {} : { meta }),
     };
     this.repository.startRun(run);
+    // 记住本会话最近一次 run：子任务结束后工具结果要回报 runId（trace 树的入口）。
+    this.lastRunIds.set(context.sessionId, run.id);
+    if (this.lastRunIds.size > MAX_LAST_RUN_IDS) {
+      const oldest = this.lastRunIds.keys().next().value;
+      if (oldest !== undefined) this.lastRunIds.delete(oldest);
+    }
     const state: RunState = {
       runId: run.id,
       sessionId: context.sessionId,
+      ...(meta === undefined ? {} : { meta }),
       cwd: context.cwd,
       provider: context.provider,
       model: context.model,
@@ -523,7 +575,7 @@ export class SessionLedger implements ProviderObserver {
       ...(state.stopReason === undefined ? {} : { stopReason: state.stopReason }),
       ...(state.errorType === undefined ? {} : { errorType: state.errorType }),
       ...(state.errorMessage === undefined ? {} : { errorMessage: state.errorMessage }),
-      ...(state.retries > 0 ? { meta: { retries: state.retries } } : {}),
+      ...(finishMeta(state) === undefined ? {} : { meta: finishMeta(state) }),
     });
     this.runs.delete(state.sessionId);
   }

@@ -40,6 +40,7 @@ import { PresetService } from './services/preset-service.js';
 import { SkillService } from './services/skill-service.js';
 import { ToolApprovalBroker } from './services/tool-approval.js';
 import { QuestionBroker } from './services/user-question.js';
+import { SubagentService } from './services/subagent-service.js';
 import { PlanModeService } from './services/plan-mode-service.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { McpService } from './services/mcp/mcp-service.js';
@@ -72,6 +73,8 @@ export interface AppOptions {
   planService?: PlanModeService;
   /** 提问通道（测试可注入：缩短超时、固定 id）。 */
   questionBroker?: QuestionBroker;
+  /** 子任务委派（M5，测试可注入：自定义上限/落盘目录）。 */
+  subagentService?: SubagentService;
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
   webDistDir?: string; // 前端构建产物目录；提供且存在时托管静态页面（SPA 回退），否则仅 API
@@ -205,6 +208,26 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     logger: app.log,
   });
 
+  // 子任务委派（M5）：复用注册表与工厂，子会话落在本项目私有目录。
+  // 依赖环（工厂的 loader 要注册 subagent 工具，而服务要用工厂建子会话）用
+  // attach() 延迟绑定解开——与 plans.setTaskService() / plans.setExecutor() 同一手法。
+  const subagents = options.subagentService ?? new SubagentService({ agentDir, logger: app.log });
+
+  // Pi SDK 适配器：真正创建/打开 AgentSession。agentDir 默认指向 ~/.pi/agent；
+  // 传入 mcpService/approvals/plans/questions/subagents，loader 把它们包装成
+  // 内联扩展注入每个会话（闭包直连实例，共享 MCP 连接与审批中枢）。
+  const sessionFactory = new OriginalPiSessionFactory(
+    agentDir,
+    mcpService,
+    approvals,
+    plans,
+    app.log,
+    ledger,
+    inFlight,
+    questions,
+    subagents,
+  );
+
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
   // - WorkspaceService：工作区登记与 JSON 持久化；
@@ -219,22 +242,18 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       // 传入 mcpService/approvals/plans，loader 把它们包装成内联扩展注入每个会话
       // （闭包直连实例，共享 MCP 连接与审批中枢，支持按预设开关）。
       // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
-      new OriginalPiSessionFactory(
-        agentDir,
-        mcpService,
-        approvals,
-        plans,
-        app.log,
-        ledger,
-        inFlight,
-        questions,
-      ),
+      sessionFactory,
       approvals,
       plans,
       app.log,
       ledger,
       questions,
     );
+  subagents.attach({
+    registry,
+    factory: sessionFactory,
+    ...(ledger === undefined ? {} : { ledger }),
+  });
   runner = new TaskRunner({
     tasks,
     recovery: taskRecovery,

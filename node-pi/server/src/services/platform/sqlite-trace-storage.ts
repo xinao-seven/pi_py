@@ -329,7 +329,10 @@ export class SqliteTraceStorage implements TraceStorage {
           error_type = :errorType, error_message = :errorMessage, turns = :turns,
           input_tokens = :inputTokens, output_tokens = :outputTokens,
           cache_read_tokens = :cacheReadTokens, cache_write_tokens = :cacheWriteTokens,
-          cost_usd = :costUsd, ttft_ms = :ttftMs, duration_ms = :durationMs, meta = :meta
+          cost_usd = :costUsd, ttft_ms = :ttftMs, duration_ms = :durationMs,
+          -- meta 是「run 开始时的元信息（如子会话的 preset/depth）+ 结束时追加的元信息」，
+          -- 本语句未提供 meta 时必须保留原值，否则开始时的元信息会被这次收尾抹掉（M5 实际踩到）。
+          meta = CASE WHEN :meta IS NULL THEN meta ELSE :meta END
        WHERE id = :id`,
     ).run({
       id: runId,
