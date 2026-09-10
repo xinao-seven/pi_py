@@ -59,6 +59,10 @@ node-pi/server/
 - 新增「模型可见的工具」时注意 SDK 的 `tools` 参数是**可用工具白名单**：
   预设里指定了 `toolNames` 的会话必须并入内联扩展的工具名（`withInlineTools`），
   否则工具会被过滤成 "not found"（M4 spike 抓到的真实缺陷）。
+- 需要外部输入（人工确认/回答问题）时，走既有的两条通道而不是新发明机制：
+  危险命令 → `ToolApprovalBroker`；向用户提问 → `QuestionBroker`（都能挂起工具、
+  推 SSE、由命令结算，且超时/中止/关闭都有确定结果）。**「谁在等用户」只存一份**：
+  不要在任务/计划里镜像（M4.1 因此移除了 `PlanView.question*`）。
 - 可观测的验收方式：能写成 spike 的写 spike（真实 SDK + fauxProvider），能写成 golden set 的
   进 eval（确定性用例 + 阈值门禁）。只靠单测会漏掉 SDK 交互边界与真实时序问题（M4 抓到 5 个）。
 

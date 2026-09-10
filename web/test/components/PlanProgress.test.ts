@@ -81,14 +81,6 @@ describe('PlanProgress（M4：计划是任务的视图）', () => {
     expect(steps[2].classes()).toContain('plan-step--blocked');
   });
 
-  it('surfaces a pending clarification question', () => {
-    const wrapper = mountPlan(
-      view({ status: 'drafting', question: '要兼容 CLI 吗？', questionOptions: ['要', '不要'] }),
-    );
-    expect(wrapper.get('.plan-question').text()).toContain('要兼容 CLI 吗？');
-    expect(wrapper.get('.plan-question').text()).toContain('要 / 不要');
-  });
-
   it('emits execute / refine / abandon while awaiting confirmation', async () => {
     const wrapper = mountPlan(view({ status: 'proposed', steps: [step({ id: 's1', title: 'a' })] }));
 

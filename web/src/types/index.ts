@@ -383,8 +383,6 @@ export interface PlanView {
   steps: PlanStepView[];
   /** 需要用户动手：待确认、已暂停/阻塞、有澄清问题。 */
   awaitingUserAction: boolean;
-  question?: string;
-  questionOptions?: string[];
   draftingSince?: string;
   updatedAt: string;
 }

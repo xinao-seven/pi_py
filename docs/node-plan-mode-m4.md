@@ -123,7 +123,14 @@ CLI 侧也不会解析它），新的不再写。
 执行期上下文**每轮**注入，而不是像 M3 的恢复摘要那样一次性注入：状态永远是最新的，
 不会出现「一次性注入的内容已经过期」的问题。
 
-### 3.10 M3 的 `replan` 只对计划任务开放
+### 3.10 `ask_user` 不放在计划工具里（M4.1）
+
+提问是**通用交互**，不是计划的一部分：它已在 M4.1 拆到独立的 `QuestionBroker`
+（`services/user-question.ts`），任何会话都激活，且计划结束后依然可用。
+为此 `PlanView` 里的 `question` / `questionOptions` 被移除——「谁在等用户回答」只有一个真相源
+（挂起队列 + 会话状态快照的 `pendingQuestion`），避免两处状态互相矛盾。
+
+### 3.11 M3 的 `replan` 只对计划任务开放
 
 `assertResumable` 里 replan 若任务 `origin !== 'plan'` → `409 replan_unavailable`；
 计划任务则把状态打回 `drafting`，让模型用 `update_plan`/`submit_plan` 重交，
@@ -202,7 +209,7 @@ CLI 侧也不会解析它），新的不再写。
 | 项 | 说明 |
 | --- | --- |
 | `command` 类验证不重跑 | 只验证「跑过且如实上报」；要变成强校验需要把它接进工具调用与审批链路（M5） |
-| `ask_user` 只用对话通道 | 问题会显示在计划面板，回答走普通消息；不复用审批弹窗（审批是「允许/拒绝」语义，自由问答硬塞进去只会更乱） |
+| ~~`ask_user` 只用对话通道~~ | ✅ 已升级为独立的交互通道（弹窗 + 多题 + 选项/自由输入 + 回答作为工具结果回流），见 [`node-question-channel.md`](node-question-channel.md) |
 | 不支持计划内并行步骤 | 步骤是有序列表，`position` 决定顺序；子任务并行属于 M5 的 subagent 范畴 |
 | 面板不支持拖拽排序 | 步骤重排接口（`PATCH position`）已就绪，UI 目前只做改名/跳过/删除 |
 | `verifyCommands` 暂无工作区配置文件 | 策略字段已具备（可按预设/注入扩展），`.pi/plan-policy.json` 待需要时再加 |

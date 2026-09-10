@@ -503,24 +503,16 @@ describe('TaskService plan（M4：Plan 是 origin=plan 的任务）', () => {
     );
   });
 
-  it('tracks plan lifecycle state and pending clarification questions', () => {
+  it('tracks the plan lifecycle state and treats idempotent writes as no-ops', () => {
     const { service } = makeService();
     const plan = service.createPlan({ title: 'P', goal: 'G' });
     const proposed = service.setPlanState(plan.id, { status: 'proposed' });
     expect(proposed.execution.plan?.status).toBe('proposed');
 
-    const asked = service.setPlanState(plan.id, {
-      question: '要兼容 CLI 吗？',
-      questionOptions: ['要', '不要'],
-    });
-    expect(asked.execution.plan).toMatchObject({
-      question: '要兼容 CLI 吗？',
-      questionOptions: ['要', '不要'],
-    });
-
-    const answered = service.setPlanState(plan.id, { question: null });
-    expect(answered.execution.plan?.question).toBeUndefined();
-    expect(answered.execution.plan?.questionOptions).toBeUndefined();
+    // 幂等：状态没变就不写库、不动版本号（plan_resume 会反复下发）。
+    const again = service.setPlanState(plan.id, { status: 'proposed' });
+    expect(again.revision).toBe(proposed.revision);
+    expect(again.updatedAt).toBe(proposed.updatedAt);
   });
 
   it('lists the active plan for a session (unfinished first, else most recent)', () => {

@@ -81,9 +81,6 @@ export interface TaskPlanState {
   status: StoredPlanStatus;
   /** 开始撰写计划的时间（面板显示「已调研 N 分钟」）。 */
   draftingSince?: string;
-  /** 待用户回答的澄清问题（`ask_user` 工具写入）；回答后清空。 */
-  question?: string;
-  questionOptions?: string[];
   updatedAt?: string;
 }
 

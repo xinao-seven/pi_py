@@ -855,6 +855,8 @@ export class SubagentService {
 | 命令 | 状态 |
 | --- | --- |
 | `plan_start` / `plan_pause` / `plan_resume` / `plan_abandon` | ✅ 已新增（M4） |
+| `answer_question` | ✅ 新增（M4.1 提问通道） |
+| SSE `question_pending` / `question_resolved` | ✅ 新增（M4.1 提问通道） |
 | `plan_enable` / `plan_disable` | deprecated 别名，保留一个版本（M4） |
 | `prompt` 增加 `mode?: 'direct' \| 'plan'` | 扩展（M4） |
 | `approve_tool` 增加可选 `subagentSessionId` | 扩展（M5） |

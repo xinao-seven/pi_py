@@ -590,44 +590,23 @@ export class TaskService {
 
   /**
    * 更新计划的运行时状态（drafting / proposed / executing / paused）。
-   * `question: null` 显式清空澄清问题（不传则保持原值）。
+   * 无变化时不写库（返回原对象 → `mutate` 短路），避免幂等命令顶掉 revision。
    */
-  setPlanState(
-    taskId: string,
-    patch: {
-      status?: StoredPlanStatus;
-      question?: string | null;
-      questionOptions?: string[] | null;
-    },
-  ): TaskRecord {
+  setPlanState(taskId: string, patch: { status?: StoredPlanStatus }): TaskRecord {
     const status =
       patch.status === undefined
         ? undefined
         : this.oneOf(patch.status, STORED_PLAN_STATUSES, 'plan.status');
     return this.mutate(taskId, (task) => {
       const current: TaskPlanState = task.execution.plan ?? { status: 'drafting' };
-      const next: TaskPlanState = { ...current, updatedAt: this.nowIso() };
-      let touched = false;
-      if (status !== undefined && status !== current.status) {
-        next.status = status;
-        touched = true;
-      }
-      if (patch.question === null) {
-        if (current.question === undefined && current.questionOptions === undefined) {
-          return touched ? { ...task, execution: { ...task.execution, plan: next } } : task;
-        }
-        delete next.question;
-        delete next.questionOptions;
-        touched = true;
-      } else if (patch.question !== undefined) {
-        next.question = this.requiredText(patch.question, 'question', LIMITS.reason);
-        if (patch.questionOptions === null) delete next.questionOptions;
-        else if (patch.questionOptions !== undefined) {
-          next.questionOptions = this.stringList(patch.questionOptions, 'questionOptions');
-        }
-        touched = true;
-      }
-      return touched ? { ...task, execution: { ...task.execution, plan: next } } : task;
+      if (status === undefined || status === current.status) return task;
+      return {
+        ...task,
+        execution: {
+          ...task.execution,
+          plan: { ...current, status, updatedAt: this.nowIso() },
+        },
+      };
     });
   }
 

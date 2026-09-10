@@ -162,9 +162,7 @@ export class PlanToolbox {
         ifRevision: next.revision,
       });
     }
-    return this.changed(
-      this.options.tasks.setPlanState(task.id, { status: 'proposed', question: null }),
-    );
+    return this.changed(this.options.tasks.setPlanState(task.id, { status: 'proposed' }));
   }
 
   /** 修订计划（标题/步骤）；`revision` 不匹配时把当前版本回给模型让它重读。 */

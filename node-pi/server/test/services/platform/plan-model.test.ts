@@ -21,7 +21,6 @@ function makeTask(options: {
   status?: TaskStatus;
   plan?: StoredPlanStatus;
   steps?: Array<{ id: string; title: string; status: StepStatus }>;
-  question?: string;
 }): TaskRecord {
   const steps = (options.steps ?? [])
     .map((step, index) => newStep({ id: step.id, title: step.title, position: index }))
@@ -43,7 +42,6 @@ function makeTask(options: {
             plan: {
               status: options.plan,
               draftingSince: '2026-08-21T10:00:00.000Z',
-              ...(options.question === undefined ? {} : { question: options.question }),
             },
           }),
     },
@@ -81,12 +79,9 @@ describe('derivePlanStatus', () => {
 });
 
 describe('planAwaitingUserAction', () => {
-  it('is true for proposed / paused and for a pending question', () => {
+  it('is true for proposed / paused (questions are a separate channel)', () => {
     expect(planAwaitingUserAction('proposed')).toBe(true);
     expect(planAwaitingUserAction('paused')).toBe(true);
-    expect(
-      planAwaitingUserAction('drafting', { status: 'drafting', question: '要兼容 CLI 吗？' }),
-    ).toBe(true);
   });
 
   it('is false while drafting / executing / finished', () => {

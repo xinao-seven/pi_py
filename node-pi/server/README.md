@@ -65,5 +65,9 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 契约见 [`docs/node-web-plan-mode.md`](../../docs/node-web-plan-mode.md)，
 实现说明见 [`docs/node-plan-mode-m4.md`](../../docs/node-plan-mode-m4.md)。
 
+**向用户提问（M4.1）**：`ask_user` 是与危险命令审批并列的交互通道——工具挂起、SSE 推送、
+前端弹窗回答、答案作为工具返回值回到模型。一次可问多题（单选/多选/自由输入），
+超时/取消/会话关闭都有确定结算。契约见 [`docs/node-question-channel.md`](../../docs/node-question-channel.md)。
+
 **评测（M4）**：`npm run eval` 跑离线 golden set（fauxProvider 驱动真实管线，7 个用例）
 并给出 pass@1 / 计划一次通过率 / 零残留旧标记三项门禁，CI 的 `eval` job 直接调用。

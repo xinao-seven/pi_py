@@ -11,7 +11,7 @@
  * - `planId` 与 `taskId` 1:1，因此直接用任务 id 作为 planId，不维护第二套 id 映射。
  */
 
-import { sortSteps, type TaskPlanState, type TaskRecord, type TaskStep } from './task-model.js';
+import { sortSteps, type TaskRecord, type TaskStep } from './task-model.js';
 
 export const PLAN_STATUSES = [
   'drafting', // Agent 正在调研/撰写计划
@@ -50,8 +50,6 @@ export interface PlanView {
   /** 需要用户动手时为 true：待确认、已暂停/阻塞、有澄清问题。 */
   awaitingUserAction: boolean;
   /** 待用户回答的澄清问题（`ask_user`）。 */
-  question?: string;
-  questionOptions?: string[];
   draftingSince?: string;
   updatedAt: string;
 }
@@ -83,9 +81,14 @@ export function derivePlanStatus(task: TaskRecord): PlanStatus {
   return stored ?? 'drafting';
 }
 
-/** 该计划是否需要用户动手（确认 / 解阻塞 / 回答澄清）。 */
-export function planAwaitingUserAction(status: PlanStatus, plan?: TaskPlanState): boolean {
-  if (plan?.question !== undefined) return true;
+/**
+ * 该计划是否需要用户动手（确认执行 / 处理阻塞）。
+ *
+ * 中文说明：「Agent 正在等用户回答问题」**不在这里**：提问是独立的交互通道
+ * （`QuestionBroker` + `state.pendingQuestion`），不再镜像到计划状态里，
+ * 否则「谁在等用户」会有两个真相源（M4.1 的修正）。
+ */
+export function planAwaitingUserAction(status: PlanStatus): boolean {
   return status === 'proposed' || status === 'paused';
 }
 
@@ -113,9 +116,7 @@ export function toPlanView(task: TaskRecord): PlanView {
     title: task.title,
     goal: task.goal,
     steps,
-    awaitingUserAction: planAwaitingUserAction(status, plan),
-    ...(plan?.question === undefined ? {} : { question: plan.question }),
-    ...(plan?.questionOptions === undefined ? {} : { questionOptions: plan.questionOptions }),
+    awaitingUserAction: planAwaitingUserAction(status),
     ...(plan?.draftingSince === undefined ? {} : { draftingSince: plan.draftingSince }),
     updatedAt: task.updatedAt,
   };

@@ -55,6 +55,7 @@
 | 计划视图 | `GET /api/agent/:sessionId/plan` → `{ plan: PlanView }`（无计划时 `planId === ''`） |
 | 会话状态里的计划 | `GET /api/agent/:sessionId` → `state.plan`（同一个 `PlanView`） |
 | 实时更新 | SSE `{ type: 'plan_updated', plan: PlanView }` |
+| 提问 | SSE `question_pending` / `question_resolved` + 命令 `answer_question`（见 [`node-question-channel.md`](node-question-channel.md)） |
 | 命令 | `POST /api/agent/:sessionId` body `{ type: 'plan_*' , message? }`，响应 `{ success, data: { plan } }` |
 | 步骤编辑 | 直接走任务接口：`PATCH /api/tasks/:id/steps/:stepId`、`DELETE ...`（带 `ifRevision`） |
 | 发送方式 | `POST /api/agent/new` 与 `{ type:'prompt' }` 支持 `mode: 'direct' \| 'plan'`（非法值 → 422） |
@@ -79,9 +80,7 @@ interface PlanView {
     evidence?: { summary?: string; commands?: Array<{ command: string; exitCode: number | null }>; filesTouched: string[]; toolCallIds: string[] };
     blockedReason?: string;
   }>;
-  awaitingUserAction: boolean;  // 待确认 / 已暂停 / 有澄清问题
-  question?: string;             // ask_user 提出的澄清问题
-  questionOptions?: string[];
+  awaitingUserAction: boolean;  // 待确认 / 已暂停
   draftingSince?: string;
   updatedAt: string;
 }
@@ -103,7 +102,8 @@ interface PlanView {
 
 ## 3. 计划工具契约（模型侧）
 
-由内联扩展注册，**只在计划会话里加入 activeTools**（普通会话里对模型不可见）：
+由内联扩展注册，**只在计划会话里加入 activeTools**（普通会话里对模型不可见；
+`ask_user` 例外——它属于通用交互通道，任何会话都可用）：
 
 | 工具 | 参数 | 行为 |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ interface PlanView {
 | `update_plan` | `{ revision, title?, steps? }` | 按 `revision` 修订；不匹配时错误信息里给出当前 revision；**不能删除或重命名已经开始/已完成的步骤**（可改还没做的步骤） |
 | `complete_step` | `{ stepId, evidence: { summary?, commands?, files? } }` | 校验证据后把步骤置完成；证据不符 → 工具错误（模型补齐后重试） |
 | `block_step` | `{ stepId, reason }` | 步骤 `blocked` + 原因 → 计划转 `paused`，等用户处理 |
-| `ask_user` | `{ question, options? }` | 登记澄清问题（`PlanView.question`），请模型结束本轮等回答 |
+| `ask_user` | `{ questions: [{ id?, question, options?, multiSelect?, allowFreeText?, details? }] }` | **独立的交互通道**：一次可问多题（可选单选/多选/自由输入），工具挂起 → 前端弹窗 → 回答作为工具结果回到模型。契约见 [`node-question-channel.md`](node-question-channel.md) |
 
 证据校验强度（刻意不同，见 M4 文档）：
 

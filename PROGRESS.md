@@ -5,10 +5,10 @@
 
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
-| 当前里程碑 | **M4 已完成** → 下一步 **M5 Subagent**                            |
+| 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `343b27b feat(node): M4 评测 golden set 与版本号语义修正`         |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **286** / Web **99**，全绿；spike 9 个 + eval 7 个全过  |
+| 测试基线   | Node 后端 **306** / Web **112**，全绿；spike 30 项断言 + eval 8 个用例全过 |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -313,6 +313,43 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
+### 3.10 M4.1 向用户提问的交互通道（已完成，`docs/node-question-channel.md`）
+
+用户反馈 `ask_user` 只显示一句问题、不能选选项，因此把它从「计划面板上的一行字」
+升级为独立的交互通道（与危险命令审批并列）。
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 后端 | `services/user-question.ts`：`QuestionBroker`（挂起队列 + 10 分钟超时 + abort/会话关闭/服务关闭结算）+ `ask_user` 工具（一次最多 8 题，选项/多选/自由输入） |
+| 契约 | SSE `question_pending` / `question_resolved`；命令 `answer_question`；会话状态 `pendingQuestion`（刷新可恢复弹窗） |
+| 前端 | `QuestionDialog.vue`（多题一屏、N/M 已答、未答按跳过、「让 AI 自己决定」）+ reducer/ChatWindow 接线 |
+| 移除 | `PlanView.question*` 与 `execution.plan.question`：**「谁在等用户」只有一个真相源**（挂起队列） |
+
+#### 已冻结的决策
+
+1. **挂起而不是结束本轮**：答案作为工具返回值回流，模型在同一次工具调用里继续；
+   旧做法（结束本轮 + 用户自由文本回复）会让模型猜「这条消息是回答还是新需求」。
+2. **提问与 Plan 无关**：工具属于通用通道，任何会话都激活，计划结束后依然可用；
+   因此 `PLAN_TOOL_NAMES` 只剩四个，`ask_user` 单独注册（并进 tools 白名单）。
+3. **必须有确定的失败路径**：超时/取消/中止/会话关闭都按「未回答」结算，
+   并明确要求模型「按最合理假设继续并写明假设」，而不是报错或永久挂起。
+4. **一次只允许一个挂起提问**：前端只有一个弹窗；需要并行问多件事就把它们放进同一次调用。
+5. **默认允许自由输入**：选项永远可能不全，逼用户在预设项里选是最讨厌的交互。
+6. **选项用 button + aria-checked**：原生 `label > input` 点击会同时触发 label 激活与
+   change，容易变成「点一下切换两次」（测试与浏览器都踩过）。
+
+#### 验证
+
+- 单测：`user-question.test.ts` 18 例、路由 2 例、`QuestionDialog.test.ts` 10 例、
+  reducer 3 例、api 1 例。
+- 真机 HTTP：`state.pendingQuestion` 出现在状态快照；无挂起提问时 `answer_question` → 404。
+- **eval 用例 `ask-user-roundtrip`**：真实管线里边跑边答（工具挂起 run → 轮询到挂起问题 →
+  回答 → 答案回流进模型下一次 `complete_step` 的证据），8/8 通过。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -388,11 +425,11 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 286 passed / 构建成功 / 9 个 spike 全过 / eval 门禁全过
+#   → 期望：format OK / 无类型错误 / 306 passed / 构建成功 / spike 全过 / eval 门禁全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 99 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 112 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -555,6 +592,31 @@ web/src/{types,lib/api.ts,composables/useAgentSession.ts}   · PlanView 契约�
 web/test/components/PlanProgress.test.ts              · 重写为 14 例
 ```
 
+### M4.1 新增（提问通道，2026-08-21）
+
+```
+node-pi/server/src/services/user-question.ts           QuestionBroker + ask_user 工具 + 回答渲染
+node-pi/server/test/services/user-question.test.ts
+web/src/components/QuestionDialog.vue                  提问弹窗（多题/选项/自由输入/取消）
+web/test/components/QuestionDialog.test.ts
+docs/node-question-channel.md                          通道契约与行为取舍
+```
+
+### M4.1 改动（关键位置）
+
+```
+node-pi/server/src/services/agent-registry.ts   · answer_question 命令 + question_pending/resolved 推送
+                                                · 状态快照 pendingQuestion · tools 白名单并入 ask_user
+node-pi/server/src/app.ts                       · 装配 QuestionBroker（可注入）
+node-pi/server/src/services/plan-tools.ts       · 移除 ask_user（迁到独立通道）
+node-pi/server/src/services/platform/{plan-model,task-model}.ts · 移除 question 镜像字段
+node-pi/server/eval/{harness,run}.mjs           · 注入提问通道 + ask-user-roundtrip 用例
+node-pi/server/spike/07-plan-tool-loop.mjs      · 改用共用 harness；断言 ask_user 独立于 Plan
+web/src/lib/agent-events.ts                     · question_pending/resolved 归约 + 载荷归一化
+web/src/{types/index.ts,composables/useAgentSession.ts} · 类型 + answerQuestion + 刷新恢复弹窗
+web/src/components/ChatWindow.vue               · 挂载弹窗
+```
+
 ### 与前端共享的契约文件（任何接口改动都必须同步）
 
 ```
@@ -587,4 +649,7 @@ web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.v
 | 计划面板不支持拖拽排序 | 重排接口（`PATCH position`）已就绪，UI 目前只做改名/跳过/删除 | 可选 |
 | ~~`replan` 未实现~~ | ✅ M4 已实现：只对 `origin='plan'` 的任务开放，打回 `drafting` 让模型重交计划 | 已完成 |
 | 一次 resume 只推进当前步骤 | 多步连跑依赖模型在会话里继续（eval 里由「继续执行」驱动，未自动连跑） | M5 可选 |
+| 提问的答案不支持图片/文件 | 只支持选项与文本；要附件就让用户直接发消息 | 可选 |
+| 同时只有一个挂起提问 | 前端只有一个弹窗；需要并行问多件事时放进同一次调用的 questions 数组（默认上限 8 题） | 可选 |
+| 提问没有独立指标 | 提问与回答会作为普通会话事件进 M1 账本，但没有「提问耗时/回答率」这类统计 | 可选 |
 | 租约 TTL 写死 30s/10s | 暂不需要配置项；若将来要调，走 `PI_NODE_*` 并补文档 | 可选 |

@@ -131,13 +131,6 @@ function submitRefine(): void {
     </button>
 
     <div v-if="!collapsed" class="plan-progress-body">
-      <p v-if="plan?.question" class="plan-question">
-        Agent 想先确认：{{ plan.question }}
-        <span v-if="plan?.questionOptions?.length">
-          （可选：{{ plan.questionOptions.join(' / ') }}）
-        </span>
-      </p>
-
       <ol v-if="total" class="plan-steps">
         <li
           v-for="step in plan?.steps ?? []"
@@ -297,15 +290,6 @@ function submitRefine(): void {
 
 .plan-progress-body {
   padding: 0 9px 9px;
-}
-
-.plan-question {
-  margin: 0 0 7px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--accent);
-  border-radius: 3px;
-  background: rgba(231, 255, 111, 0.05);
-  font-size: 11px;
 }
 
 .plan-progress-note {

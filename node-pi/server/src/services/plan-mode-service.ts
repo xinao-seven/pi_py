@@ -398,7 +398,8 @@ export function buildPlanningContext(task: TaskRecord, policy: PlanPolicy): stri
   } else {
     lines.push('', '当前还没有提交任何步骤：请调研后调用 `submit_plan`。');
   }
-  if (view.question) lines.push('', `待用户回答的问题：${view.question}`);
+  // 「Agent 正在等用户回答提问」不在计划上下文里：提问是独立通道，
+  // 由 ask_user 工具自己挂起并回收答案（见 docs/node-question-channel.md）。
   return lines.join('\n');
 }
 

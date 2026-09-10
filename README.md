@@ -142,6 +142,18 @@ $env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 d
 契约见 [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md)，
 实现与验证证据见 [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md)。
 
+## 向用户提问（ask_user）
+
+Agent 需要你拍板时（需求歧义、方案取舍、风险偏好）会**弹窗提问**，而不是靠猜：
+
+- 一次可以问**多个问题**，每题可给选项（单选 / 多选）并允许自由输入；
+- 回答作为工具结果直接回到 Agent，它**在同一次工具调用里**继续，不需要你另发一条消息；
+- 「让 AI 自己决定」= 让 Agent 按最合理的假设继续并写明假设；不回答（超时 10 分钟）
+  也会这样处理并明确告知模型；
+- 弹窗状态存在服务端：刷新页面后仍能恢复（`state.pendingQuestion`）。
+
+契约见 [`docs/node-question-channel.md`](docs/node-question-channel.md)。
+
 ## 测试
 
 ```powershell
@@ -190,5 +202,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
 | [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据 |
+| [`docs/node-question-channel.md`](docs/node-question-channel.md) | **向用户提问的交互通道**：ask_user 工具契约、弹窗行为、SSE/命令、测试 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
