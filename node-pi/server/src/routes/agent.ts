@@ -32,6 +32,25 @@ import { ApiError } from '../errors.js';
 /** 注册 agentRoutes 插件时所需的选项（由 app.ts 传入）。 */
 export interface AgentRouteOptions {
   registry: AgentRegistry;
+  /** M3：SSE 建立首个连接时补推「有任务待恢复」（返回空数组则不推）。 */
+  recoveryProvider?: () => Array<unknown>;
+}
+
+/**
+ * 向刚建立连接的会话补推「有任务需要恢复」（M3）。
+ *
+ * 中文说明：只在该会话**还没有订阅者**时推一次——否则每次重连都会重复提醒。
+ * 事件走注册表的 publish，因此有正确的递增 id 并进入重放缓存（断线重连不会丢）。
+ * 抽成导出函数是为了能在不 hijack 响应的情况下单测（SSE 长连接没法用 app.inject）。
+ */
+export function remindRecovery(
+  registry: AgentRegistry,
+  sessionId: string,
+  provider?: () => Array<unknown>,
+): void {
+  if (registry.hasSubscribers(sessionId)) return;
+  const items = provider?.() ?? [];
+  if (items.length > 0) registry.announceRecovery(sessionId, items as never);
 }
 
 /** POST /new 请求体的宽松类型（运行期还要逐个校验，见下方辅助函数）。 */
@@ -283,6 +302,8 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       // （EventSource 是"简单请求"，不会触发预检，这个头即可放行跨域流。）
       'Access-Control-Allow-Origin': '*',
     });
+    // 首个连接时补推一条待恢复提醒（M3）：重启后用户不必先去执行清单里找。
+    remindRecovery(options.registry, request.params.sessionId, options.recoveryProvider);
     // 订阅注册表的事件流：subscribe() 会先补发 lastEventId 之后的历史事件（断线重连），
     // 然后持续把新事件写入连接；返回的 unsubscribe 用于断开时取消订阅。
     const unsubscribe = options.registry.subscribe(request.params.sessionId, lastEventId, (event) =>

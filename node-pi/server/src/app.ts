@@ -47,6 +47,10 @@ import { SessionService } from './services/session-service.js';
 import { openNullStore, openPlatformStore, type PlatformStore } from './services/platform/store.js';
 import { SessionLedger } from './services/observability/session-ledger.js';
 import { TaskService } from './services/task-service.js';
+import { TaskRecoveryService } from './services/task-recovery.js';
+import { TaskInFlightTracker } from './services/task-recovery-extension.js';
+import { TaskRunner } from './services/task-runner.js';
+import { createLeaseOwner } from './services/task-lease.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { observabilityRoutes } from './routes/observability.js';
 import { taskRoutes } from './routes/tasks.js';
@@ -181,6 +185,19 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 任务服务（M2）：同步写入、错误会冒泡成 API 错误，与 trace 的「尽力而为」刻意不同。
   const tasks = options.taskService ?? new TaskService(store.tasks);
 
+  // 任务断点续跑（M3）：租约 owner（pid + 本次启动的 bootId）、在飞动作跟踪、恢复清单与执行器。
+  // runner 与 tracker 互相引用（tracker 在 agent_settled 时通知 runner 释放租约），
+  // 因此用延迟绑定而不是构造函数双参。
+  let runner: TaskRunner | undefined;
+  const owner = createLeaseOwner();
+  const taskRecovery = new TaskRecoveryService(tasks, { owner });
+  const inFlight = new TaskInFlightTracker(tasks, {
+    // 会话绑定了任务（面板里创建的任务）时，工具事件也会记到该任务上。
+    lookupActiveTask: (sessionId) => options.registry?.get(sessionId)?.activeTaskId,
+    onSettled: (sessionId) => runner?.handleSettled(sessionId),
+    logger: app.log,
+  });
+
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
   // - WorkspaceService：工作区登记与 JSON 持久化；
@@ -195,12 +212,28 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       // 传入 mcpService/approvals/plans，loader 把它们包装成内联扩展注入每个会话
       // （闭包直连实例，共享 MCP 连接与审批中枢，支持按预设开关）。
       // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
-      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans, app.log, ledger),
+      new OriginalPiSessionFactory(
+        agentDir,
+        mcpService,
+        approvals,
+        plans,
+        app.log,
+        ledger,
+        inFlight,
+      ),
       approvals,
       plans,
       app.log,
       ledger,
     );
+  runner = new TaskRunner({
+    tasks,
+    recovery: taskRecovery,
+    registry,
+    tracker: inFlight,
+    owner,
+    logger: app.log,
+  });
   const workspaceService =
     options.workspaceService ??
     new WorkspaceService(options.workspaceParent, join(agentDir, 'node-server-workspaces.json'));
@@ -238,8 +271,18 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
 
   // onReady 钩子：在 app.listen() 真正开始监听之前执行。
-  // 用途：从持久化文件恢复用户登记过的工作区目录（见 workspace-service.ts）。
-  app.addHook('onReady', async () => workspaceService.initialize());
+  // 用途：从持久化文件恢复用户登记过的工作区目录（见 workspace-service.ts），
+  // 以及**扫描待恢复任务**（M3）：只列出、不自动执行——模型可能在无人时做不可逆操作。
+  app.addHook('onReady', async () => {
+    await workspaceService.initialize();
+    const interrupted = taskRecovery.scan();
+    if (interrupted.length > 0) {
+      app.log.warn(
+        { count: interrupted.length, tasks: interrupted.map((item) => item.taskId) },
+        'tasks interrupted by a previous run are waiting for recovery (GET /api/tasks/recovery)',
+      );
+    }
+  });
 
   // 健康检查端点，供部署探活 / 前端判断后端是否就绪。
   app.get('/api/health', async () => ({ status: 'ok' }));
@@ -247,7 +290,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 挂载各业务路由插件。
   // Fastify 的 prefix 选项会给插件内所有路由统一加上路径前缀，例如
   // agent.ts 里的 "/new" 实际对外是 POST /api/agent/new。
-  app.register(agentRoutes, { prefix: '/api/agent', registry });
+  app.register(agentRoutes, {
+    prefix: '/api/agent',
+    registry,
+    // SSE 建首个连接时补推「有任务待恢复」（M3）。
+    recoveryProvider: () => taskRecovery.scan(),
+  });
   app.register(sessionRoutes, { prefix: '/api/sessions', registry });
   app.register(fileRoutes, { prefix: '/api/files', service: fileService });
   // 下面三个插件未使用 prefix，路径在插件内部写全（如 /api/models、/api/home），
@@ -266,7 +314,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     traces: store.traces,
     stats: () => store.stats(),
   });
-  app.register(taskRoutes, { prefix: '/api/tasks', service: tasks });
+  app.register(taskRoutes, {
+    prefix: '/api/tasks',
+    service: tasks,
+    recovery: taskRecovery,
+    runner,
+  });
   // 任务变更 → SSE `task_updated`；任务绑定到会话 → 之后开始的 run 带上 task_id。
   tasks.setListener((task) => registry.announceTask(task));
   tasks.setSessionTaskListener((sessionId, taskId) => registry.setActiveTask(sessionId, taskId));
@@ -299,6 +352,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     await registry.close();
     plans.dispose();
     tasks.dispose();
+    // 停续期 + 释放租约：优雅退出不应留下「任务被占用」的假象。
+    runner?.dispose();
+    inFlight.dispose();
     await mcpService.dispose();
     // 最后关闭存储：registry.close() 会把未结算的 run 收尾写进队列，close() 再落盘。
     store.close();

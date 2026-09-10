@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createApp } from '../../src/app.js';
+import { remindRecovery } from '../../src/routes/agent.js';
 import {
   AgentRegistry,
   type PiSession,
@@ -81,7 +82,13 @@ class FakeSession implements PiSession {
   dispose(): void {}
 }
 
-const factory: PiSessionFactory = { create: async () => new FakeSession() };
+class FakeSessionFactory implements PiSessionFactory {
+  async create(): Promise<PiSession> {
+    return new FakeSession();
+  }
+}
+
+const factory: PiSessionFactory = new FakeSessionFactory();
 
 describe('task REST routes', () => {
   it('creates, reads, lists and updates tasks with optimistic concurrency', async () => {
@@ -364,5 +371,219 @@ describe('task events and run linkage', () => {
     });
     expect(events.filter((event) => event.payload.type === 'task_updated')).toHaveLength(1);
     await registry.close();
+  });
+});
+
+describe('task recovery routes (M3)', () => {
+  /** 造一个「第 1 步完成、第 2 步进行中」的任务（＝中断现场）。 */
+  async function seedInterrupted(app: ReturnType<typeof createApp>): Promise<{ id: string }> {
+    const created = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: {
+          title: '重构 Plan 模式',
+          goal: 'g',
+          sessionId: 'session-1',
+          cwd: tempWorkspace(),
+          steps: [{ title: '读实现' }, { title: '写迁移' }],
+        },
+      })
+    ).json().task;
+    const first = (
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${created.id}/steps/s1`,
+        payload: { status: 'completed', ifRevision: created.revision },
+      })
+    ).json().task;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/tasks/${created.id}/steps/s2`,
+      payload: { status: 'in_progress', ifRevision: first.revision },
+    });
+    return { id: created.id };
+  }
+
+  it('lists interrupted tasks and resumes them with 202', async () => {
+    const store = memoryStore();
+    const registry = new AgentRegistry(new FakeSessionFactory());
+    const app = createApp({ store, registry });
+    apps.push(app);
+
+    // 会话必须先存在（resume 会 registry.open）。
+    const session = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: tempWorkspace(), message: 'hello' },
+    });
+    expect(session.statusCode).toBe(202);
+    // 手工把任务挂到默认测试会话名上（FakeSession 的 id 是 session-1）。
+    const created = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: { title: 't', goal: 'g', sessionId: 'session-1', steps: [{ title: 'a' }] },
+      })
+    ).json().task;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/tasks/${created.id}/steps/s1`,
+      payload: { status: 'in_progress', ifRevision: created.revision },
+    });
+
+    const recovery = await app.inject({ method: 'GET', url: '/api/tasks/recovery' });
+    expect(recovery.statusCode).toBe(200);
+    expect(recovery.json().tasks).toHaveLength(1);
+    expect(recovery.json().tasks[0]).toMatchObject({
+      taskId: created.id,
+      sideEffect: 'none',
+      action: 'auto_resume',
+    });
+
+    const resumed = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${created.id}/resume`,
+      payload: { mode: 'continue' },
+    });
+    expect(resumed.statusCode).toBe(202);
+    expect(resumed.json()).toMatchObject({ ok: true, mode: 'continue' });
+    expect(resumed.json().task).toMatchObject({ id: created.id, status: 'in_progress' });
+    // 租约已写给本进程。
+    expect(resumed.json().task.execution.lease).toBeDefined();
+
+    // 参数校验：非法 mode。
+    const badMode = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${created.id}/resume`,
+      payload: { mode: 'nope' },
+    });
+    expect(badMode.statusCode).toBe(422);
+  });
+
+  it('reports 409 when a resume needs explicit confirmation', async () => {
+    const store = memoryStore();
+    const registry = new AgentRegistry(new FakeSessionFactory());
+    const app = createApp({ store, registry });
+    apps.push(app);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: tempWorkspace(), message: 'hello' },
+    });
+    const task = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: { title: 't', goal: 'g', sessionId: 'session-1', steps: [{ title: 'a' }] },
+      })
+    ).json().task;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/tasks/${task.id}/steps/s1`,
+      payload: { status: 'in_progress', ifRevision: task.revision },
+    });
+    // 模拟「编辑工具在飞」：写副作用但无法验证。
+    const inFlight = (await app.inject({ method: 'GET', url: `/api/tasks/${task.id}` })).json()
+      .task;
+    store.tasks.save(
+      {
+        ...inFlight,
+        execution: {
+          ...inFlight.execution,
+          inFlight: {
+            stepId: 's1',
+            kind: 'tool',
+            toolCallId: 'call-1',
+            toolName: 'edit',
+            startedAt: new Date().toISOString(),
+            sideEffect: 'write',
+          },
+        },
+      },
+      inFlight.revision,
+    );
+
+    const needsConfirmation = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/resume`,
+      payload: { mode: 'continue' },
+    });
+    expect(needsConfirmation.statusCode).toBe(409);
+    expect(needsConfirmation.json()).toMatchObject({ error: { code: 'task_needs_confirmation' } });
+
+    const confirmed = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/resume`,
+      payload: { mode: 'continue', confirmSideEffect: true },
+    });
+    expect(confirmed.statusCode).toBe(202);
+  });
+
+  it('rejects replan with a pointer to M4', async () => {
+    const store = memoryStore();
+    const app = createApp({ store });
+    apps.push(app);
+    const task = (
+      await app.inject({ method: 'POST', url: '/api/tasks', payload: { title: 't', goal: 'g' } })
+    ).json().task;
+
+    const replan = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/resume`,
+      payload: { mode: 'replan' },
+    });
+    expect(replan.statusCode).toBe(409);
+    expect(replan.json()).toMatchObject({ error: { code: 'replan_unavailable' } });
+  });
+
+  it('pushes task_recovery_required to the first SSE subscriber', async () => {
+    const store = memoryStore();
+    const registry = new AgentRegistry(new FakeSessionFactory());
+    const app = createApp({ store, registry });
+    apps.push(app);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: tempWorkspace(), message: 'hello' },
+    });
+    const task = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: { title: 't', goal: 'g', sessionId: 'session-1', steps: [{ title: 'a' }] },
+      })
+    ).json().task;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/tasks/${task.id}/steps/s1`,
+      payload: { status: 'in_progress', ifRevision: task.revision },
+    });
+
+    // 模拟 SSE 建连：路由是「先判有没有订阅者 → 发布提醒 → 再 subscribe」，
+    // 因此新订阅者会在 subscribe() 的重放阶段收到这条提醒。
+    remindRecovery(registry, 'session-1', () => [{ taskId: task.id, action: 'auto_resume' }]);
+    const events: StreamEvent[] = [];
+    registry.subscribe('session-1', 0, (event) => events.push(event));
+
+    const reminders = events.filter((event) => event.payload.type === 'task_recovery_required');
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0].payload).toMatchObject({
+      type: 'task_recovery_required',
+      tasks: [{ taskId: task.id }],
+    });
+
+    // 已有订阅者时不再重复推（避免每次重连都提醒一遍）。
+    remindRecovery(registry, 'session-1', () => [{ taskId: task.id }]);
+    expect(events.filter((event) => event.payload.type === 'task_recovery_required')).toHaveLength(
+      1,
+    );
+
+    // 空清单不发事件（也不会因为不存在的会话而建条目）。
+    const silent = new AgentRegistry(new FakeSessionFactory());
+    silent.announceRecovery('session-1', []);
+    expect(silent.hasSubscribers('session-1')).toBe(false);
   });
 });
