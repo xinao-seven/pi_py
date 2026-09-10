@@ -38,8 +38,14 @@ export interface TaskRepository {
   /**
    * 乐观并发写入：整条记录写回（步骤整体替换）。
    * 返回 false 表示 revision 不匹配（调用方应回 409 task_conflict）。
+   *
+   * `keepRevision: true` 用于**执行期运行时写入**（租约/心跳/在飞动作）：
+   * 它们照样落库，但**不占用版本号**——否则模型与面板手里的 revision 会被心跳持续顶掉，
+   * 每次 update_plan / 面板编辑都变成「陈旧版本」（M4 eval 抓到的真实问题）。
+   * 安全性前提：所有写入都经 `TaskService.mutate()` 重新读一次记录再改，
+   * 因此不会用陈旧副本覆盖运行时字段。
    */
-  save(record: TaskRecord, expectedRevision: number): boolean;
+  save(record: TaskRecord, expectedRevision: number, options?: { keepRevision?: boolean }): boolean;
   /** 删除任务（M2 未开放 REST，供清理与测试使用）。 */
   remove(id: string): boolean;
   close(): void;
@@ -129,10 +135,19 @@ export class SqliteTaskRepository implements TaskRepository {
     }
   }
 
-  save(record: TaskRecord, expectedRevision: number): boolean {
+  save(
+    record: TaskRecord,
+    expectedRevision: number,
+    options: { keepRevision?: boolean } = {},
+  ): boolean {
     this.db.exec('BEGIN');
     try {
-      const applied = this.writeTask(record, expectedRevision, false);
+      const applied = this.writeTask(
+        record,
+        expectedRevision,
+        false,
+        options.keepRevision === true,
+      );
       if (!applied) {
         this.db.exec('ROLLBACK');
         return false;
@@ -165,7 +180,12 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   /** 写入任务主表；返回是否真正写入（乐观锁判定）。 */
-  private writeTask(record: TaskRecord, expectedRevision: number, isInsert: boolean): boolean {
+  private writeTask(
+    record: TaskRecord,
+    expectedRevision: number,
+    isInsert: boolean,
+    keepRevision = false,
+  ): boolean {
     if (isInsert) {
       this.statement(
         `INSERT INTO tasks (id, title, goal, status, origin, session_id, cwd, revision,
@@ -191,7 +211,8 @@ export class SqliteTaskRepository implements TaskRepository {
     }
     const result = this.statement(
       `UPDATE tasks SET title = :title, goal = :goal, status = :status, origin = :origin,
-          session_id = :sessionId, cwd = :cwd, revision = revision + 1,
+          session_id = :sessionId, cwd = :cwd,
+          revision = CASE WHEN :keepRevision = 1 THEN revision ELSE revision + 1 END,
           blocked_reason = :blockedReason, conclusion = :conclusion, execution = :execution,
           updated_at = :updatedAt
        WHERE id = :id AND revision = :expectedRevision`,
@@ -208,6 +229,7 @@ export class SqliteTaskRepository implements TaskRepository {
       execution: JSON.stringify(record.execution),
       updatedAt: Date.parse(record.updatedAt),
       expectedRevision,
+      keepRevision: keepRevision ? 1 : 0,
     });
     return Number(result.changes) > 0;
   }
@@ -327,10 +349,20 @@ export class MemoryTaskRepository implements TaskRepository {
     this.tasks.set(record.id, clone({ ...record, revision: record.revision ?? 1 }));
   }
 
-  save(record: TaskRecord, expectedRevision: number): boolean {
+  save(
+    record: TaskRecord,
+    expectedRevision: number,
+    options: { keepRevision?: boolean } = {},
+  ): boolean {
     const current = this.tasks.get(record.id);
     if (!current || current.revision !== expectedRevision) return false;
-    this.tasks.set(record.id, clone({ ...record, revision: expectedRevision + 1 }));
+    this.tasks.set(
+      record.id,
+      clone({
+        ...record,
+        revision: options.keepRevision === true ? expectedRevision : expectedRevision + 1,
+      }),
+    );
     return true;
   }
 

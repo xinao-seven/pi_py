@@ -416,46 +416,58 @@ export class TaskService {
     options: { ttlMs?: number; attempt?: number } = {},
   ): TaskRecord {
     const ttlMs = options.ttlMs ?? DEFAULT_LEASE_TTL_MS;
-    return this.mutate(taskId, (task) => {
-      const view = leaseView(task.execution, owner, this.nowMs());
-      this.assertLeaseFree(view, task.id);
-      return {
-        ...task,
-        execution: {
-          ...task.execution,
-          attempt: options.attempt ?? task.execution.attempt,
-          lease: leaseUntil(owner, this.nowMs(), ttlMs),
-          lastHeartbeatAt: this.nowIso(),
-        },
-      };
-    });
+    return this.mutate(
+      taskId,
+      (task) => {
+        const view = leaseView(task.execution, owner, this.nowMs());
+        this.assertLeaseFree(view, task.id);
+        return {
+          ...task,
+          execution: {
+            ...task.execution,
+            attempt: options.attempt ?? task.execution.attempt,
+            lease: leaseUntil(owner, this.nowMs(), ttlMs),
+            lastHeartbeatAt: this.nowIso(),
+          },
+        };
+      },
+      { keepRevision: true },
+    );
   }
 
   /** 续租（心跳）；租约已归属别人则 409。 */
   renewLease(taskId: string, owner: string, ttlMs = DEFAULT_LEASE_TTL_MS): TaskRecord {
-    return this.mutate(taskId, (task) => {
-      const view = leaseView(task.execution, owner, this.nowMs());
-      this.assertLeaseFree(view, task.id);
-      return {
-        ...task,
-        execution: {
-          ...task.execution,
-          lease: leaseUntil(owner, this.nowMs(), ttlMs),
-          lastHeartbeatAt: this.nowIso(),
-        },
-      };
-    });
+    return this.mutate(
+      taskId,
+      (task) => {
+        const view = leaseView(task.execution, owner, this.nowMs());
+        this.assertLeaseFree(view, task.id);
+        return {
+          ...task,
+          execution: {
+            ...task.execution,
+            lease: leaseUntil(owner, this.nowMs(), ttlMs),
+            lastHeartbeatAt: this.nowIso(),
+          },
+        };
+      },
+      { keepRevision: true },
+    );
   }
 
   /** 释放租约（幂等）；不是自己持有就不动。 */
   releaseLease(taskId: string, owner: string): TaskRecord {
-    return this.mutate(taskId, (task) => {
-      const lease = task.execution.lease;
-      if (lease !== undefined && lease.owner !== owner) return task; // 别人的租约不碰
-      const execution: TaskExecution = { ...task.execution };
-      delete execution.lease;
-      return { ...task, execution };
-    });
+    return this.mutate(
+      taskId,
+      (task) => {
+        const lease = task.execution.lease;
+        if (lease !== undefined && lease.owner !== owner) return task; // 别人的租约不碰
+        const execution: TaskExecution = { ...task.execution };
+        delete execution.lease;
+        return { ...task, execution };
+      },
+      { keepRevision: true },
+    );
   }
 
   /**
@@ -465,24 +477,28 @@ export class TaskService {
    * 终态任务直接忽略：执行器不应该再去碰已完成/已取消的任务。
    */
   setInFlight(taskId: string, inFlight: NonNullable<TaskExecution['inFlight']> | null): TaskRecord {
-    return this.mutate(taskId, (task) => {
-      if (isTerminalStatus(task.status)) return task;
-      const execution: TaskExecution = { ...task.execution, lastHeartbeatAt: this.nowIso() };
-      if (inFlight === null) {
-        delete execution.inFlight;
+    return this.mutate(
+      taskId,
+      (task) => {
+        if (isTerminalStatus(task.status)) return task;
+        const execution: TaskExecution = { ...task.execution, lastHeartbeatAt: this.nowIso() };
+        if (inFlight === null) {
+          delete execution.inFlight;
+          return { ...task, execution };
+        }
+        execution.inFlight = inFlight;
+        if (inFlight.sideEffect !== 'none') {
+          execution.lastSideEffect = {
+            ...(inFlight.stepId === undefined ? {} : { stepId: inFlight.stepId }),
+            toolName: inFlight.toolName ?? 'unknown',
+            sideEffect: inFlight.sideEffect,
+            at: inFlight.startedAt,
+          };
+        }
         return { ...task, execution };
-      }
-      execution.inFlight = inFlight;
-      if (inFlight.sideEffect !== 'none') {
-        execution.lastSideEffect = {
-          ...(inFlight.stepId === undefined ? {} : { stepId: inFlight.stepId }),
-          toolName: inFlight.toolName ?? 'unknown',
-          sideEffect: inFlight.sideEffect,
-          at: inFlight.startedAt,
-        };
-      }
-      return { ...task, execution };
-    });
+      },
+      { keepRevision: true },
+    );
   }
 
   /** 把当前步骤重置为 pending（`retry_step` 用）：同时清掉它的开始时间与阻塞原因。 */
@@ -591,18 +607,27 @@ export class TaskService {
     return this.mutate(taskId, (task) => {
       const current: TaskPlanState = task.execution.plan ?? { status: 'drafting' };
       const next: TaskPlanState = { ...current, updatedAt: this.nowIso() };
-      if (status !== undefined) next.status = status;
+      let touched = false;
+      if (status !== undefined && status !== current.status) {
+        next.status = status;
+        touched = true;
+      }
       if (patch.question === null) {
+        if (current.question === undefined && current.questionOptions === undefined) {
+          return touched ? { ...task, execution: { ...task.execution, plan: next } } : task;
+        }
         delete next.question;
         delete next.questionOptions;
+        touched = true;
       } else if (patch.question !== undefined) {
         next.question = this.requiredText(patch.question, 'question', LIMITS.reason);
         if (patch.questionOptions === null) delete next.questionOptions;
         else if (patch.questionOptions !== undefined) {
           next.questionOptions = this.stringList(patch.questionOptions, 'questionOptions');
         }
+        touched = true;
       }
-      return { ...task, execution: { ...task.execution, plan: next } };
+      return touched ? { ...task, execution: { ...task.execution, plan: next } } : task;
     });
   }
 
@@ -696,12 +721,24 @@ export class TaskService {
    * 内部写入（租约/在飞动作）：读→改→写，版本冲突自动重试。
    * 中文说明：这些写入来自执行器与事件钩子，不是用户操作；即便如此也会**广播**——
    * 否则面板手里的 `revision` 会静默落后，用户下一次点击就会莫名其妙 409。
+   *
+   * `keepRevision` 用于执行期运行时写入（M4）：心跳/在飞动作**不占用版本号**。
+   * 版本号的语义是「用户可见内容的版本」，被心跳顶掉会让模型手里的 revision 持续过期；
+   * 由于所有写入都先重新读一次记录，因此不会用陈旧副本覆盖运行时字段。
    */
-  private mutate(taskId: string, change: (task: TaskRecord) => TaskRecord): TaskRecord {
+  private mutate(
+    taskId: string,
+    change: (task: TaskRecord) => TaskRecord,
+    options: { keepRevision?: boolean } = {},
+  ): TaskRecord {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const current = this.get(taskId);
-      const stored: TaskRecord = { ...change(current), updatedAt: this.nowIso() };
-      if (this.repository.save(stored, current.revision)) {
+      // 约定：change() 返回**原对象**表示「无变化」——不写库、不广播、不动版本号。
+      // 少了这条，「继续执行」这类幂等命令会白白顶掉 revision，让模型/面板手里的版本失效。
+      const changed = change(current);
+      if (changed === current) return current;
+      const stored: TaskRecord = { ...changed, updatedAt: this.nowIso() };
+      if (this.repository.save(stored, current.revision, options)) {
         const saved = this.repository.get(taskId) ?? stored;
         this.notify(saved);
         return saved;

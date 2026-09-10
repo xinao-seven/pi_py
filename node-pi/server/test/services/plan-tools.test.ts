@@ -155,23 +155,39 @@ describe('update_plan', () => {
     ).rejects.toThrow(new RegExp(`revision=${current.revision}`));
   });
 
-  it('refuses to wipe progress by replacing steps while executing', async () => {
+  it('allows revising future steps while executing but protects started ones', async () => {
     const { tasks, toolbox } = makeToolbox();
     const plan = withPlan(toolbox, tasks);
-    // 两步：完成一步后任务仍在进行中（否则任务直接 completed，就测不到这个分支了）。
-    await runTool(toolbox, 'submit_plan', { title: 'x', steps: [{ title: 'a' }, { title: 'b' }] });
+    await runTool(toolbox, 'submit_plan', {
+      title: 'x',
+      steps: [{ title: 'a' }, { title: '旧 b' }],
+    });
     tasks.setPlanState(plan.id, { status: 'executing' });
     const executing = tasks.get(plan.id);
     tasks.updateStep(plan.id, executing.steps[0].id, {
       status: 'completed',
       ifRevision: executing.revision,
     });
+
+    // 保留已完成步骤的标题 → 允许（只改还没开始的第二步）。
+    const revised = await runTool(toolbox, 'update_plan', {
+      revision: tasks.get(plan.id).revision,
+      steps: [{ title: 'a' }, { title: '新 b' }],
+    });
+    expect((revised.details as { status: string }).status).toBe('executing');
+    const after = tasks.get(plan.id);
+    expect(after.steps.map((step) => [step.title, step.status])).toEqual([
+      ['a', 'completed'],
+      ['新 b', 'pending'],
+    ]);
+
+    // 删掉/改名已完成步骤 → 拒绝（否则会静默丢掉已完成的工作）。
     await expect(
       runTool(toolbox, 'update_plan', {
         revision: tasks.get(plan.id).revision,
-        steps: [{ title: 'b' }],
+        steps: [{ title: 'b 改个名' }],
       }),
-    ).rejects.toThrow(/清空已完成进度/);
+    ).rejects.toThrow(/不能删除或重命名已经开始\/已完成的步骤/);
   });
 
   it('refuses after the plan is finished', async () => {

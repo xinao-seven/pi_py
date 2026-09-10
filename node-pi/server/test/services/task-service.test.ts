@@ -549,3 +549,47 @@ describe('TaskService plan（M4：Plan 是 origin=plan 的任务）', () => {
     );
   });
 });
+
+describe('TaskService 版本号语义（M4：版本号＝用户可见内容的版本）', () => {
+  it('does not bump revision for lease / in-flight runtime writes', () => {
+    const { service } = makeService();
+    const task = createTask(service, [{ title: 'a' }]);
+    const initial = task.revision;
+
+    const leased = service.acquireLease(task.id, 'owner-a');
+    expect(leased.revision).toBe(initial);
+    expect(leased.execution.lease?.owner).toBe('owner-a');
+
+    const heartbeat = service.renewLease(task.id, 'owner-a');
+    expect(heartbeat.revision).toBe(initial);
+
+    const inFlight = service.setInFlight(task.id, {
+      stepId: 's1',
+      kind: 'tool',
+      toolCallId: 'c1',
+      toolName: 'edit',
+      startedAt: new Date().toISOString(),
+      sideEffect: 'write',
+    });
+    expect(inFlight.revision).toBe(initial);
+    expect(inFlight.execution.inFlight).toBeDefined();
+
+    const released = service.releaseLease(task.id, 'owner-a');
+    expect(released.revision).toBe(initial);
+    expect(released.execution.lease).toBeUndefined();
+  });
+
+  it('still bumps revision for user-visible content writes', () => {
+    const { service } = makeService();
+    const task = createTask(service, [{ title: 'a' }]);
+    const updated = service.updateStep(task.id, 's1', {
+      status: 'completed',
+      ifRevision: task.revision,
+    });
+    expect(updated.revision).toBe(task.revision + 1);
+    // 内容写入之后，运行时写入仍能看到最新内容（读改写，不会覆盖）。
+    const leased = service.acquireLease(task.id, 'owner-a');
+    expect(leased.steps[0].status).toBe('completed');
+    expect(leased.revision).toBe(updated.revision);
+  });
+});

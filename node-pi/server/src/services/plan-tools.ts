@@ -28,6 +28,11 @@ import { evaluateStepEvidence } from './platform/step-verification.js';
 import { derivePlanStatus, isActivePlanStatus } from './platform/plan-model.js';
 import type { PlanStepInput, TaskService } from './task-service.js';
 
+/** 标题归一化：与 TaskService.replacePlanSteps 的按标题复用进度保持一致。 */
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 /** 计划工具名（状态机按它管理 activeTools）。 */
 export const PLAN_TOOL_NAMES = [
   'submit_plan',
@@ -173,16 +178,23 @@ export class PlanToolbox {
   updatePlan(params: UpdatePlanParams): TaskRecord {
     const task = this.requirePlan();
     const status = derivePlanStatus(task);
-    if (status === 'executing' && task.steps.some((step) => step.status === 'completed')) {
-      // 执行中允许改「还没做」的步骤，但整体替换会把已完成的进度冲掉，因此要求明确。
-      if (params.steps !== undefined) {
+    if (!isActivePlanStatus(status)) throw new Error(`计划已经 ${status}，无法再修改。`);
+    // 执行中允许调整**还没开始**的步骤（M4 的明确需求），但已经开始/已完成的步骤必须原样保留：
+    // 整体替换会按标题复用进度，所以只要标题还在就不会丢证据；真正危险的是删掉或改名，
+    // 那会静默丢掉已完成的工作。这里把这条不变量讲清楚，而不是一刀切禁止修改计划。
+    if (params.steps !== undefined) {
+      const protectedSteps = task.steps.filter((step) => step.status !== 'pending');
+      const nextTitles = new Set(params.steps.map((step) => normalizeTitle(step.title)));
+      const lost = protectedSteps.filter((step) => !nextTitles.has(normalizeTitle(step.title)));
+      if (lost.length > 0) {
         throw new Error(
-          '计划正在执行且已有步骤完成；整体替换步骤会清空已完成进度。' +
-            '请只调用 update_plan 修改标题，或用用户的手动编辑（面板）调整步骤。',
+          `不能删除或重命名已经开始/已完成的步骤：${lost
+            .map((step) => `[${step.id}] ${step.title}（${step.status}）`)
+            .join('、')}。` +
+            '请保留这些步骤的标题不变，只调整还没开始的部分（或让用户在面板上操作）。',
         );
       }
     }
-    if (!isActivePlanStatus(status)) throw new Error(`计划已经 ${status}，无法再修改。`);
     if (task.revision !== params.revision) {
       throw new Error(
         `revision 不匹配：计划当前 revision=${task.revision}（你传的是 ${params.revision}）。` +
