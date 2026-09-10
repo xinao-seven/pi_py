@@ -6,9 +6,9 @@
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
 | 当前里程碑 | **M1 已完成** → 下一步 **M2 任务领域**                           |
-| 上一提交   | `e11d1ef test(node): 补 M1 端到端验证（真实 SDK + 离线 fauxProvider）` |
+| 上一提交   | `00a6a6a fix(node): 新增 v2 迁移修复过渡期 day_rollups schema`  |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **135** / Web **62**，全绿                             |
+| 测试基线   | Node 后端 **136** / Web **62**，全绿                             |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -170,6 +170,9 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 - 真实 SDK + `fauxProvider` 跑完整 agent loop（`ledger-e2e.test.ts`）：1 run / 2 turns / 2 个
   llm_call（`meta.httpStatus=200`）/ 1 个 tool_call，summary 有数——provider 观测扩展在真实扩展
   加载器下确实被触发。
+- 迁移规则（已写进代码注释与 M1 文档）：**已发布的 DDL 不得改写，只能追加新版本迁移**。
+  过渡期 v1 建的是 `day_rollups`，重构后直接改写 v1 会让已建好的库缺 `run_rollups`
+  （聚合查询直接报错）——现已追加 v2 迁移修复，并在真实 dev server 上验证过 1 → 2 自动升级。
 
 ---
 
@@ -248,7 +251,7 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 135 passed / 构建成功 / 8 个 spike 全过
+#   → 期望：format OK / 无类型错误 / 136 passed / 构建成功 / 8 个 spike 全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
