@@ -6,7 +6,13 @@
 // 模型换成脚本化响应，因此结果确定、可重复、不触网；指标变化就意味着契约或策略变了。
 //
 // 用法：npm run eval（CI 的 eval job 直接调用；失败即阻断）。
-import { startHarness, fauxAssistantMessage, fauxToolCall, hasLegacyMarkers } from './harness.mjs';
+import {
+  startHarness,
+  scriptedResponses,
+  fauxAssistantMessage,
+  fauxToolCall,
+  hasLegacyMarkers,
+} from './harness.mjs';
 
 /** 一段「模型行为」：先提交计划，再逐条汇报步骤完成。 */
 function planScript(steps, completions) {
@@ -319,6 +325,131 @@ const CASES = [
     },
   },
   {
+    id: 'subagent-delegation',
+    title: '委派：子会话跑完只回摘要，子 run 挂在父 run 下',
+    mode: 'direct',
+    script: () =>
+      scriptedResponses({
+        parent: [
+          fauxAssistantMessage(
+            [
+              fauxToolCall('subagent', {
+                preset: 'scout',
+                task: '统计 node-pi/server/src/services 下的 .ts 文件数',
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('共有 45 个 .ts 文件（来自子任务）。'),
+        ],
+        child: [
+          fauxAssistantMessage(
+            [fauxToolCall('bash', { command: 'ls node-pi/server/src/services | wc -l' })],
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('共有 45 个 .ts 文件。'),
+        ],
+      }),
+    setup: (harness) => harness.writePreset('scout', { tools: ['read', 'grep', 'find', 'ls'] }),
+    async expect(context) {
+      const { harness } = context;
+      const delegated = harness.seen.toolResults.find((result) => result.toolName === 'subagent');
+      const parentRunId = harness.ledger.lastRunId(context.sessionId);
+      const runs = harness.store.traces.listRuns({ limit: 50 }).runs;
+      const childRun = runs.find((run) => run.meta?.preset === 'scout');
+      const parentMessages = JSON.stringify(harness.session.messages ?? []);
+      return {
+        pass:
+          delegated !== undefined &&
+          !delegated.isError &&
+          delegated.text.includes('子任务 完成') &&
+          delegated.text.includes('45') &&
+          childRun?.parentRunId === parentRunId &&
+          // 父会话上下文里只有摘要，没有子会话的执行细节（隔离的意义就在这里）
+          !parentMessages.includes('node-pi/server/src/services | wc -l'),
+        detail: `status=${delegated?.isError ? 'error' : 'ok'} linked=${
+          childRun?.parentRunId === parentRunId
+        } child=${harness.children[0]?.session.sessionId.slice(0, 8) ?? 'none'}`,
+      };
+    },
+  },
+  {
+    id: 'subagent-preset-isolation',
+    title: '子会话隔离：工具集就是预设的、不能递归、落在私有目录',
+    mode: 'direct',
+    script: () =>
+      scriptedResponses({
+        parent: [
+          fauxAssistantMessage(
+            [fauxToolCall('subagent', { preset: 'scout', task: '读一下 services 目录' })],
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('已委派完成。'),
+        ],
+        child: [fauxAssistantMessage('目录里都是 .ts 文件。')],
+      }),
+    setup: (harness) => harness.writePreset('scout', { tools: ['read', 'grep', 'find', 'ls'] }),
+    async expect(context) {
+      const child = context.harness.children[0];
+      if (child === undefined) return { pass: false, detail: '没有创建子会话' };
+      const tools = child.session.getActiveToolNames();
+      return {
+        pass:
+          // 只读预设被完整继承，且**没有**被并入 MCP / 计划 / ask_user / subagent
+          tools.every((tool) => ['read', 'grep', 'find', 'ls'].includes(tool)) &&
+          !tools.includes('subagent') &&
+          !tools.includes('ask_user') &&
+          child.input.subagent.depth === 1 &&
+          // 子会话落在本项目私有目录，不进共享的 ~/.pi/agent/sessions
+          child.input.subagent.sessionDir.includes('subagents'),
+        detail: `tools=${tools.join('|')} depth=${child.input.subagent.depth}`,
+      };
+    },
+  },
+  {
+    id: 'subagent-budget',
+    title: '预算硬约束：超轮数即中止，但仍把已产出的摘要带回来',
+    mode: 'direct',
+    script: () =>
+      scriptedResponses({
+        parent: [
+          fauxAssistantMessage(
+            [
+              fauxToolCall('subagent', {
+                preset: 'scout',
+                task: '做一件很久的事',
+                budget: { maxTurns: 1 },
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('子任务超预算了，我自己来。'),
+        ],
+        child: [
+          fauxAssistantMessage([fauxToolCall('bash', { command: 'ls' })], {
+            stopReason: 'toolUse',
+          }),
+          // 第二轮就会撞上限（maxTurns=1）
+          fauxAssistantMessage('我还在继续……'),
+        ],
+      }),
+    setup: (harness) => harness.writePreset('scout', { tools: ['read', 'grep', 'find', 'ls'] }),
+    async expect(context) {
+      const delegated = context.harness.seen.toolResults.find(
+        (result) => result.toolName === 'subagent',
+      );
+      return {
+        pass:
+          delegated !== undefined &&
+          delegated.text.includes('超预算中止') &&
+          delegated.text.includes('最大轮数 1') &&
+          // 状态是「结果」而不是「异常」：父会话能自己决定怎么办
+          !delegated.isError,
+        detail: `error=${delegated?.isError} text=${delegated?.text.slice(0, 60) ?? 'none'}`,
+      };
+    },
+  },
+  {
     id: 'no-legacy-markers',
     title: '零标记：全程不写 Plan: 标题 / [DONE:n]，计划与进度仍完整',
     steps: [{ title: '一步就够' }],
@@ -344,15 +475,20 @@ async function runCase(definition) {
     seen: harness.seen,
   };
   try {
-    harness.plans.startPlanning(harness.sessionId, `${definition.title}`);
-    harness.faux.setResponses(definition.script(definition.steps));
+    // direct 模式：不进入 Plan（M5 的委派评测本来就跟计划无关）。
+    const direct = definition.mode === 'direct';
+    if (!direct) harness.plans.startPlanning(harness.sessionId, `${definition.title}`);
+    if (definition.setup !== undefined) definition.setup(harness);
+    harness.faux.setResponses(direct ? definition.script() : definition.script(definition.steps));
     await harness.session.prompt(definition.title);
     await harness.waitForSettle();
 
     // 提交计划后统一走「用户确认执行」——这正是 golden set 要覆盖的主路径。
-    let plan = harness.plans.state(harness.sessionId);
+    let plan = direct
+      ? { status: 'n/a', taskId: undefined, steps: [] }
+      : harness.plans.state(harness.sessionId);
     let planAccepted = true;
-    if (plan.status === 'proposed') {
+    if (!direct && plan.status === 'proposed') {
       // whileExecuting：与本次 run 并发的动作（例如模型提问挂起了 run，需要边跑边答）。
       const starting = harness.plans.command(harness.sessionId, 'execute');
       const hook = definition.whileExecuting?.(context);
@@ -360,7 +496,7 @@ async function runCase(definition) {
       await harness.waitForSettle();
       if (hook !== undefined) await hook;
       plan = harness.plans.state(harness.sessionId);
-    } else if (plan.status !== 'drafting') {
+    } else if (!direct && plan.status !== 'drafting') {
       planAccepted = false;
     }
     // 脚本里第一条 submit_plan 是否被接受（未被服务端拒绝过即为一次通过）。
@@ -392,7 +528,10 @@ async function runCase(definition) {
     }
     const toolResults = harness.seen.toolResults;
     const errors = toolResults.filter((result) => result.isError).length;
-    const task = context.tasks.get(plan.taskId);
+    const task = plan.taskId === undefined ? { steps: [] } : context.tasks.get(plan.taskId);
+    // M5：子任务是否真的挂在父 run 下（执行树能不能看出来龙去脉）。
+    const runs = harness.store.traces.listRuns({ limit: 50 }).runs;
+    const childRuns = runs.filter((run) => run.meta?.preset !== undefined);
     return {
       id: definition.id,
       title: definition.title,
@@ -409,6 +548,8 @@ async function runCase(definition) {
             ? 0
             : task.steps.filter((step) => step.evidence !== undefined).length / task.steps.length,
         legacyMarkers: hasLegacyMarkers(harness.seen.assistantText),
+        delegations: childRuns.length,
+        delegationsLinked: childRuns.filter((run) => run.parentRunId !== undefined).length,
       },
     };
   } finally {
@@ -434,6 +575,8 @@ for (const definition of CASES) {
         steps: 0,
         evidenceCoverage: 0,
         legacyMarkers: false,
+        delegations: 0,
+        delegationsLinked: 0,
       },
     });
   }
@@ -461,9 +604,19 @@ const THRESHOLDS = [
     value: results.every((item) => !item.metrics.legacyMarkers) ? 100 : 0,
     min: 100,
   },
+  {
+    // M5：委派出去的子任务必须都能在执行树里找到（parent_run_id 串起来）
+    name: '子任务 trace 关联率',
+    value: (() => {
+      const total = results.reduce((sum, item) => sum + item.metrics.delegations, 0);
+      if (total === 0) return 100;
+      return (results.reduce((sum, item) => sum + item.metrics.delegationsLinked, 0) / total) * 100;
+    })(),
+    min: 100,
+  },
 ];
 
-console.log('=== M4 golden set（fauxProvider 离线，真实管线）===');
+console.log('=== golden set（M4 计划 + M5 委派；fauxProvider 离线，真实管线）===');
 for (const result of results) {
   console.log(`  ${result.pass ? '✅' : '❌'} ${result.id.padEnd(28)} ${result.detail}`);
 }
@@ -482,6 +635,12 @@ console.log(
 );
 console.log(
   `  残留旧标记的用例数             : ${results.filter((item) => item.metrics.legacyMarkers).length}`,
+);
+console.log(
+  `  子任务数 / 已挂进执行树        : ${results.reduce(
+    (sum, item) => sum + item.metrics.delegations,
+    0,
+  )} / ${results.reduce((sum, item) => sum + item.metrics.delegationsLinked, 0)}`,
 );
 console.log('');
 for (const threshold of THRESHOLDS) {

@@ -432,7 +432,11 @@ export class SubagentService {
         trajectory,
         subagentSessionId: childSessionId,
         ...(knownRun === undefined ? {} : { runId: knownRun }),
-        ...(resolved.model === undefined ? {} : { model: resolved.model }),
+        // 只回传 {provider, id}：解析器拿到的可能是完整的 Model 对象（含 baseUrl 等），
+        // 塞进工具结果会把无关元数据一路带到前端。
+        ...(resolved.model === undefined
+          ? {}
+          : { model: { provider: resolved.model.provider, id: resolved.model.id } }),
         ...(modelNote(resolved) === undefined ? {} : { note: modelNote(resolved) }),
         ...(outcome.reason === undefined && status !== 'failed'
           ? {}

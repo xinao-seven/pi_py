@@ -173,7 +173,11 @@ export function buildSubagentTools(toolbox: SubagentToolbox): ToolDefinition[] {
           depth: result.depth,
           subagentSessionId: result.subagentSessionId ?? null,
           runId: result.runId ?? null,
-          model: result.model ?? null,
+          // 前端约定：ModelRef = { provider, modelId }
+          model:
+            result.model === undefined
+              ? null
+              : { provider: result.model.provider, modelId: result.model.id },
           usage: result.usage,
           durationMs: result.durationMs,
           trajectory: result.trajectory,

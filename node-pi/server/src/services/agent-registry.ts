@@ -336,6 +336,8 @@ export interface RegistryEntry {
 export class OriginalPiSessionFactory implements PiSessionFactory {
   /** ModelRuntime 是重量级对象（要读文件、可能起子进程），做单例缓存。 */
   private runtimePromise: Promise<ModelRuntime> | undefined;
+  /** 运行时来源（默认读 agentDir 下的凭据/模型文件；测试可覆盖，见 useRuntime）。 */
+  private runtimeProvider: (() => Promise<ModelRuntime>) | undefined;
 
   constructor(
     private readonly agentDir: string,
@@ -492,6 +494,16 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     this.runtimePromise = undefined;
   }
 
+  /**
+   * 指定 ModelRuntime 的来源（测试/评测用）。
+   * 中文说明：评测要拿**真实**工厂（工具白名单并入、子会话构造、扩展注入都是生产路径），
+   * 但模型要换成脚本化的 faux provider。faux 只能注册在评测自己创建的 runtime 上，
+   * 因此这里开一个注入口——不改生产默认行为（默认仍是读 auth.json/models.json）。
+   */
+  useRuntime(provider: () => Promise<ModelRuntime>): void {
+    this.runtimeProvider = provider;
+  }
+
   /** 解析子会话预设里的 `model:`（M5）：能解析就用，解析不了就回退父会话模型并说明原因。 */
   async resolveSubagentModel(input: {
     spec?: string;
@@ -503,6 +515,10 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
 
   /** 惰性创建并缓存 ModelRuntime（并发调用共享同一个实例）。 */
   private getRuntime(): Promise<ModelRuntime> {
+    if (this.runtimeProvider !== undefined) {
+      this.runtimePromise ??= this.runtimeProvider();
+      return this.runtimePromise;
+    }
     this.runtimePromise ??= ModelRuntime.create({
       authPath: join(this.agentDir, 'auth.json'),
       modelsPath: join(this.agentDir, 'models.json'),
