@@ -25,7 +25,7 @@ export interface Migration {
 }
 
 /** 当前目标版本（新增迁移时同步递增）。 */
-export const TARGET_SCHEMA_VERSION = 1;
+export const TARGET_SCHEMA_VERSION = 2;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -126,6 +126,31 @@ export const MIGRATIONS: readonly Migration[] = [
         wait_ms_sum INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (day, cwd, rule, risk)
       )`,
+    ],
+  },
+  {
+    // M1 开发期间的过渡 schema 修复：聚合表由 day_rollups 改为 run_rollups
+    // （原设计下 totals 只能从 runs 明细算，一旦 prune 清理明细，totals 与 byTool 口径
+    // 就互相矛盾）。对新建库这条是幂等的；对已经跑过旧版代码的库（user_version 已是 1）
+    // 它会补齐缺失的 run_rollups 并清掉遗留的 day_rollups。
+    // 教训：已发布的 DDL 不应直接改写，而应追加新版本迁移——这条就是为此存在的。
+    version: 2,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS run_rollups (
+        day TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        runs INTEGER NOT NULL DEFAULT 0,
+        turns INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        errors INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, cwd, provider, model)
+      )`,
+      `DROP TABLE IF EXISTS day_rollups`,
     ],
   },
 ];

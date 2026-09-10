@@ -83,6 +83,11 @@ approval_rollups(day, cwd, rule, risk, approved, denied, timed_out, wait_ms_sum)
 - 预聚合表里 `provider`/`model` 用**空串**代替 NULL：SQLite 的 UNIQUE 视 NULL 互不相等，
   存 NULL 会让 `ON CONFLICT` 匹配不上而写出重复行。
 
+**迁移规则（重要）**：已发布的 DDL **不得直接改写**，只能追加新版本迁移。目前
+`MIGRATIONS` 有两个版本：v1（建表）与 **v2（把过渡期的 `day_rollups` 修成 `run_rollups`）**。
+后者对新建库幂等，对已经跑过旧版代码的库会补齐缺失表并清掉遗留表——开发期间正在运行的
+`npm run dev` 会因文件变动自动重启并自动完成修复（本次已在真实库上验证：`user_version` 1 → 2）。
+
 ---
 
 ## 4. 采集口径（关键语义）

@@ -10,6 +10,7 @@ import {
   applyMigrations,
   currentSchemaVersion,
   MIGRATIONS,
+  TARGET_SCHEMA_VERSION,
 } from '../../../src/services/platform/migrations.js';
 import { openPlatformStore } from '../../../src/services/platform/store.js';
 import { QueuedTraceRepository } from '../../../src/services/platform/trace-repository.js';
@@ -218,20 +219,55 @@ describe('platform migrations', () => {
   it('creates the schema once and is idempotent', () => {
     const dbPath = join(tempDir(), 'platform.db');
     const db = new DatabaseSync(dbPath);
-    expect(applyMigrations(db)).toBe(1);
-    expect(currentSchemaVersion(db)).toBe(1);
+    expect(applyMigrations(db)).toBe(2);
+    expect(currentSchemaVersion(db)).toBe(TARGET_SCHEMA_VERSION);
     // 重复迁移不应报错，也不应重复应用（模拟服务重启）。
     expect(applyMigrations(db)).toBe(0);
     db.close();
 
     const storage = SqliteTraceStorage.open(dbPath);
-    expect(storage.schemaVersion).toBe(1);
+    expect(storage.schemaVersion).toBe(TARGET_SCHEMA_VERSION);
+    storage.close();
+  });
+
+  it('repairs a database created by the interim day_rollups schema', () => {
+    // 构造「已经跑过旧版代码」的库：建到 v1 后再把它降级回过渡期形态
+    // （只有 day_rollups，没有 run_rollups，user_version 仍为 1）。
+    const dbPath = join(tempDir(), 'legacy.db');
+    const db = new DatabaseSync(dbPath);
+    applyMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version === 1),
+    );
+    db.exec('DROP TABLE run_rollups');
+    db.exec(
+      'CREATE TABLE day_rollups (day TEXT NOT NULL, cwd TEXT NOT NULL, runs INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, cwd))',
+    );
+    db.exec('PRAGMA user_version = 1');
+
+    expect(applyMigrations(db)).toBe(1); // 只应用 v2 修复
+    expect(currentSchemaVersion(db)).toBe(TARGET_SCHEMA_VERSION);
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name);
+    expect(tables).toContain('run_rollups');
+    expect(tables).not.toContain('day_rollups');
+    db.close();
+
+    // 修复后聚合读写正常。
+    const storage = SqliteTraceStorage.open(dbPath);
+    storage.apply([{ op: 'run_start', run: makeRun() }]);
+    storage.apply([{ op: 'run_finish', runId: 'run-1', patch: makeFinish() }]);
+    expect(storage.summary({}).totals.runs).toBe(1);
     storage.close();
   });
 
   it('declares a monotonic migration list', () => {
     const versions = MIGRATIONS.map((migration) => migration.version);
     expect(versions).toEqual([...versions].sort((a, b) => a - b));
+    expect(versions.at(-1)).toBe(TARGET_SCHEMA_VERSION);
   });
 });
 
@@ -495,7 +531,7 @@ describe('platform store assembly', () => {
     const dbPath = join(tempDir(), 'nested', 'platform.db');
     const store = track(openPlatformStore({ mode: 'sqlite', dbPath }));
     expect(store.mode).toBe('sqlite');
-    expect(store.schemaVersion).toBe(1);
+    expect(store.schemaVersion).toBe(TARGET_SCHEMA_VERSION);
 
     store.traces.startRun(makeRun());
     store.traces.addStep(makeStep());
