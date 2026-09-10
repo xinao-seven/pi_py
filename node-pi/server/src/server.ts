@@ -20,6 +20,8 @@ const app = createApp({
   workspaceParent: config.workspaceParent,
   webDistDir: config.webDistDir,
   accessPassword: config.accessPassword,
+  // 可观测性：默认开启，库文件落在 PI_NODE_DATA_DIR（~/.pi/agent-node-server/platform.db）。
+  trace: config.trace,
   logger: {
     level: config.logLevel,
     transport: {

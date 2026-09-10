@@ -207,11 +207,31 @@ export interface ToolApprovalOptions {
   timeoutMs?: number;
 }
 
+/**
+ * 审批生命周期的观测钩子（可选）。
+ *
+ * 中文说明：只声明可观测性需要知道的两件事——挂起与结算。用结构化接口（而不是直接
+ * 依赖 SessionLedger）是为了让审批中枢保持独立，同时避免两个模块互相 import。
+ * 实现方**必须自行吞掉异常**，审批流程不得因观测失败而改变结果。
+ */
+export interface ApprovalTraceSink {
+  noteApprovalStart(pending: PendingToolApproval): void;
+  noteApprovalDecision(input: {
+    sessionId: string;
+    toolCallId: string;
+    decision: 'approved' | 'denied' | 'timed_out';
+    decidedBy: string;
+  }): void;
+}
+
+/** 结算原因：区分人工决定、超时、中止与会话清理。 */
+type SettlementSource = 'user' | 'timeout' | 'abort' | 'session' | 'disposed';
+
 /** 一个正在等待审批的挂起项（内部用）。 */
 interface Waiter {
   pending: PendingToolApproval;
   timer: NodeJS.Timeout;
-  settle: (approved: boolean) => void;
+  settle(decision: 'approved' | 'denied' | 'timed_out', decidedBy: SettlementSource): void;
   abort: () => void;
 }
 
@@ -223,6 +243,7 @@ interface Waiter {
 export class ToolApprovalBroker {
   private readonly waiting = new Map<string, Waiter>();
   private onPending: ((pending: PendingToolApproval) => void) | undefined;
+  private trace: ApprovalTraceSink | undefined;
 
   constructor(private readonly options: ToolApprovalOptions = {}) {}
 
@@ -265,7 +286,10 @@ export class ToolApprovalBroker {
     return new Promise((resolve) => {
       let settled = false;
       // settle：无论批准/拒绝/超时/中止都走这里，负责清定时器、清快照、resolve。
-      const settle = (approved: boolean): void => {
+      const settle = (
+        decision: 'approved' | 'denied' | 'timed_out',
+        decidedBy: SettlementSource,
+      ): void => {
         if (settled) return;
         settled = true;
         const waiter = this.waiting.get(key);
@@ -273,19 +297,36 @@ export class ToolApprovalBroker {
         clearTimeout(waiter.timer);
         signal?.removeEventListener('abort', abort);
         this.waiting.delete(key);
-        resolve(approved);
+        this.notify(() =>
+          this.trace?.noteApprovalDecision({
+            sessionId: pending.sessionId,
+            toolCallId: pending.toolCallId,
+            decision,
+            decidedBy,
+          }),
+        );
+        resolve(decision === 'approved');
       };
-      const abort = (): void => settle(false);
+      const abort = (): void => settle('denied', 'abort');
       signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(() => settle(false), timeoutMs ?? this.options.timeoutMs ?? 30_000);
+      const timer = setTimeout(
+        () => settle('timed_out', 'timeout'),
+        timeoutMs ?? this.options.timeoutMs ?? 30_000,
+      );
       this.waiting.set(key, { pending, timer, settle, abort });
       this.onPending?.(pending);
+      this.notify(() => this.trace?.noteApprovalStart(pending));
     });
   }
 
-  /** 注册"有新待审批项"的监听器（注册表用它发 SSE 事件）。 */
+  /** 注册“有新待审批项”的监听器（注册表用它发 SSE 事件）。 */
   setPendingListener(listener: (pending: PendingToolApproval) => void): void {
     this.onPending = listener;
+  }
+
+  /** 注册可观测性钩子（账本用它记审批命中率与等待时长）。 */
+  setTraceSink(sink: ApprovalTraceSink): void {
+    this.trace = sink;
   }
 
   /** 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项。 */
@@ -293,13 +334,13 @@ export class ToolApprovalBroker {
     const waiter = this.waiting.get(this.key(sessionId, toolCallId));
     if (!waiter)
       throw new ApiError(404, 'approval_not_found', 'Tool approval is no longer pending');
-    waiter.settle(approved);
+    waiter.settle(approved ? 'approved' : 'denied', 'user');
   }
 
-  /** 会话关闭/删除时，把该会话所有挂起项按"拒绝"结算。 */
+  /** 会话关闭/删除时，把该会话所有挂起项按“拒绝”结算。 */
   cancelSession(sessionId: string): void {
     for (const [key, waiter] of [...this.waiting]) {
-      if (key.startsWith(`${sessionId}:`)) waiter.settle(false);
+      if (key.startsWith(`${sessionId}:`)) waiter.settle('denied', 'session');
     }
   }
 
@@ -311,13 +352,22 @@ export class ToolApprovalBroker {
     return undefined;
   }
 
-  /** 把仍挂起的审批按"拒绝"结算（服务关闭时调用）。 */
+  /** 把仍挂起的审批按“拒绝”结算（服务关闭时调用）。 */
   dispose(): void {
-    for (const [, waiter] of [...this.waiting]) waiter.settle(false);
+    for (const [, waiter] of [...this.waiting]) waiter.settle('denied', 'disposed');
   }
 
   /** 待审批项的唯一键：sessionId:toolCallId。 */
   private key(sessionId: string, toolCallId: string): string {
     return `${sessionId}:${toolCallId}`;
+  }
+
+  /** 观测钩子调用点：观测失败绝不能影响审批结果。 */
+  private notify(action: () => void): void {
+    try {
+      action();
+    } catch {
+      // 可观测性是增量能力，静默降级。
+    }
   }
 }

@@ -38,6 +38,7 @@ import type { ServiceLogger } from './service-logger.js';
 import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
 import { PlanModeService, type PlanSnapshot } from './plan-mode-service.js';
+import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
 
@@ -281,6 +282,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     private readonly approvals?: ToolApprovalBroker,
     private readonly plans?: PlanModeService,
     private readonly logger?: ServiceLogger,
+    /** 可观测性扩展：把 provider 层 HTTP 观测接入每个会话（可选）。 */
+    private readonly observability?: { buildExtension(): InlineExtension },
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -409,6 +412,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
     if (extensions?.approval !== false && this.approvals)
       factories.push(this.approvals.buildExtension());
+    // 观测扩展：只读 provider 层的两个钩子（不改请求、不阻断），排在审批之后。
+    if (this.observability) factories.push(this.observability.buildExtension());
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
     if (this.mcpService)
@@ -469,10 +474,17 @@ export class AgentRegistry {
     private readonly approvals?: ToolApprovalBroker,
     private readonly plans?: PlanModeService,
     private readonly logger?: ServiceLogger,
+    /** 可观测性账本：publish() 的唯一下游（可选；不传即零埋点）。 */
+    private readonly ledger?: SessionLedger,
   ) {
     // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
     approvals?.setPendingListener((pending) => this.announceApproval(pending));
     plans?.setListener((plan) => this.announcePlan(plan));
+    // 审批与 Plan 的拦截都要让账本知道（否则会被统计成工具失败）。
+    if (ledger) {
+      approvals?.setTraceSink(ledger);
+      plans?.setTraceSink(ledger);
+    }
   }
 
   /**
@@ -657,7 +669,10 @@ export class AgentRegistry {
       case 'prompt':
         // prompt 是异步长任务（模型思考+输出可能很久）：不 await，
         // 启动后立刻返回，结果通过 SSE 事件流推送（见 start() 的说明）。
-        this.start(session.prompt(message, images.length === 0 ? undefined : { images }));
+        this.start(
+          session.prompt(message, images.length === 0 ? undefined : { images }),
+          sessionId,
+        );
         return {};
       case 'steer': // 干预：打断当前输出并插入新指令
         await session.steer(message, images);
@@ -777,6 +792,8 @@ export class AgentRegistry {
       entry.subscribers.clear();
       if (entry.session.isStreaming) await entry.session.abort(); // 先停流式输出
       this.approvals?.cancelSession(entry.session.sessionId); // 拒绝所有待审批
+      // 未结算的 run 按 aborted 收尾，否则库里会留下永远 running 的记录。
+      this.ledger?.finalizeSession(entry.session.sessionId, 'aborted');
       entry.session.dispose(); // 释放 SDK 资源
     }
     this.approvals?.dispose(); // 退订事件总线
@@ -796,6 +813,7 @@ export class AgentRegistry {
     entry.subscribers.clear();
     this.approvals?.cancelSession(sessionId);
     this.plans?.remove(sessionId);
+    this.ledger?.finalizeSession(sessionId, 'aborted');
     if (entry.session.isStreaming) await entry.session.abort();
     entry.session.dispose();
     this.entries.delete(sessionId);
@@ -855,9 +873,14 @@ export class AgentRegistry {
    * 中文说明：prompt() 这类长任务不阻塞 HTTP 响应；其 reject（比如模型报错）
    * 不会变成未处理的 Promise 拒绝导致进程崩溃——错误会以 agent_end 事件
    * 的形式通过事件流告知前端（由 SDK 内部发出）。
+   * 失败同时上报账本：prompt() 在校验阶段就 reject 时不会触发任何 agent 事件，
+   * 若不在这里上报，这类失败在 trace 里完全不可见。
    */
-  private start(operation: Promise<void>): void {
-    void operation.catch(() => undefined);
+  private start(operation: Promise<void>, sessionId: string): void {
+    void operation.catch((error: unknown) => {
+      const entry = this.entries.get(sessionId);
+      if (entry) this.ledger?.noteCommandFailure(this.ledgerContext(entry), error);
+    });
   }
 
   /** 命令参数必须是"非空字符串"，否则 422。 */
@@ -892,10 +915,23 @@ export class AgentRegistry {
    */
   private publish(entry: RegistryEntry, payload: StreamEvent['payload']): void {
     this.logSessionEvent(entry, payload);
+    // 可观测性插桩点（唯一）：账本自身吞掉所有异常，不会影响事件分发。
+    this.ledger?.record(this.ledgerContext(entry), payload);
     const event: StreamEvent = { id: entry.nextEventId++, payload };
     entry.events.push(event);
     if (entry.events.length > MAX_REPLAY_EVENTS) entry.events.shift();
     for (const subscriber of entry.subscribers) subscriber(event);
+  }
+
+  /** 给账本的会话上下文（只取记账需要的字段，不让账本依赖注册表内部结构）。 */
+  private ledgerContext(entry: RegistryEntry): LedgerSessionContext {
+    const { session } = entry;
+    return {
+      sessionId: session.sessionId,
+      cwd: entry.cwd,
+      ...(session.model ? { provider: session.model.provider, model: session.model.id } : {}),
+      thinkingLevel: session.thinkingLevel,
+    };
   }
 
   /**

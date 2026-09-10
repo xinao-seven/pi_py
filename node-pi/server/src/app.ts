@@ -23,6 +23,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ApiError, errorPayload } from './errors.js';
+import type { TraceConfig } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { agentRoutes } from './routes/agent.js';
 import { fileRoutes } from './routes/files.js';
@@ -43,6 +44,8 @@ import { WorkspaceService } from './services/workspace-service.js';
 import { McpService } from './services/mcp/mcp-service.js';
 import { McpConfig } from './services/mcp/mcp-config.js';
 import { SessionService } from './services/session-service.js';
+import { openNullStore, openPlatformStore, type PlatformStore } from './services/platform/store.js';
+import { SessionLedger } from './services/observability/session-ledger.js';
 import { mcpRoutes } from './routes/mcp.js';
 
 /**
@@ -63,6 +66,10 @@ export interface AppOptions {
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
   webDistDir?: string; // 前端构建产物目录；提供且存在时托管静态页面（SPA 回退），否则仅 API
   accessPassword?: string; // 访问密码；非空时启用密码锁，/api 需登录令牌
+  /** 平台存储（测试注入内存实现；显式提供即启用可观测性，忽略 trace.enabled）。 */
+  store?: PlatformStore;
+  /** trace 配置（生产由 server.ts 从 PI_NODE_TRACE_* 传入）。 */
+  trace?: TraceConfig;
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -125,6 +132,29 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const mcpService =
     options.mcpService ?? new McpService(new McpConfig(agentDir), undefined, app.log);
 
+  // 平台存储与可观测性账本（M1）。
+  // 默认策略：**不传 trace 配置就不写盘**（createApp() 的测试环境绝不触碰真实 ~/.pi），
+  // 生产由 server.ts 传 config.trace（默认 enabled=true + sqlite）。
+  // trace 关闭时仍提供一个空存储，让 REST 契约保持可用（返回空集）。
+  const traceEnabled = options.store !== undefined || options.trace?.enabled === true;
+  const store =
+    options.store ??
+    (traceEnabled
+      ? openPlatformStore({
+          mode: options.trace?.mode ?? 'sqlite',
+          ...(options.trace?.dbPath === undefined ? {} : { dbPath: options.trace.dbPath }),
+          ...(options.trace?.flushMs === undefined ? {} : { flushMs: options.trace.flushMs }),
+          ...(options.trace?.batchSize === undefined ? {} : { batchSize: options.trace.batchSize }),
+          ...(options.trace?.maxPending === undefined
+            ? {}
+            : { maxPending: options.trace.maxPending }),
+          logger: app.log,
+        })
+      : openNullStore());
+  const ledger = traceEnabled
+    ? new SessionLedger(store.traces, app.log, { content: options.trace?.content === true })
+    : undefined;
+
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
   // - WorkspaceService：工作区登记与 JSON 持久化；
@@ -139,10 +169,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       // 传入 mcpService/approvals/plans，loader 把它们包装成内联扩展注入每个会话
       // （闭包直连实例，共享 MCP 连接与审批中枢，支持按预设开关）。
       // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
-      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans, app.log),
+      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans, app.log, ledger),
       approvals,
       plans,
       app.log,
+      ledger,
     );
   const workspaceService =
     options.workspaceService ??
@@ -221,6 +252,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     await registry.close();
     plans.dispose();
     await mcpService.dispose();
+    // 最后关闭存储：registry.close() 会把未结算的 run 收尾写进队列，close() 再落盘。
+    store.close();
   });
 
   return app;

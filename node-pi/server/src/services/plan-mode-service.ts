@@ -43,6 +43,22 @@ const PLANNING_CONTEXT_TYPES = new Set(['web-plan-context']);
 const EXECUTION_CONTEXT_TYPES = new Set(['web-plan-execution-context', 'web-plan-execute']);
 const EMPTY_TYPES: ReadonlySet<string> = new Set();
 
+/**
+ * 规划期阻断的观测钩子（可选）。
+ *
+ * 中文说明：SDK 把「被扩展拦下」和「工具执行失败」都表现为
+ * `tool_execution_end(isError=true)`，所以主动上报一次阻断原因，
+ * 账本才能把它归因为「策略生效」而不是「工具失败」。
+ */
+export interface PlanTraceSink {
+  noteToolBlock(input: {
+    sessionId: string;
+    toolCallId: string;
+    blockedBy: 'plan_mode';
+    reason?: string;
+  }): void;
+}
+
 /** 取一条上下文消息的 customType（非自定义消息返回 undefined）。 */
 function customTypeOf(message: unknown): string | undefined {
   const customType = (message as { customType?: unknown } | null)?.customType;
@@ -176,6 +192,18 @@ class PlanMachine {
 
   /** tool_call：规划期只允许白名单只读 bash，拦截 edit/write 与全部 MCP 工具。 */
   onToolCall(event: {
+    toolName: string;
+    toolCallId: string;
+    input: unknown;
+  }): { block: true; reason: string } | undefined {
+    const block = this.evaluateToolCall(event);
+    // 让可观测性知道“这次拦截是策略生效，不是工具失败”（M0 修正 ④）。
+    if (block) this.service.noteBlock(this.sessionId, event.toolCallId, block.reason);
+    return block;
+  }
+
+  /** 规划期的工具拦截规则（返回非空表示拦下并给出原因）。 */
+  private evaluateToolCall(event: {
     toolName: string;
     toolCallId: string;
     input: unknown;
@@ -380,6 +408,7 @@ class PlanMachine {
 export class PlanModeService {
   private readonly machines = new Map<string, PlanMachine>();
   private listener: ((state: PlanSnapshot) => void) | undefined;
+  private trace: PlanTraceSink | undefined;
 
   /** 生成"Web Plan 模式"内联扩展：每个会话注册一套生命周期钩子。 */
   buildExtension(): InlineExtension {
@@ -397,6 +426,20 @@ export class PlanModeService {
   /** 注册"状态快照更新"监听器（注册表用它发 SSE 事件）。 */
   setListener(listener: (state: PlanSnapshot) => void): void {
     this.listener = listener;
+  }
+
+  /** 注册阻断观测钩子（账本用它区分策略拦截与工具失败）。 */
+  setTraceSink(sink: PlanTraceSink): void {
+    this.trace = sink;
+  }
+
+  /** 上报一次规划期阻断（观测失败不得影响拦截结果）。 */
+  noteBlock(sessionId: string, toolCallId: string, reason: string): void {
+    try {
+      this.trace?.noteToolBlock({ sessionId, toolCallId, blockedBy: 'plan_mode', reason });
+    } catch {
+      // 可观测性是增量能力，静默降级。
+    }
   }
 
   /** 状态快照（无活跃状态机时返回默认 normal）。 */
