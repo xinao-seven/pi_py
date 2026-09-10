@@ -295,8 +295,8 @@ export class PlanToolbox {
     const task = this.current();
     if (task === undefined) {
       throw new Error(
-        '当前会话没有进行中的计划。计划模式由用户在发送消息时选择「先规划」开启；' +
-          '如果只是想讨论，请直接用文字回答，不要调用计划工具。',
+        '当前会话没有进行中的计划。如果任务较大或方向不明，先调用 propose_plan 征求用户是否先规划；' +
+          '小任务直接完成（或用文字回答）即可，不要调用 submit_plan 造计划。',
       );
     }
     return task;
@@ -383,7 +383,8 @@ export function buildPlanTools(toolbox: PlanToolbox): ToolDefinition[] {
       description:
         '提交（或重交）一份结构化执行计划：先调研，然后用本工具给出标题与步骤。' +
         '步骤尽量可独立验证：能验证的步骤请写 verification（file 产物 / command 命令 + 期望退出码 / manual 人工确认）。' +
-        '提交后计划进入「待确认」，等用户确认再执行；在用户确认前不要改动工作区。',
+        '提交后计划进入「待确认」，等用户确认再执行；在用户确认前不要改动工作区。' +
+        '本会话还没有计划时不要直接用它——先用 propose_plan 征求用户同意。',
       promptSnippet: '提交结构化执行计划（规划期的主产物）',
       promptGuidelines: [
         '规划期不要用文字罗列计划就结束：调研完成后必须调用 submit_plan 提交结构化计划。',
