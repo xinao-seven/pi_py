@@ -41,3 +41,9 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 | `PI_NODE_TRACE_FLUSH_MS` / `_BATCH` / `_MAX_PENDING` | `250` / `200` / `5000`           | 写入队列参数                             |
 
 完整口径与取舍见 [`docs/node-observability-m1.md`](../../docs/node-observability-m1.md)。
+
+**任务（M2）**：`/api/tasks` 提供任务与步骤的 CRUD（列表/详情/新建/修改/取消/步骤增删改），
+写入必须带 `ifRevision`（版本过期返回 `409 task_conflict`），变更通过 SSE `task_updated`
+推给相关会话。任务与 trace 共用一个 `platform.db`（同库不同表），因此重启不丢，
+`runs.task_id` 可把运行成本关联到任务；任务的持久化与 `PI_NODE_TRACE` 开关无关
+（trace 只控制观测明细）。设计说明见 [`docs/node-task-domain-m2.md`](../../docs/node-task-domain-m2.md)。

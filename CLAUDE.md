@@ -35,9 +35,9 @@ pi_py/
 │   │   │   ├── server.ts   # 进程入口（仅读取配置 + 监听）
 │   │   │   ├── config.ts   # 环境变量基础设施配置（PI_NODE_*）
 │   │   │   ├── errors.ts   # 统一 API 错误
-│   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/workspaces
-│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/mcp/...
-│   │   │       ├── platform/       # SQLite/内存存储（M1）：migrations/trace-model/trace-repository/store
+│   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/tasks/workspaces
+│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/task-service/mcp/...
+│   │   │       ├── platform/       # SQLite/内存存储（M1/M2）：migrations/trace-model/trace-repository/task-* /store
 │   │   │       └── observability/  # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
 │   │   ├── spike/          # M0 验证脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
 │   │   └── test/           # Vitest（映射 src/ 结构）
@@ -87,6 +87,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 会话命令类型（`POST /api/agent/:sessionId` body.type）：`prompt` / `steer` / `follow_up` / `abort` / `set_model` / `set_thinking_level` / `set_tools` / `compact` / `navigate_tree` / `reload_resources` / `approve_tool` / `plan_enable|disable|execute|refine`。
 - 新能力落点：新 API → 新增 `routes/<resource>.ts` + 对应 service，在 `app.ts` 显式注册；新会话能力 → `AgentRegistry`；新工具/事件钩子 → `extensions/`（不要为加载单个扩展改 `app.ts`）。
 - 可观测性（M1）：采集只在 `AgentRegistry.publish()` 一处插桩（→ `SessionLedger`）；存储与聚合在 `services/platform/`（SQLite/内存双实现 + 写入队列）；查询走 `routes/observability.ts` → `services/observability/metrics.ts`。不要在其他地方新增 trace 写入点。
+- 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
 
 ### Python 三层内核（pi-python/src）
 
@@ -138,7 +139,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
-- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`ObservabilityPanel.vue`（设置 → 用量）。
+- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`TaskPanel.vue`（任务面板）、`ObservabilityPanel.vue`（设置 → 用量）。
 - 主题/声音偏好存 localStorage（`pi.theme` / `pi.sound`），写入 `<html data-theme>`。
 
 ## 关键文档
@@ -153,6 +154,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-platform-plan.md` | Node 平台化规划（M0–M5 里程碑、契约变更、验收标准） |
 | `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
 | `docs/node-observability-m1.md` | **M1 可观测底座**：采集口径（run 边界/TTFT/策略拦截归因）、存储与聚合取舍、REST 契约、配置与降级 |
+| `docs/node-task-domain-m2.md` | **M2 任务领域**：状态聚合语义（唯一真相源＝步骤）、乐观并发、任务 REST/SSE 契约、面板 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |

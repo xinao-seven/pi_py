@@ -443,6 +443,24 @@ SSE 新增：
 
 **DoD**：任务可增删改查，重启后不丢；SSE 变更实时推送到前端任务面板。
 
+#### 4.2.4 实施修订（2026-08-21，M2 落地后回填）
+
+以 [`node-task-domain-m2.md`](node-task-domain-m2.md) 为准，以下四点做了明确化：
+
+1. **状态只由步骤聚合，`completed` 不冻结**：`refreshStatus` 里只有 `cancelled` 是冻结状态，
+   其余（含 `completed`）都由步骤重新聚合。这样「删除唯一未完成步骤」能回落到 `pending`
+   （本节 DoD 的要求），代价是手工设置的 `status` 会在下一次步骤变更时被重新聚合——
+   有意为之：不保留「任务说已完成、步骤还挂着」的隐藏状态。
+2. **存储直接进 SQLite**：M1 先落地了 `platform.db`，因此按 §4.2.1 的结论走 SQLite
+   （`tasks` / `task_steps`，迁移 v3），不再实现 JSON 原子串行写方案，二者不并存。
+3. **`/resume` 与 `/recovery` 不在 M2 占位**：本节的接口表标注它们属于 M3；
+   M2 只交付 CRUD 与 `cancel`，不提供「返回 202 但什么都不做」的空接口。
+4. **并行并发用单语句乐观锁**：`UPDATE ... SET revision = revision + 1 WHERE id = ? AND revision = ?`
+   按 `changes` 判定，409 `task_conflict` 带 `currentRevision`；不需要多语句事务或额外隔离级别。
+
+另外两点边界：任务写入**不走** trace 的写入队列（它是用户可见状态，必须同步落库、错误冒泡）；
+`runs.task_id` 只在 run **开始时**写入，执行中绑定任务不回溯已有 run。
+
 ---
 
 ### M3 断点续跑（Durable Execution）

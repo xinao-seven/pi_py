@@ -41,6 +41,11 @@ node-pi/server/
   `services/platform/migrations.ts` 的建表（新增迁移版本，不要改已发布的 DDL）；聚合口径与取整
   只在 `services/observability/metrics.ts` 定义。任何记帐代码都必须 try/catch 降级，绝不抛给
   agent loop，也不要写入对话正文（默认只存 digest 与预览）。详见 `docs/node-observability-m1.md`。
+- 新领域实体（M2 起的任务式）：模型放 `services/platform/<entity>-model.ts`（类型与纯函数，
+  状态由函数聚合而不是散落在各处），持久化放 `services/platform/<entity>-repository.ts`
+  （SQLite + 内存双实现，语义必须一致并有等价性测试），用例放 `services/<entity>-service.ts`，
+  接口放 `routes/<entity>.ts`。需要并发保护时用「版本号 + 单语句 UPDATE 判定 changes」的
+  乐观锁，不要用读写锁或多语句事务。返回给前端的结构要带上并发所需字段（如 `revision`）。
 
 ## 2. HTTP、SSE 与错误契约
 

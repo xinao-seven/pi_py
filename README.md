@@ -99,6 +99,16 @@ $env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 d
 默认不落对话正文、不落密钥；库文件与 trace 均不碰 `~/.pi/agent`。
 实现说明与全部配置见 [`docs/node-observability-m1.md`](docs/node-observability-m1.md)。
 
+## 任务（M2）
+
+「任务」是会话里的一等公民：目标 + 步骤（带状态、验证声明、完成证据），状态由步骤聚合，
+写入带版本号（并发冲突返回 `409 task_conflict`）。前端入口：聊天输入框上方的**任务面板**
+（可新建任务、推进步骤、取消任务）；接口在 `/api/tasks`，变更通过 SSE `task_updated` 实时推送。
+任务落在同一个 `platform.db`（与 trace 同库不同表），因此**重启不丢**、`runs.task_id` 可关联。
+执行/断点续跑（租约、`/resume`、`/recovery`）属于 M3；完成声明的实际校验属于 M4。
+
+实现说明见 [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md)。
+
 ## 测试
 
 ```powershell
@@ -135,5 +145,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-platform-plan.md`](docs/node-platform-plan.md) | Node 平台化规划（可观测/任务持久化/断点续跑/Plan 重构/Subagent） |
 | [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md) | M0 验证报告：存储选型与 `~/.pi/agent` 只读边界审计 |
 | [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
+| [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合语义、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

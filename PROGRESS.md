@@ -5,10 +5,10 @@
 
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
-| 当前里程碑 | **M1 已完成** → 下一步 **M2 任务领域**                           |
-| 上一提交   | `00a6a6a fix(node): 新增 v2 迁移修复过渡期 day_rollups schema`  |
+| 当前里程碑 | **M2 已完成** → 下一步 **M3 断点续跑**                           |
+| 上一提交   | `f44b419 fix(node): 客户端请求错误不再返回 500`                  |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **136** / Web **62**，全绿                             |
+| 测试基线   | Node 后端 **179** / Web **74**，全绿                             |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -29,8 +29,8 @@
 | **M0** 验证性 spike     | ✅ **完成** | 4 项验证 + 2 个阻塞性修复 + CI        |
 | **M0.5** 持久化边界整改 | ✅ **取消** | 重新审计后无阻塞项，详见 3.2          |
 | **M1** 可观测底座       | ✅ **完成** | SessionLedger + 存储 + 4 个 REST + 用量面板，详见 3.6 |
-| **M2** 任务领域         | ⬜ 下一步   | 见第 5 节；直接落 SQLite（不再用 JSON 方案） |
-| M3 断点续跑             | ⬜          | 依赖 M2                               |
+| **M2** 任务领域         | ✅ **完成** | 领域 + 存储 + 8 个 REST + SSE + 任务面板，详见 3.7 |
+| **M3** 断点续跑         | ⬜ 下一步   | 见第 5 节；依赖 M2 的 `execution` 字段  |
 | M4 Plan 重构            | ⬜          | 依赖 M3；**前置项已完成**（见 3.3）   |
 | M5 Subagent             | ⬜          | 需先决策与官方扩展的关系（见第 6 节） |
 
@@ -176,6 +176,52 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 
 ---
 
+### 3.7 M2 任务领域（已完成，`docs/node-task-domain-m2.md`）
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 模型 | `services/platform/task-model.ts`：`TaskRecord` / `TaskStep` / `deriveTaskStatus` / `nextStepId` / `applyStepStatus` |
+| 存储 | `services/platform/task-repository.ts`：SQLite（migrations v3）+ 内存双实现，语义等价 |
+| 用例 | `services/task-service.ts`：状态聚合、`ifRevision` 乐观并发、变更广播 |
+| 接口 | `routes/tasks.ts`：8 个接口（list/create/detail/patch/cancel/steps 增改删） |
+| 推送 | SSE `task_updated`（`AgentRegistry.announceTask`）+ `web/src/components/TaskPanel.vue` |
+| 关联 | `runs.task_id`（账本在 run 开始时取会话当前任务） |
+
+#### 已冻结的决策（实施中定的，比规划更具体）
+
+1. **状态唯一真相源＝步骤**：`completed` 由步骤聚合（删掉未完成步骤可以回落），
+   **只有 `cancelled` 冻结**。手工设置的 `status` 会在下一次步骤变更时被重新聚合——
+   不保留隐藏状态。
+2. **「已开工」不能只看 `in_progress`**：否则「2 步做完 1 步」会显示成「尚未开始」。
+3. **任务写入不走 trace 的写入队列**：trace 可丢可降级，任务是用户可见状态，
+   必须同步落库、错误必须冒泡；两者共用同一个 `DatabaseSync` 连接（单线程同步，不交错）。
+4. **乐观并发用单语句**：`UPDATE ... SET revision = revision + 1 WHERE id = ? AND revision = ?`，
+   按 `changes` 判定，409 带 `currentRevision`。
+5. **步骤 id `s{n}` 删除后不复用**；步骤表整批重写（几十条，重写比 diff 稳）。
+6. **`/resume` 与 `/recovery` 不占位**：半成品接口会让调用方以为功能已存在（M3 才做）。
+7. **SSE 广播规则**：绑定 `sessionId` → 只推该会话；否则推给 `cwd` 匹配的活跃会话。
+   任务变更**不进流式状态机**（`reduceAgentEvent` 刻意不处理），避免误判「Agent 在跑」。
+8. **trace 开关与任务解耦**：`PI_NODE_TRACE=0` 只关观测明细，任务照常落 `platform.db`；
+   `createApp()` 不传配置时仍是「不落盘」的空存储（测试安全默认值）。
+
+#### 顺带修掉的两个真实问题
+
+- **连接泄漏**：trace 关闭 + sqlite 时，没人关闭 `DatabaseSync`（任务共用该连接）。
+  测试清理临时目录失败暴露了它，`PlatformStore.close()` 现在显式关闭后端。
+- **客户端错误返回 500**：请求体不合法（如 Content-Length 不匹配、JSON 解析失败）走全局错误处理器
+  被统一成 `500 internal_error`，还会把 Fastify 原始 message（含请求体片段）回给客户端。
+  现在 4xx 保留状态码、机器码归一为 `invalid_request`，只回固定文案。
+
+#### 真机验证（临时 agent 目录 + 临时库）
+
+create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务聚合 in_progress，rev3）
+→ 陈旧 `ifRevision` 返回 `409 + currentRevision=3` → cancel（rev4）；
+`platform.db` 里 `user_version=3`、`tasks` / `task_steps` 已落库。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -202,37 +248,37 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 
 ---
 
-## 5. 下一步：M2 任务领域
+## 5. 下一步：M3 断点续跑
 
-> M1 的任务清单已全部完成，DoD 逐项对照见 `docs/node-observability-m1.md` §11。
-> 本节改写为 M2 的开工清单（细节以 `docs/node-platform-plan.md` §4.2 为准）。
+> M2 的任务清单已全部完成，DoD 对照见 `docs/node-task-domain-m2.md` §9。
+> 本节改写为 M3 的开工清单（细节以 `docs/node-platform-plan.md` §4.3 为准）。
 
-### 5.1 任务清单
+### 5.1 任务清单（待按规划 §4.3 细化）
 
-| 任务 | 落点（新增/改动） |
+| 任务 | 落点 |
 | --- | --- |
-| `tasks` / `task_steps` 建表与迁移（**直接落 SQLite**，规划已结论不并存 JSON 方案） | `services/platform/migrations.ts` 新增迁移版本 2 |
-| 任务领域模型与仓储（`TaskRecord` / `TaskStep` / `TASK_STATUSES` / `revision` 乐观并发） | `services/platform/task-repository.ts` + `services/task-service.ts` |
-| 步骤状态聚合出任务状态（`refreshTaskStatus`） | `services/task-service.ts` |
-| REST（list / create / detail / patch / steps 增删改 / cancel） | `routes/tasks.ts` + `app.ts` 注册 |
-| SSE `task_updated`（复用 `AgentRegistry.publish`，**必须同步** `web/src/lib/agent-events.ts` 的 `reduceAgentEvent`） | `agent-registry.ts` + 前端规约 |
-| 前端任务面板 | `web/src/components/TaskPanel.vue` + `types/index.ts` + `lib/api.ts` |
-| run 与任务关联（`runs.task_id` 已预留） | `session-ledger.ts`（会话上下文带 taskId 时写入） |
+| 执行租约与心跳（`execution.lease` / `lastHeartbeatAt`） | `services/task-service.ts` + 新建 `services/task-runner.ts` |
+| 在飞动作登记（`inFlight`：turn/tool + `sideEffect`） | 账本 hook + `AgentRegistry` 事件回调 |
+| 崩溃恢复扫描（启动时找 `running` 任务与过期租约） | `app.ts` 的 `onReady`（M0 已预留接入点） |
+| `POST /api/tasks/:id/resume`（continue / retry_step / replan）→ 202 | `routes/tasks.ts` + runner |
+| `GET /api/tasks/recovery` + SSE `task_recovery_required` | 同上（**必须同步** `web/src/lib/agent-events.ts`） |
+| 重启后任务面板提示可恢复 | `web/src/components/TaskPanel.vue` |
+| 清理残留 `running` run（M1 已知遗留） | 恢复扫描顺带收尾 |
 
-### 5.2 必须遵守的实现要点（继承 M1 已冻结的决策）
+### 5.2 必须遵守的实现要点
 
-1. **任务与 Plan 合流**：Plan 是 Task 的视图，不要再建第二套模型（P7）。
-2. 写入沿用共享态红线的做法：校验前置 + spread 保留未知字段 + 原子写；任务落在
-   `platform.db` 的 `tasks` / `task_steps`，与 `runs.task_id` 关联。
-3. 乐观并发：`PATCH` 必须带 `ifRevision`，不匹配返回 `409 task_conflict`。
-4. 边界：删除唯一未完成步骤后任务状态要回落；损坏数据要能降级为空列表且不影响 Agent 启动。
-5. 先做 M2 的模型与仓储，再做 Plan 映射（M4）：**M4 的 `submit_plan` 工具最终写的就是 Task**。
+1. **副作用不可猜测**：崩溃时无法判定副作用是否落地 → `sideEffect: 'unknown'` 的动作必须
+   人工确认后再续跑，绝不自动重放写操作。
+2. 恢复扫描只读不写共享态；「租约过期」判定用服务端时钟。
+3. `task_updated` 之外新增的 SSE 事件必须同步 `agent-events.ts` 的规约函数与前端类型。
+4. 续跑走 `AgentRegistry` 的既有命令通道（`prompt`/`follow_up`），不要另起执行器。
+5. M3 不改 `plan_*` 命令契约——那是 M4 的事。
 
-### 5.3 M2 的 DoD（来自规划 §4.2.3）
+### 5.3 M3 的 DoD（来自规划 §4.3，开工时再核对）
 
-- 任务可增删改查，重启后不丢。
-- SSE 变更实时推送到前端任务面板。
-- 并发 `PATCH` 携带过期 `ifRevision` → 409；删掉唯一未完成步骤后任务状态回落为 `pending`。
+- 进程重启后能列出可恢复任务，并明确区分「可自动续跑」与「必须人工确认」；
+- 续跑不会重复已落地的副作用；
+- 面板能提示恢复项并一键续跑。
 
 ---
 
@@ -251,11 +297,11 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 136 passed / 构建成功 / 8 个 spike 全过
+#   → 期望：format OK / 无类型错误 / 179 passed / 构建成功 / 8 个 spike 全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 62 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 74 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -306,6 +352,40 @@ node-pi/server/test/routes/observability-routes.test.ts
 web/src/components/ObservabilityPanel.vue
 web/test/components/ObservabilityPanel.test.ts
 docs/node-observability-m1.md                  M1 实现说明（口径/取舍/契约/DoD 对照）
+```
+
+### M2 新增（任务领域，2026-08-21）
+
+```
+node-pi/server/src/services/platform/task-model.ts       领域模型与纯函数（状态聚合/步骤 id/状态迁移）
+node-pi/server/src/services/platform/task-repository.ts  SQLite + 内存双实现（乐观锁、步骤整批替换）
+node-pi/server/src/services/task-service.ts              用例层（聚合、ifRevision、广播）
+node-pi/server/src/routes/tasks.ts                       8 个任务接口
+node-pi/server/src/services/platform/migrations.ts       v3：tasks / task_steps
+node-pi/server/test/services/platform/task-repository.test.ts
+node-pi/server/test/services/task-service.test.ts
+node-pi/server/test/routes/tasks-routes.test.ts
+web/src/components/TaskPanel.vue
+web/test/components/TaskPanel.test.ts
+docs/node-task-domain-m2.md                              M2 实现说明（语义/契约/DoD 对照）
+```
+
+### M2 改动（关键位置）
+
+```
+node-pi/server/src/services/agent-registry.ts
+  · announceTask（SSE task_updated 广播）      · setActiveTask（run↔task 关联）
+node-pi/server/src/services/observability/session-ledger.ts
+  · LedgerSessionContext.taskId → runs.task_id
+node-pi/server/src/services/platform/store.ts
+  · PlatformStore.tasks；trace 开关与任务解耦；close() 显式关闭后端（修泄漏）
+node-pi/server/src/app.ts
+  · TaskService 装配 + /api/tasks 注册 + 关闭时 dispose
+  · 全局错误处理器：4xx 客户端错误 → invalid_request（不再一律 500）
+web/src/composables/useAgentSession.ts   · task ref + refreshTask + task_updated 归约
+web/src/lib/agent-events.ts              · task_updated 不进流式状态机（契约注释）
+web/src/components/ChatWindow.vue        · 任务面板接线与 6 类操作
+web/src/types/index.ts / src/lib/api.ts  · 任务类型与 7 个接口封装
 ```
 
 ### M1 改动（关键位置）
@@ -372,3 +452,6 @@ web/src/components/{PlanProgress,ChatWindow,ChatInput,AgentControls}.vue   ← M
 | 进程被强杀会留下 `running` run | 正常关闭会收尾为 `aborted`；异常退出的残留记录需要清理或恢复扫描 | M3 |
 | 用量面板无实时刷新 | 目前手动刷新 + 切条件自动加载；未新增 SSE 事件（避免提前改前端契约） | M2/M3 可选 |
 | 规划期拦截未做端到端验证 | 归因逻辑有单测；e2e 只跑了普通工具调用，未在真实 SDK 下开启 Plan 模式 | M4 |
+| 任务与 run 的关联时机 | 只在 run **开始**时写 `runs.task_id`；执行中绑定任务不会回溯已有 run | M3 可选 |
+| `verification` 只存不校验 | M2 记录声明，实际校验（跑命令/查产物）由 M4 的完成工具做 | M4 |
+| 任务面板无跨会话视图 | 面板只显示当前会话任务；`GET /api/tasks` 已支持跨会话查询，UI 按需再加 | 可选 |
