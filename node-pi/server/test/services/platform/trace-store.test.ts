@@ -486,6 +486,7 @@ describe('platform store assembly', () => {
     expect(store.mode).toBe('memory');
     expect(warnings.some((line) => line.includes('falling back'))).toBe(true);
     store.traces.startRun(makeRun());
+    store.traces.finishRun('run-1', makeFinish());
     expect(store.traces.summary({}).totals.runs).toBe(1);
     store.close();
   });
