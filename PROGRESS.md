@@ -6,9 +6,9 @@
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
-| 上一提交   | `343b27b feat(node): M4 评测 golden set 与版本号语义修正`         |
+| 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **368** / Web **124**，全绿；spike 30 项断言 + eval 11 个用例全过 |
+| 测试基线   | Node 后端 **373** / Web **128**，全绿；spike 30 项断言 + eval 11 个用例全过 |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -449,6 +449,35 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
+### 3.13 长会话读取崩溃修复：分支树扁平化（已完成，`docs/node-session-tree-flat.md`）
+
+**现象**：`GET /api/sessions/:sessionId` 打开超长会话时 500，
+`RangeError: Maximum call stack size exceeded`，栈顶是 Fastify 的 `JSON.stringify`。
+
+**根因**：Pi 会话树是「一条消息一个节点」的链表，嵌套深度 = 条目数（实测 2395 条目 → 深度 2391）。
+`JSON.stringify` 是递归实现，该节点形状约 **2300 层触顶**（2400 层必崩）。
+同一个响应里 `tree` 还重复了整份会话内容（6.5 MB vs `context.messages` 1.4 MB）。
+
+**修法（已冻结的决策）**：
+
+1. `tree` 从嵌套数组改为**扁平数组 + `depth`**（先序，父在前）；节点不带 `children`。
+2. 节点只带导航所需字段：`id / parentId / depth / type / role / text(≤120 字符摘要) / label / labelTimestamp`；
+   正文一律走 `context.messages`，**不得**再塞回 `tree`。
+3. 服务端用显式栈拍平（`services/session-tree.ts`）——服务端自己也不能递归。
+4. 前端在 **API 层**归一化（`lib/session-tree.ts`）：Node 扁平直接用，Python 嵌套用显式栈拍平；
+   组件只面对扁平节点（`BranchNavigator` 不再递归、`ChatWindow` 节点数直接取长度）。
+   这样冻结的 Python 后端不需要改。
+
+**证据**：同一会话 `tree` 6.53 MB → 0.53 MB，完整详情 1.9 MB，序列化正常。
+
+**测试**：Node +5（`session-tree` 单测 4 + 路由端到端回归 1，后者在改动前必 500 已验证）、
+Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
+
+**已知限制**：Python 后端仍返回嵌套树（其 `json.dumps` 在 ~1000 层 `RecursionError`）——
+`pi-python` 已冻结，只在前端兜底；生产走 Node 后端。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -767,6 +796,21 @@ web/src/components/ToolCallBlock.vue                分流到委派卡片
 web/src/types/index.ts                              SubagentToolDetails
 ```
 
+### 长会话修复（分支树扁平化，2026-09-10）
+
+```
+node-pi/server/src/services/session-tree.ts   flattenSessionTree()：嵌套树→扁平节点 + depth（显式栈）
+node-pi/server/src/routes/sessions.ts         GET /:sessionId 的 tree 改用 flattenSessionTree()
+node-pi/server/test/services/session-tree.test.ts    单测（5000 层不爆栈 / 先序 / 摘要 / 坏节点）
+node-pi/server/test/routes/sessions-routes.test.ts   端到端回归（3000 条目会话必须 200）
+web/src/lib/session-tree.ts                   toSessionTreeNodes()：兼容 Node 扁平与 Python 嵌套
+web/src/lib/api.ts                            getSession() 在 API 层归一化
+web/src/types/index.ts                        SessionTreeNode（扁平）/ LegacySessionTreeNode / SessionTreeInput
+web/src/components/BranchNavigator.vue        只读扁平节点（不再递归拍平）
+web/src/components/ChatWindow.vue             节点数直接取数组长度
+web/test/lib/session-tree.test.ts             归一化单测
+```
+
 ### 与前端共享的契约文件（任何接口改动都必须同步）
 
 ```
@@ -809,3 +853,4 @@ web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.v
 | 模板库不支持自定义/分享 | 模板是仓库内常量表；用户自己的 server 仍走手工配置 | 可选 |
 | Plan 模式仍拦 MCP 工具 | 规划期无法用 context7/搜索类 server 查资料；可给 `PlanPolicy` 加只读 MCP 白名单 | 可选 |
 | 租约 TTL 写死 30s/10s | 暂不需要配置项；若将来要调，走 `PI_NODE_*` 并补文档 | 可选 |
+| Python 后端仍返回嵌套会话树 | `session_detail()` 的 `tree` 是嵌套结构，`json.dumps` 在约千条消息的会话上 `RecursionError`；`pi-python` 已冻结，仅由前端归一化兜底（生产走 Node） | 冻结 |

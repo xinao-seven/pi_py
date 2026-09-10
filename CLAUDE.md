@@ -86,6 +86,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 路由不得直接创建 Pi Session、读写持久化配置或承载长生命周期状态。
 - `AgentRegistry`（`services/agent-registry.ts`）是核心：每个会话一个活跃 `AgentSession`，内存缓存 SSE 事件（每会话最多 256 条）支持 `Last-Event-ID` 回放，命令走统一的 `command()` 分发。
 - 会话命令类型（`POST /api/agent/:sessionId` body.type）：`prompt` / `steer` / `follow_up` / `abort` / `set_model` / `set_thinking_level` / `set_tools` / `compact` / `navigate_tree` / `reload_resources` / `approve_tool` / `plan_enable|disable|execute|refine`。
+- 会话详情（`GET /api/sessions/:id`）的 `tree` 只能是**扁平节点 + `depth`**（先序、不含 `children`）。原因：树深度等于会话条目数，嵌套结构会让 Fastify 的 `JSON.stringify` 在长会话上爆栈（`docs/node-session-tree-flat.md`）。节点只带导航字段（`id/parentId/depth/type/role/text/label/labelTimestamp`），正文一律走 `context.messages`。
 - 新能力落点：新 API → 新增 `routes/<resource>.ts` + 对应 service，在 `app.ts` 显式注册；新会话能力 → `AgentRegistry`；新工具/事件钩子 → `extensions/`（不要为加载单个扩展改 `app.ts`）。
 - 可观测性（M1）：采集只在 `AgentRegistry.publish()` 一处插桩（→ `SessionLedger`）；存储与聚合在 `services/platform/`（SQLite/内存双实现 + 写入队列）；查询走 `routes/observability.ts` → `services/observability/metrics.ts`。不要在其他地方新增 trace 写入点。
 - 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
@@ -145,6 +146,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 ## 前端要点
 
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
+- 后端形状差异（如分支树：Node 扁平 / Python 嵌套）在 API 层归一化（`web/src/lib/session-tree.ts`），组件只面对一种形状；**任何遍历会话结构的地方一律用显式栈，不用递归**（长会话会爆栈）。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
 - 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`TaskPanel.vue`（任务面板）、`ObservabilityPanel.vue`（设置 → 用量）。
 - 主题/声音偏好存 localStorage（`pi.theme` / `pi.sound`），写入 `<html data-theme>`。
@@ -167,6 +169,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-plan-mode-m4.md` | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据、已知限制 |
 | `docs/node-question-channel.md` | **向用户提问通道**（`ask_user`）：工具契约、弹窗、SSE/命令、行为取舍 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
+| `docs/node-session-tree-flat.md` | 长会话读取崩溃修复：`GET /api/sessions/:id` 分支树扁平化契约与前端归一化 |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |

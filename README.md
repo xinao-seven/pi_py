@@ -231,4 +231,5 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-question-channel.md`](docs/node-question-channel.md) | **向用户提问的交互通道**：ask_user 工具契约、弹窗行为、SSE/命令、测试 |
 | [`docs/node-subagent-m5.md`](docs/node-subagent-m5.md) | **M5 子任务委派**：为什么内联替换官方扩展、预算/审批继承/trace 树、决策与验证 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
+| [`docs/node-session-tree-flat.md`](docs/node-session-tree-flat.md) | **长会话读取崩溃修复**：分支树扁平化（`tree` 契约、前端归一化、回归测试） |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
