@@ -695,6 +695,33 @@ SSE：`plan_updated` 的载荷从 `PlanSnapshot` 换成 `PlanView`（破坏性�
 
 **DoD**：模型不写任何特殊标记也能完成「规划 → 确认 → 执行 → 完成」全流程；执行中可改计划；退出后计划可查。
 
+#### 4.4.7 实施修订（2026-08-21，M4 落地后回填）
+
+对外契约见 [`node-web-plan-mode.md`](node-web-plan-mode.md)，实现说明与验证证据见
+[`node-plan-mode-m4.md`](node-plan-mode-m4.md)。以下是与本节原设计不同或需要明确的地方：
+
+1. **计划一进入规划就落库**：`plan_start` 立刻建 `origin='plan'` 的空步骤任务（`drafting`），
+   而不是等 `submit_plan` 才建。否则「Agent 正在调研」这段状态既不可持久化也不可见，
+   崩溃/刷新后连「在规划什么」都找不到（P8 换了个地方）。
+2. **`planId === taskId`**：契约保留两个字段是为语义清晰，实现上是同一个 id，不维护映射。
+3. **落库状态只有四种意图**（`drafting/proposed/executing/paused`）；
+   `completed`/`abandoned` 由任务状态推导，`blocked` 推导为 `paused`——少存一份状态少一处矛盾。
+4. **`update_plan` 的可用范围比原设计更实用**：原设计写「drafting/proposed/paused 可用」，
+   实现为**执行中也允许**，但禁止删除或重命名已经开始/已完成的步骤（按标题复用进度）。
+   否则 P4「执行到第 3 步发现第 5 步不对」这个明确要修的场景仍然无法达成。
+5. **`command` 类验证不重跑命令**：只校验「证据里确有该命令且退出码符合预期」。
+   服务端自己重跑等于绕开审批链路执行任意 shell，与安全红线冲突；文档已明说这是
+   「跑过且如实上报」而不是「跑对了」。
+6. **`ask_user` 复用对话通道而不是审批弹窗**：审批是「允许/拒绝」语义，自由问答硬塞进去更混乱。
+   问题进 `PlanView.question`，用户在对话里回答。
+7. **版本号语义修正**：M3 的心跳/在飞写入不再占用 `revision`（版本号 = 用户可见内容的版本），
+   且 `mutate` 的「无变化」约定让 `plan_resume` 这类幂等命令不写库。
+   否则模型手里的 revision 会在它思考期间过期，`update_plan` 频繁 409（eval 抓到的真实问题）。
+8. **`tools` 白名单必须并入内联工具名**：SDK 的 `tools` 是可用工具白名单，
+   带预设（指定 `toolNames`）的会话里 `submit_plan`/MCP 工具会「not found」（spike 抓到的真实缺陷）。
+9. **评测落成 `npm run eval`**（CI 的 eval job 自动生效）：7 个确定性用例 + 三项门禁指标，
+   见 [`node-plan-mode-m4.md`](node-plan-mode-m4.md) §4.3。
+
 ---
 
 ### M5 Subagent（上下文隔离 + 并行 + 预算隔离）
@@ -827,7 +854,7 @@ export class SubagentService {
 
 | 命令 | 状态 |
 | --- | --- |
-| `plan_start` / `plan_pause` / `plan_resume` / `plan_abandon` | 新增（M4） |
+| `plan_start` / `plan_pause` / `plan_resume` / `plan_abandon` | ✅ 已新增（M4） |
 | `plan_enable` / `plan_disable` | deprecated 别名，保留一个版本（M4） |
 | `prompt` 增加 `mode?: 'direct' \| 'plan'` | 扩展（M4） |
 | `approve_tool` 增加可选 `subagentSessionId` | 扩展（M5） |
@@ -861,7 +888,7 @@ export class SubagentService {
 
 | 文档 | 动作 |
 | --- | --- |
-| `docs/node-web-plan-mode.md` | **重写**（契约换成 `PlanView` + 工具驱动流程） |
+| `docs/node-web-plan-mode.md` | ✅ **已重写**（契约换成 `PlanView` + 工具驱动流程，2026-08-21） |
 | `docs/node-pi-backend.md` | 追加四项能力的功能清单 |
 | `docs/node-command-approval.md` | 补充「能力分类」与 `ask_user` 复用通道 |
 | `docs/node-extension-system.md` | 登记新增内联扩展（观测 / Plan 工具 / Subagent） |

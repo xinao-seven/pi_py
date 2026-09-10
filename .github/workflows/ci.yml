@@ -65,9 +65,8 @@ jobs:
       - run: npm run build
 
   # ── 评测门禁（M4 接线）───────────────────────────────────────────────────────
-  # 现在 eval 脚本尚不存在，用 --if-present 让 job 变为 no-op 而不是红灯；
-  # M4 在 node-pi/server 加入 `npm run eval`（fauxProvider golden set）后
-  # 本 job 自动生效，无需再改 CI。
+  # M4 已落地 `npm run eval`（fauxProvider golden set，7 个用例 + 三项阈值门禁）。
+  # 保留 --if-present 是为了让「只 checkout 旧提交」的场景不至于红灯。
   eval:
     name: eval golden set
     runs-on: ubuntu-latest
@@ -85,5 +84,5 @@ jobs:
           cache-dependency-path: node-pi/server/package-lock.json
 
       - run: npm ci
-      - name: 离线 golden set（M4 起生效）
+      - name: 离线 golden set（M4）
         run: npm run eval --if-present

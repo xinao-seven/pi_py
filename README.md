@@ -124,22 +124,48 @@ $env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 d
 接口：`GET /api/tasks/recovery`、`POST /api/tasks/:id/resume`（202）+ SSE `task_recovery_required`。
 说明见 [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md)。
 
+## Plan 模式（M4 重构）
+
+计划不再是「模型写 `Plan:` 标题、系统用正则解析」，而是 **Task 的受控视图 + 结构化工具**：
+
+- **发送时选择执行方式**：输入框的 `[直接执行 | 先规划]`（记住上次选择）或 `/plan` 前缀；
+  **新会话也能直接规划**，不再需要先开开关再发消息。
+- **规划期只读**：Agent 只读调研、可以跑验证类命令（`tsc --noEmit` / `pnpm test` / `npm run build`），
+  不能改工作区；写操作与 MCP 工具一律拦截（能力分类判定，不是白名单比对）。
+- **计划由工具产出**：`submit_plan` / `update_plan` / `complete_step` / `block_step` / `ask_user`，
+  模型不需要写任何特殊标记；步骤完成必须带证据，服务端按声明的 `verification` 校验
+  （产物存在 / 命令与退出码 / 人工结论）。
+- **全生命周期可控**：确认执行、执行中改后面几步、暂停/继续、放弃（记录保留可查）；
+  崩溃后由 M3 的恢复清单接上（`replan` 只对计划任务开放）。
+- **留在任务库里**：计划就是 `origin='plan'` 的任务，因此任务面板、成本账本、断点续跑天然共用同一份状态。
+
+契约见 [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md)，
+实现与验证证据见 [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md)。
+
 ## 测试
 
 ```powershell
-# Node 版
-cd node-pi/server && npm run typecheck && npm test
+# Node 版（生产后端）
+cd node-pi/server && npm run typecheck && npm test && npm run build && npm run spike && npm run eval
+
+# 前端
+cd web && npm run typecheck && npm run lint && npm test && npm run build
 
 # Python 版
 cd pi-python && python -m pytest
 ```
 
 CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`node-backend`（format → typecheck → test → build → spike）、
-`web`（typecheck → lint → test → build）、`eval`（离线 golden set，M4 接线后自动生效）。
+`web`（typecheck → lint → test → build）、`eval`（离线 golden set 与阈值门禁）。
 
-`npm run spike` 是 **M0 能力守护**，不是探索脚本：它离线验证依赖布局未破坏关键能力
-（`fauxProvider` 可解析、`node:sqlite` 可用、父子会话识别、`tool_call` 钩子链与阻断语义）。
+`npm run spike` 是**能力守护**（不是探索脚本），8+1 个离线脚本验证依赖布局未破坏关键能力
+（`fauxProvider` 可解析、`node:sqlite` 可用、父子会话识别、`tool_call` 钩子链与阻断语义、
+`session_start` 派发与 plan 上下文清理，以及 **M4 端到端：模型零标记完成「规划 → 确认 → 执行 → 完成」**）。
 详见 [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md)。
+
+`npm run eval` 是 **M4 golden set 门禁**：7 个确定性用例（fauxProvider 驱动真实管线）+
+三项阈值（pass@1 100%、计划一次通过率 ≥80%、零残留旧标记），任何一项不达标即 CI 红灯。
+指标含义见 [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) §4.3。
 
 ## 文档
 
@@ -153,7 +179,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-pi-backend.md`](docs/node-pi-backend.md) | Node 版后端说明 |
 | [`docs/node-extension-system.md`](docs/node-extension-system.md) | Node 扩展发现与接入 |
 | [`docs/node-command-approval.md`](docs/node-command-approval.md) | 命令风险分级与审批事件链路 |
-| [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | Web Plan 模式的 Agent 约束、确认执行与接口契约 |
 | [`docs/node-mcp-guide.md`](docs/node-mcp-guide.md) | MCP 支持总结（原理、实现、配置方法与示例） |
 | [`docs/node-mcp-support.md`](docs/node-mcp-support.md) | MCP 功能的设计与实现细节 |
 | [`docs/node-mcp-implementation.md`](docs/node-mcp-implementation.md) | MCP 实现详解（代码走读） |
@@ -162,5 +187,8 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合语义、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md) | M3 断点续跑：执行租约、在飞动作与副作用分级、恢复清单与一键续跑 |
+| [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合、乐观并发、任务 REST/SSE 与面板 |
+| [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
+| [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

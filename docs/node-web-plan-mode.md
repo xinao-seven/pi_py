@@ -1,103 +1,155 @@
-# Web Plan 模式
+# Web Plan 模式（M4 重构后）
 
-更新日期：2026-08-18
+更新日期：2026-08-21
+状态：**已实现并冻结契约**（M4 完成）。实现细节与取舍见
+[`node-plan-mode-m4.md`](node-plan-mode-m4.md)；本文只讲**对外契约与用法**。
 
-## 目的与边界
+> M4 之前本文描述的是「先开开关 → 模型写 `Plan:` 标题 → 正则解析 → 输出 `[DONE:n]`」。
+> 那套设计已被**整体替换**：计划改由工具产出、状态存在任务库里，模型不需要写任何特殊标记。
+> 重构原因（8 个具体缺陷）见 [`node-platform-plan.md`](node-platform-plan.md) §2 与
+> [`node-plan-mode-m4.md`](node-plan-mode-m4.md) §1。
 
-Plan 模式不是一个可手工勾选的任务看板，而是一次 Pi Agent 会话的**受约束工作流**：
+---
 
-1. 用户在已有会话中开启 Plan 模式；
-2. Agent 只能阅读、检索和讨论，不能编辑项目；
-3. Agent 在回复中提出 `Plan:` 编号计划；
-4. 用户可要求细化，或显式确认；
-5. 只有确认后，Agent 才恢复完整工具权限并按序执行；每完成并验证一步，在回复中输出
-   `[DONE:n]`，系统据此更新进度。
+## 1. 心智模型
 
-这保留了原版 Pi `examples/extensions/plan-mode` 的核心设计，同时将原先 TUI 的确认菜单改为 Web
-面板和 REST/SSE 协议。它不替代一般的用户指令：用户始终可以停止会话或放弃计划；但 Agent 在未确认
-阶段没有可写工具，不能绕过确认直接改动文件。
+**Plan 是 Task 的受控视图。** 一次规划就是创建一个 `origin='plan'` 的任务：
 
-## 组件与数据流
-
-```text
-Vue PlanProgress（输入框上方内联面板）
-  ├─ GET /api/agent/:sessionId/plan              ← 会话加载/恢复时 REST 拉取
-  └─ POST /api/agent/:sessionId { type: plan_* } ← 用户决定
-                         │
-                         ▼
-PlanModeService（按会话持有 PlanMachine 状态机）
-      │                │
-      │ command()      │ buildExtension() 注入 tool_call / before_agent_start 等钩子
-      ▼                ▼
-  状态快照          Pi 生命周期钩子（Plan 工具权限的最终约束点）
-      │
-      └─ SSE { type: "plan_updated", plan } → useAgentSession
+```
+用户「先规划」 ──► 计划任务(drafting) ──submit_plan──► proposed ──用户确认──► executing ──complete_step──► completed
+                        │                                 │                     │
+                        │                                 └──update_plan──┐      ├──plan_pause──► paused ──plan_resume──┐
+                        └──plan_abandon──────────────────────────────────► abandoned                  ◄────────────────────┘
 ```
 
-- `PlanModeService.buildExtension()` 生成内联扩展，为每个会话注册一套 Pi 生命周期钩子，钩子委托给
-  按会话隔离的 `PlanMachine`（`node-pi/server/src/services/plan-mode-service.ts`）——这是 Plan
-  工具权限的最终约束点。
-- `PlanModeService` 按 sessionId 持有状态机，是状态快照的权威来源；`command()` 直接调用状态机的
-  enable/disable/execute/refine，不经过事件总线（内联扩展与后端共享模块实例，可直接调用）。
-- `AgentRegistry` 把状态变化翻译为 `plan_updated` SSE 事件，供已连接的客户端即时刷新；
-  `useAgentSession` 在会话加载时通过 REST 快照恢复 Plan 状态，并在 SSE 收到 `plan_updated` 时实时
-  更新内联面板，SSE 断连或会话从 JSONL 恢复后仍能通过快照兜底。
+三条不变量：
 
-## Agent 层行为
+1. **只有用户能推进关键状态**：从 `proposed` 到 `executing` 必须由用户确认（`plan_execute`）；
+   模型在规划期**没有写工具**，无法绕过确认改工作区。
+2. **步骤完成必须有证据**：`complete_step` 要带 summary / commands+退出码 / files，
+   步骤声明了 `verification` 时服务端会校验，不符则返回工具错误让模型补齐。
+3. **状态只有一份**：任务表是唯一真相源，`PlanView` 是现算的投影；模型/面板/执行器
+   任何一方写入后，其它方通过 SSE `plan_updated` 看到同一份状态。
 
-### 规划期
+---
 
-`plan_enable` 后，扩展先记录当前活动工具集，再移除 `edit`、`write`，并仅加入阅读和检索工具。
-对 `bash` 额外执行只读白名单校验；诸如 `rm`、重定向写入、`npm install`、Git 写入等都会被
-`tool_call` 钩子阻断。每次 Agent 启动前，`before_agent_start` 注入一个不可见上下文，要求先讨论/调查，
-再以编号的 `Plan:` 段落输出方案，且不得修改文件。
+## 2. 用法
 
-`agent_end` 从最新 assistant 文本提取 `Plan:` 下的编号项（支持 `Plan:`、`**Plan:**` 和
-`## Plan:`），生成待确认步骤。用户执行 `plan_refine` 后，扩展清除待确认标记并向当前会话追加
-follow-up，让 Agent 根据反馈生成新计划。
+### 2.1 用户怎么用
 
-### 执行期
+- **发送时选择执行方式**：输入框左侧的 `[直接执行 | 先规划]`（记住上次选择），
+  或在输入框里用 `/plan` 前缀临时切一次。**新会话也可以直接「先规划」**——
+  不再需要「先发一条消息创建会话再打开开关」。
+- **规划期**：Agent 只读调研（读代码、跑验证类命令），不会改文件；需要拍板时它会提问并停下。
+- **方案定稿**：Agent 调用 `submit_plan` 提交计划 → 面板显示「待确认」，
+  可「确认并执行」「继续细化（说明你的要求）」「放弃此计划」。
+- **执行期**：面板实时显示每步状态与证据；可以暂停、继续、改名/跳过/删除还没做的步骤、
+  放弃（记录保留，之后仍可查）。
+- **中断后**：进程崩溃/重启 → 任务面板提示「上次运行被中断」，
+  计划面板显示「已暂停」，可「继续执行」；写操作无法确认时服务端会拒绝自动续跑（见 M3 文档）。
 
-`plan_execute` 只有在存在待确认步骤时才会通过；服务端否则返回
-`409 plan_not_ready`。扩展恢复原工具集，发送一个带剩余步骤的隐藏 follow-up，并触发下一轮 Agent。
-每轮前继续注入执行上下文，要求按顺序推进并在**完成且验证后**写出 `[DONE:n]`。
+### 2.2 前端契约
 
-`turn_end` 解析标记并更新对应步骤。全部步骤完成时，扩展退出执行态并清空当前计划；用户可在下次开启
-Plan 模式讨论新的任务。
-
-## HTTP 与 SSE 契约
-
-| 接口/事件 | 说明 |
+| 项 | 值 |
 | --- | --- |
-| `GET /api/agent/:sessionId/plan` | 打开（必要时恢复）会话，返回 `{ plan: { sessionId, mode, todos, awaitingConfirmation } }`。 |
-| `POST /api/agent/:sessionId` + `plan_enable` | 进入只读规划期。 |
-| `POST /api/agent/:sessionId` + `plan_refine` | 仅对待确认计划有效；`message` 为必填非空字符串。 |
-| `POST /api/agent/:sessionId` + `plan_execute` | 仅对待确认且非空计划有效。 |
-| `POST /api/agent/:sessionId` + `plan_disable` | 放弃当前规划并恢复原工具集。 |
-| SSE `plan_updated` | 载荷为 `{ type: "plan_updated", plan }`，与 GET 的 `plan` 结构一致。 |
+| 计划视图 | `GET /api/agent/:sessionId/plan` → `{ plan: PlanView }`（无计划时 `planId === ''`） |
+| 会话状态里的计划 | `GET /api/agent/:sessionId` → `state.plan`（同一个 `PlanView`） |
+| 实时更新 | SSE `{ type: 'plan_updated', plan: PlanView }` |
+| 命令 | `POST /api/agent/:sessionId` body `{ type: 'plan_*' , message? }`，响应 `{ success, data: { plan } }` |
+| 步骤编辑 | 直接走任务接口：`PATCH /api/tasks/:id/steps/:stepId`、`DELETE ...`（带 `ifRevision`） |
+| 发送方式 | `POST /api/agent/new` 与 `{ type:'prompt' }` 支持 `mode: 'direct' \| 'plan'`（非法值 → 422） |
 
-`mode` 取值为 `normal`、`planning`、`executing`；每个待办项为
-`{ step: number, text: string, completed: boolean }`。前端不得自行把步骤改为完成，必须等待 Agent 的
-`[DONE:n]` 状态事件。
+`PlanView`：
 
-## 与 Session JSONL 持久化的关系
+```ts
+interface PlanView {
+  planId: string;            // 与 taskId 相同（1:1）
+  taskId: string;
+  sessionId: string;
+  status: 'drafting' | 'proposed' | 'executing' | 'paused' | 'completed' | 'abandoned';
+  revision: number;          // 用户可见内容的版本号（心跳/在飞不占用，见 §4）
+  title: string;
+  goal: string;
+  steps: Array<{
+    id: string;              // 's1'、's2'…（与任务步骤同 id）
+    title: string;
+    details?: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped';
+    verification?: { kind: 'command' | 'file' | 'manual'; command?: string; expectExitCode?: number; path?: string };
+    evidence?: { summary?: string; commands?: Array<{ command: string; exitCode: number | null }>; filesTouched: string[]; toolCallIds: string[] };
+    blockedReason?: string;
+  }>;
+  awaitingUserAction: boolean;  // 待确认 / 已暂停 / 有澄清问题
+  question?: string;             // ask_user 提出的澄清问题
+  questionOptions?: string[];
+  draftingSince?: string;
+  updatedAt: string;
+}
+```
 
-扩展通过 `pi.appendEntry("web-plan-mode", ...)` 将模式、原工具集、待办和确认状态写入当前 Session
-JSONL。这是**会话内容持久化的一部分**：同一会话恢复后，扩展在 `session_start` 重建 Plan 约束和
-进度。
+### 2.3 命令表
 
-它不同于一个全局“任务状态库”：没有跨会话的任务 ID、分配、队列或独立生命周期；Plan 只服务于其所属
-对话，并与该对话的上下文、消息树和工具权限一起恢复。若未来需要跨会话协作或长期排程，应另建任务
-领域服务，而不是扩大这个扩展的职责。
+| 命令 | 语义 | 校验 |
+| --- | --- | --- |
+| `plan_start` | 用这次消息开始规划（必须有 `message`） | 无 message → 422；已有未结束计划 → 采纳并打回 drafting |
+| `plan_execute` | 确认并开始执行（202 语义：发 prompt，不等模型） | 非 `proposed`/`paused` → 409 `plan_not_ready`；无步骤 → 409 |
+| `plan_pause` | 暂停：状态转 `paused`、释放租约、**中止当前轮** | 无计划 → 409 `plan_unavailable` |
+| `plan_resume` | 继续执行（幂等：已是 executing 时不写库） | 无计划 → 409 |
+| `plan_refine` | 把修改意见交给模型（模型用 `update_plan` 落地） | 空 message → 422 |
+| `plan_abandon` | 放弃：任务 `cancelled`（记录保留，可查） | 无计划 → 409 |
+| `plan_enable` / `plan_disable` | **弃用别名**，等价 `plan_start` / `plan_abandon`，保留一个版本并写 warn 日志 | — |
 
-## 接入与测试
+---
 
-- Plan 内联扩展由 `OriginalPiSessionFactory.loader()` 通过 `extensionFactories` 注入每个会话，
-  无需在 `app.ts` 逐项注册；预设可关闭（`extensions.planMode: false`）。
-- 主入口位于聊天输入框上方的 **开启 Plan 模式**：先点击开关，再在原输入框发送需求；该消息会在
-  只读规划上下文中驱动 Agent 生成 `Plan:`。激活后，内联面板 `web/src/components/PlanProgress.vue`
-  固定在输入框上方始终可见，实时展示规划/确认/执行进度并高亮当前步骤；再次点击开关即退出 Plan
-  模式（执行中会先弹确认），面板内也有"退出 Plan 模式"按钮。
-- 修改状态形状或权限规则时，同步更新 `PlanModeService`、前端类型/API 和本文档。
-- 关键契约测试位于 `node-pi/server/test/services/plan-mode.test.ts`；前端面板测试位于
-  `web/test/components/PlanProgress.test.ts`。
+## 3. 计划工具契约（模型侧）
+
+由内联扩展注册，**只在计划会话里加入 activeTools**（普通会话里对模型不可见）：
+
+| 工具 | 参数 | 行为 |
+| --- | --- | --- |
+| `submit_plan` | `{ title, steps: [{ title, details?, verification? }] }` | 创建/替换计划步骤 → `proposed`；校验空步骤、重复标题、>50 步、`verification` 声明不自洽 |
+| `update_plan` | `{ revision, title?, steps? }` | 按 `revision` 修订；不匹配时错误信息里给出当前 revision；**不能删除或重命名已经开始/已完成的步骤**（可改还没做的步骤） |
+| `complete_step` | `{ stepId, evidence: { summary?, commands?, files? } }` | 校验证据后把步骤置完成；证据不符 → 工具错误（模型补齐后重试） |
+| `block_step` | `{ stepId, reason }` | 步骤 `blocked` + 原因 → 计划转 `paused`，等用户处理 |
+| `ask_user` | `{ question, options? }` | 登记澄清问题（`PlanView.question`），请模型结束本轮等回答 |
+
+证据校验强度（刻意不同，见 M4 文档）：
+
+| verification | 判定 |
+| --- | --- |
+| `kind: 'file'` | 查产物是否存在（相对路径按会话 cwd 解析）——最强 |
+| `kind: 'command'` | 证据里确有这条命令且退出码符合 `expectExitCode`（默认 0）。服务端**不自己重跑**命令（那等于绕开审批执行任意 shell），因此只验证「确实跑过并如实上报」 |
+| `kind: 'manual'` | 需要非空结论（供人事后审计） |
+| 未声明 | 仍需证据非空（summary / commands / files 之一） |
+
+---
+
+## 4. 规划期权限（能力集，而不是白名单）
+
+规划期（`drafting` / `proposed`）只读，规则按**能力分类**判定（`services/plan-policy.ts`）：
+
+1. 先跑审批规则：危险/敏感命令（递归删除、改依赖、联网、重定向写文件、远端 Git 操作…）
+   一律不放行——同一套判定同时服务审批与 Plan，不会出现「审批说危险、Plan 说安全」。
+2. 把命令按 `;` `&&` `||` `|` 拆段，**每段都要放行**（不给 `npm test && rm -rf src` 留口子）。
+3. 每段按程序名归类为只读 / 验证 / 写 / **未知（=不放行）**。
+
+策略可配（`PlanPolicy`）：`readOnlyTools`、`bash: 'none' | 'verify' | 'all'`、
+`verifyCommands`（追加的验证类程序）、`allowMcp`（默认 false——无法证明 MCP 工具只读）。
+
+放行示例：`tsc --noEmit`、`pnpm test`、`npm run build`、`npx vitest run`、`node -e 'console.log(1)'`、
+`git status`、`rg -n x src`。拦截示例：`rm -rf`、`sed -i`、`> out.txt`、`git commit`、
+`npm install`、`curl`、`npx 未知包`、`powershell -c ...`、MCP 工具。
+
+**退出**：只撤销本会话 Plan 期造成的工具差集（`added` / `disabled` 两张表），
+用户在此期间用 `set_tools` 做的改动不会被吞掉（P6）。计划自然完成时同样收回计划工具。
+
+---
+
+## 5. 与其它模块的关系
+
+- **任务（M2）**：计划就是任务，所以任务面板能看到它，成本账本（M1）的 run 也关联到同一个 `task_id`。
+- **断点续跑（M3）**：计划执行复用同一套租约与在飞动作；`POST /api/tasks/:id/resume` 的
+  `mode: 'replan'` **只对 plan 任务开放**——会把计划打回 `drafting` 并让模型用
+  `update_plan`/`submit_plan` 重交。
+- **CLI 兼容**：会话 JSONL 只多了一条 `web-plan-ref` 指针（旧快照条目保留不删、也不再写新的）；
+  原版 pi 与官方 plan-mode 扩展读到的会话不受影响。

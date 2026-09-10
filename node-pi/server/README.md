@@ -55,3 +55,15 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 `verification.kind='file'` 则先验证产物（在就补记完成、绝不重跑），否则必须人工确认
 （`confirmSideEffect: true`）。SSE 在会话首个连接时补推 `task_recovery_required`。
 设计说明见 [`docs/node-task-recovery-m3.md`](../../docs/node-task-recovery-m3.md)。
+
+**Plan 模式（M4）**：计划是 `origin='plan'` 的**任务**（`PlanView` 是它的只读投影），
+由内联扩展注册的五个工具产出与推进：`submit_plan` / `update_plan` / `complete_step` /
+`block_step` / `ask_user`。规划期只读（能力分类：只读 + 验证类命令放行，写操作与 MCP 拦截），
+步骤完成必须带证据且按声明的 `verification` 校验。命令：
+`plan_start/execute/pause/resume/refine/abandon`（`plan_enable/disable` 为弃用别名），
+`prompt` 支持 `mode: 'plan'`；SSE `plan_updated` 载荷为 `PlanView`。
+契约见 [`docs/node-web-plan-mode.md`](../../docs/node-web-plan-mode.md)，
+实现说明见 [`docs/node-plan-mode-m4.md`](../../docs/node-plan-mode-m4.md)。
+
+**评测（M4）**：`npm run eval` 跑离线 golden set（fauxProvider 驱动真实管线，7 个用例）
+并给出 pass@1 / 计划一次通过率 / 零残留旧标记三项门禁，CI 的 `eval` job 直接调用。
