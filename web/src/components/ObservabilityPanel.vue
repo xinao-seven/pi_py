@@ -335,9 +335,14 @@ const totals = computed(() => summary.value?.totals ?? null);
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* 嵌入设置弹窗时父级 .settings-content 是定高 + overflow:hidden：
+     这里必须自己吃掉那 100% 高度，否则面板会被内容撑高、下半部分被父级裁掉，
+     自身的 overflow-y 永远不会触发（其他面板靠 .config-dialog--embedded 达到同样效果）。 */
+  height: 100%;
   min-height: 0;
   padding: 4px 2px 24px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .observability-header {

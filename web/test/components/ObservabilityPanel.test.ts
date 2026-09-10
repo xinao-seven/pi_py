@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, vi } from 'vitest';
 
@@ -238,5 +241,22 @@ describe('ObservabilityPanel', () => {
     await flushPromises();
 
     expect(wrapper.find('.observability-error').text()).toContain('后端未就绪');
+  });
+
+  /**
+   * 布局契约：面板必须自己吃掉父级（设置弹窗 .settings-content）的定高并内部滚动。
+   * 中文说明：jsdom 没有布局引擎，滚不动这类缺陷跑不出来，所以只能守住 CSS 契约——
+   * 曾经因为没有 height，面板被内容撑高后又被父级 overflow:hidden 裁掉，下半部分永远看不到。
+   */
+  it('fills its container and scrolls internally when embedded', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/components/ObservabilityPanel.vue'),
+      'utf8',
+    );
+    const rule = /\.observability-panel\s*\{([^}]*)\}/.exec(source)?.[1] ?? '';
+
+    expect(rule).toContain('height: 100%');
+    expect(rule).toContain('overflow-y: auto');
+    expect(rule).toContain('min-height: 0');
   });
 });
