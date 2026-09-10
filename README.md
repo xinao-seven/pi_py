@@ -102,8 +102,11 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 
 ## 文档
 
+> 开发/继续推进本项目时，先读 [`PROGRESS.md`](PROGRESS.md)（当前进度、下一步任务、已冻结决策）。
+
 | 文档 | 内容 |
 |------|------|
+| [`PROGRESS.md`](PROGRESS.md) | 当前进度与下一步计划 |
 | [`pi-python/README.md`](pi-python/README.md) | Python 版项目文档（配置、API、安全） |
 | [`docs/three-layer-architecture.md`](docs/three-layer-architecture.md) | Python 三层包结构与依赖规则 |
 | [`docs/node-pi-backend.md`](docs/node-pi-backend.md) | Node 版后端说明 |

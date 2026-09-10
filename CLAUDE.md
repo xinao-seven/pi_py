@@ -2,6 +2,9 @@
 
 本文件为 Claude Code 在本仓库工作时的行为指南。
 
+> **接到任务先读 [`PROGRESS.md`](PROGRESS.md)**：它记录当前里程碑、下一步任务、已冻结的技术决策与硬约束。
+> 新会话从那里继续，不要重新推导已定结论。
+
 ## 项目概览
 
 「两套 pi 实现 + 一个共享 Vue 前端」的仓库：
@@ -138,6 +141,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 | 文档 | 内容 |
 |------|------|
+| [`PROGRESS.md`](PROGRESS.md) | **当前进度与下一步**（新会话先读这个） |
 | `README.md` | 仓库总览与快速开始（唯一入口） |
 | `docs/development-standards.md` | Python 项目开发规范 |
 | `node-pi/server/DEVELOPMENT.md` | Node 后端开发规范 |
