@@ -173,6 +173,10 @@ describe('ObservabilityPanel', () => {
     expect(text).toContain('30.0%'); // 工具失败率
     expect(text).toContain('recursive-delete');
     expect(text).toContain('被策略拦下的调用');
+    // 缓存命中：5000 / (150000 + 5000) = 3.2%（工具列表/上下文注入是否破坏前缀缓存的直接证据）
+    expect(text).toContain('缓存命中');
+    expect(text).toContain('3.2%');
+    expect(text).toContain('5.0k');
     expect(wrapper.findAll('.observability-bar')).toHaveLength(2);
     expect(wrapper.find('.observability-notice').exists()).toBe(false);
   });
@@ -231,6 +235,30 @@ describe('ObservabilityPanel', () => {
 
     expect(wrapper.find('.observability-notice').text()).toContain('未开启可观测性');
     expect(wrapper.findAll('.observability-empty').length).toBeGreaterThan(0);
+  });
+
+  it('shows no cache hit rate when nothing was sent yet', async () => {
+    vi.mocked(getObservabilitySummary).mockResolvedValue(
+      summary({
+        totals: {
+          ...summary().totals,
+          runs: 0,
+          turns: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          costUsd: 0,
+        },
+      }),
+    );
+    vi.mocked(listObservabilityRuns).mockResolvedValue({ runs: [], nextCursor: null });
+
+    const wrapper = mount(ObservabilityPanel, { props: { cwd: null } });
+    await flushPromises();
+
+    // 分子分母都为 0 → 显示占位符，而不是 NaN% 或 100%。
+    const cacheKpi = wrapper.findAll('.kpi').find((item) => item.text().includes('缓存命中'));
+    expect(cacheKpi?.text()).toContain('—');
   });
 
   it('surfaces load errors', async () => {

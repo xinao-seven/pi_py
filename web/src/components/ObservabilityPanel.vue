@@ -126,6 +126,19 @@ const dailyBars = computed(() => {
 
 const storeState = computed(() => summary.value?.store ?? null);
 const totals = computed(() => summary.value?.totals ?? null);
+
+/**
+ * 缓存命中率 = cacheRead /（输入 + cacheRead）。
+ * 中文说明：pi-ai 把 DeepSeek 的 `prompt_cache_hit_tokens` 解析成 cacheReadTokens，且
+ * `inputTokens` 已经扣掉了命中部分，所以分母是「真实发出去的提示词总量」。
+ * 这个数字是验证「工具列表/上下文注入是否在破坏前缀缓存」的唯一直接证据。
+ */
+const cacheHitRate = computed<number | null>(() => {
+  const data = totals.value;
+  if (data === null) return null;
+  const prompt = data.inputTokens + data.cacheReadTokens;
+  return prompt === 0 ? null : data.cacheReadTokens / prompt;
+});
 </script>
 
 <template>
@@ -173,6 +186,14 @@ const totals = computed(() => summary.value?.totals ?? null);
         </span>
       </article>
       <article class="kpi">
+        <span class="kpi-label">缓存命中</span>
+        <strong>{{ cacheHitRate === null ? '—' : formatRate(cacheHitRate) }}</strong>
+        <span class="kpi-hint">
+          命中 {{ formatTokens(totals?.cacheReadTokens ?? 0) }} / 输入
+          {{ formatTokens(totals?.inputTokens ?? 0) }}
+        </span>
+      </article>
+      <article class="kpi">
         <span class="kpi-label">运行耗时 p95</span>
         <strong>{{ formatDuration(totals?.p95DurationMs ?? null) }}</strong>
         <span class="kpi-hint">p50 {{ formatDuration(totals?.p50DurationMs ?? null) }}</span>
@@ -183,6 +204,11 @@ const totals = computed(() => summary.value?.totals ?? null);
         <span class="kpi-hint">轮次 {{ totals?.turns ?? 0 }}</span>
       </article>
     </section>
+
+    <p class="observability-footnote">
+      缓存命中率＝cacheRead /（输入 + cacheRead）。工具列表或系统提示词一变，整段前缀失配，
+      命中率会当场掉下去——用它验证「改工具集」一类优化的效果。
+    </p>
 
     <section class="observability-section">
       <h4>模型</h4>
