@@ -1,51 +1,53 @@
 /**
- * Web Plan 模式：按会话的状态机 + 内联扩展。
+ * Web Plan 模式（M4）：工具驱动 + Task 支撑 + 能力集权限。
  *
- * 中文说明：Plan 的工具限制、文本解析、JSONL 持久化与 REST 命令校验都收敛到本模块。
- * buildExtension() 为每个会话注册 Pi 生命周期钩子（工具权限的最终约束点），钩子委托给
- * 按会话隔离的 PlanMachine；服务层负责按 sessionId 找到状态机、下发 enable/disable/
- * execute/refine 命令，并把状态快照转发给注册表（SSE 推给前端）。
+ * 中文说明：这个模块在 M4 被重写，三处关键变化：
+ *
+ * 1. **不再解析自然语言**：删掉 `extractPlan()` / `markDone()` / `[DONE:n]`。
+ *    计划的产出与推进全部走 `plan-tools.ts` 注册的结构化工具（P2 的根治）。
+ * 2. **不再自己存状态**：计划的真相源是任务（`execution.plan` + 步骤），本模块只在内存里
+ *    记住「哪个任务 id、加/删过哪些工具」。会话重新打开时从库里**采纳**未结束的计划
+ *    （`activePlanForSession`），因此服务重启后计划依然在（P8），JSONL 里只留一条引用指针（P5）。
+ * 3. **权限用能力集而非快照**：规划期按 `PlanPolicy` 分类放行（只读 + 验证类命令），
+ *    退出时只**撤销自己造成的差集**，不写回旧快照——用户规划期间的改动不会被吞掉（P6）。
+ *
+ * 状态机的迁移条件全部来自用户动作（确认/暂停/放弃）或服务端校验（工具参数与证据），
+ * 没有一条依赖模型「写了什么标记」。这是 M4 的核心承诺。
  */
 
 import type { ContextEvent, ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../errors.js';
+import type { ServiceLogger } from './service-logger.js';
+import {
+  derivePlanStatus,
+  emptyPlanView,
+  planTitleFromMessage,
+  toPlanView,
+  type PlanView,
+} from './platform/plan-model.js';
+import { buildPlanTools, PLAN_TOOL_NAMES, PlanToolbox } from './plan-tools.js';
+import { DEFAULT_PLAN_POLICY, evaluatePlanBash, type PlanPolicy } from './plan-policy.js';
+import type { TaskRecord } from './platform/task-model.js';
+import type { TaskService } from './task-service.js';
 
-export type PlanMode = 'normal' | 'planning' | 'executing';
-export interface PlanTodo {
-  step: number;
-  text: string;
-  completed: boolean;
-}
-export interface PlanSnapshot {
-  sessionId: string;
-  mode: PlanMode;
-  todos: PlanTodo[];
-  awaitingConfirmation: boolean;
-}
-
-const PLAN_TOOLS = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'];
-const PLAN_DISABLED_TOOLS = new Set(['edit', 'write']);
-// MCP 工具统一前缀（与 src/services/mcp/mcp-tools.ts 的命名约定一致）。
-// 规划期无法证明 MCP 工具只读，保守全部拦截。
-const MCP_TOOL_PREFIX = 'mcp__';
-const CUSTOM_TYPE = 'web-plan-mode';
-
-/**
- * 注入到上下文的 plan 自定义消息类型。
- *
- * 中文说明：`before_agent_start` 返回的 message 会以 `role: "custom"` 进入本轮消息，
- * 并在 message_end 时**持久化写入会话 JSONL**。因此每次进入/退出模式都会新增一条，
- * 若不在 `context` 钩子里清理，历史里会同时残留规划期与执行期的矛盾指令，
- * 而且随反复切换无上限累积。这里按当前模式只保留其中一组。
- */
-const PLANNING_CONTEXT_TYPES = new Set(['web-plan-context']);
-const EXECUTION_CONTEXT_TYPES = new Set(['web-plan-execution-context', 'web-plan-execute']);
+/** JSONL 里的计划引用指针（只在创建/采纳计划时写一次，不写状态快照）。 */
+const PLAN_REF_CUSTOM_TYPE = 'web-plan-ref';
+/** 旧的快照类型：只用于「忽略历史遗留条目」，不再写入。 */
+const LEGACY_SNAPSHOT_TYPE = 'web-plan-mode';
+const PLANNING_CONTEXT_TYPE = 'web-plan-context';
+const EXECUTING_CONTEXT_TYPE = 'web-plan-execution-context';
+/** 需要清理的旧类型（M4 之前注入过，历史会话里可能还在）。 */
+const LEGACY_CONTEXT_TYPES = new Set(['web-plan-execute']);
 const EMPTY_TYPES: ReadonlySet<string> = new Set();
+
+const MCP_TOOL_PREFIX = 'mcp__';
+
+/** 规划期一律禁止的工具（与 M4 之前一致，但现在只由能力集决定）。 */
+const DEFAULT_BLOCKED_TOOLS = ['edit', 'write', 'multi_edit', 'apply_patch', 'notebook_edit'];
 
 /**
  * 规划期阻断的观测钩子（可选）。
- *
  * 中文说明：SDK 把「被扩展拦下」和「工具执行失败」都表现为
  * `tool_execution_end(isError=true)`，所以主动上报一次阻断原因，
  * 账本才能把它归因为「策略生效」而不是「工具失败」。
@@ -59,199 +61,202 @@ export interface PlanTraceSink {
   }): void;
 }
 
+export interface PlanModeServiceOptions {
+  policy?: PlanPolicy;
+  logger?: ServiceLogger;
+}
+
+/** 计划执行器（M4）：由 app 注入，负责「取租约 + 绑定会话 + 发执行 prompt」。 */
+export interface PlanExecutor {
+  start(taskId: string, prompt: string): Promise<TaskRecord>;
+  stop(taskId: string): void;
+}
+
 /** 取一条上下文消息的 customType（非自定义消息返回 undefined）。 */
 function customTypeOf(message: unknown): string | undefined {
   const customType = (message as { customType?: unknown } | null)?.customType;
   return typeof customType === 'string' ? customType : undefined;
 }
 
-interface Todo {
-  step: number;
-  text: string;
-  completed: boolean;
-}
-interface StoredState {
-  enabled: boolean;
-  executing: boolean;
-  todos: Todo[];
-  toolsBeforePlanMode?: string[];
-  awaitingConfirmation?: boolean;
-}
-interface AssistantLike {
-  role: 'assistant';
-  content: Array<{ type?: unknown; text?: unknown }>;
-}
 interface SessionContext {
+  cwd?: string;
   sessionManager: {
     getSessionId(): string;
     getEntries(): unknown[];
   };
 }
 
-function isAssistant(value: unknown): value is AssistantLike {
-  return (
-    !!value &&
-    typeof value === 'object' &&
-    (value as { role?: unknown }).role === 'assistant' &&
-    Array.isArray((value as { content?: unknown }).content)
-  );
-}
-function assistantText(message: AssistantLike): string {
-  return message.content
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string)
-    .join('\n');
-}
-// 计划头兼容 Plan: / **Plan:** / ## Plan / ### 计划： 等常见变体（大小写、中英文、冒号可选）。
-function extractPlan(message: string): Todo[] {
-  const header = message.match(
-    /^\s*(?:#{1,6}\s*)?\*{0,2}(?:[Pp]lan|计划)\s*[:：]?\s*\*{0,2}\s*$/im,
-  );
-  if (!header) return [];
-  // 逐行解析编号/无序列表：比跨行 matchAll 的锚定更稳，避免 \s* 吞掉换行导致漏项。
-  const items: Array<{ step?: number; text: string }> = [];
-  for (const line of message.slice((header.index ?? 0) + header[0].length).split(/\r?\n/)) {
-    const trimmed = line.trim();
-    const numbered = trimmed.match(/^(\d+)\s*[.)、:]\s+(.+)$/);
-    if (numbered) {
-      items.push({ step: Number(numbered[1]), text: numbered[2].trim() });
-      continue;
-    }
-    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
-    if (bullet) items.push({ text: bullet[1].trim() });
-  }
-  const todos: Todo[] = [];
-  const numberedOnly = items.some((item) => item.step !== undefined);
-  for (const [index, item] of items.entries()) {
-    const text = item.text.replace(/\*{1,2}/g, '').trim();
-    if (!text) continue;
-    const step = numberedOnly ? item.step : index + 1;
-    if (step === undefined || todos.some((todo) => todo.step === step)) continue;
-    todos.push({ step, text, completed: false });
-  }
-  return todos;
-}
-function markDone(message: string, todos: Todo[]): boolean {
-  let changed = false;
-  for (const match of message.matchAll(/\[DONE:(\d+)\]/gi)) {
-    const todo = todos.find((item) => item.step === Number(match[1]));
-    if (todo && !todo.completed) {
-      todo.completed = true;
-      changed = true;
-    }
-  }
-  return changed;
-}
-function isSafePlanCommand(command: string): boolean {
-  const sideEffect =
-    /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|tee|dd|shred|sudo|kill|reboot|shutdown|curl|wget)\b|(^|[^<])>(?!>)|>>|\b(npm|pnpm|yarn|pip)\s+(install|add|remove|uninstall|update|publish)\b|\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|stash)\b/i;
-  const readOnly =
-    /^\s*(cat|head|tail|less|more|grep|find|ls|pwd|echo|printf|wc|sort|uniq|diff|file|stat|du|df|tree|which|type|env|printenv|uname|whoami|id|date|uptime|ps|git\s+(status|log|diff|show|branch|remote|config\s+--get)|npm\s+(list|ls|view|info|search|outdated|audit)|rg|fd|sed\s+-n|awk)/i;
-  return !sideEffect.test(command) && readOnly.test(command);
-}
-
-/**
- * 一个会话的 Plan 状态机：持有模式/待办/工具快照，并通过 ExtensionAPI 限制工具、
- * 注入上下文、发送执行指令、把状态写入会话 JSONL。
- */
-class PlanMachine {
-  private sessionId = '';
-  private planning = false;
-  private executing = false;
-  private awaitingConfirmation = false;
-  private todos: Todo[] = [];
-  private toolsBeforePlanMode: string[] | undefined;
+/** 一个会话的计划状态机：持有工具差集，状态从任务派生。 */
+class PlanSession {
+  private sessionIdValue = '';
+  private cwd: string | undefined;
+  private planTaskId: string | undefined;
+  /** 我们打开的工具（退出时关掉）与关掉的工具（退出时打开）——只撤销自己的差集。 */
+  private toolsAdded: string[] = [];
+  private toolsDisabled: string[] = [];
 
   constructor(
     private readonly pi: ExtensionAPI,
     private readonly service: PlanModeService,
+    private readonly toolbox: PlanToolbox,
+    private readonly tasks: TaskService,
   ) {}
 
-  /** session_start：绑定 sessionId、从 JSONL 恢复模式，并把本状态机登记给服务。 */
+  /** 计划工具（工厂期注册；只有计划会话才把它们放进 activeTools）。 */
+  registerTools(): void {
+    for (const tool of buildPlanTools(this.toolbox)) this.pi.registerTool(tool);
+  }
+
+  /** session_start：绑定会话、采纳未结束的计划、按状态恢复权限并广播视图。 */
   attach(ctx: SessionContext): void {
-    this.sessionId = ctx.sessionManager.getSessionId();
-    const entry = ctx.sessionManager
-      .getEntries()
-      .filter((item) => {
-        const entry = item as { type?: string; customType?: string };
-        return entry.type === 'custom' && entry.customType === CUSTOM_TYPE;
-      })
-      .pop() as { data?: StoredState } | undefined;
-    if (entry?.data) {
-      this.planning = entry.data.enabled;
-      this.executing = entry.data.executing;
-      this.todos = entry.data.todos ?? [];
-      this.toolsBeforePlanMode = entry.data.toolsBeforePlanMode;
-      this.awaitingConfirmation = entry.data.awaitingConfirmation === true;
-    }
-    if (this.planning) this.restrictTools();
-    else if (this.executing) this.restoreTools();
-    this.service.attach(this, this.sessionId);
+    this.sessionIdValue = ctx.sessionManager.getSessionId();
+    this.cwd = ctx.cwd ?? this.cwd;
+    const adopted = this.service.adoptPlan(this.sessionId);
+    this.bindPlan(adopted);
+    this.service.register(this);
     this.publish();
   }
 
-  /** tool_call：规划期只允许白名单只读 bash，拦截 edit/write 与全部 MCP 工具。 */
+  get sessionId(): string {
+    return this.sessionIdValue;
+  }
+
+  /** 覆盖 cwd（创建计划时以会话 cwd 为准）。 */
+  setCwd(cwd: string | undefined): void {
+    this.cwd = cwd ?? this.cwd;
+  }
+
+  /** 当前计划（每次从库里读最新，规避持有过期副本）。 */
+  current(): TaskRecord | undefined {
+    return this.toolbox.current();
+  }
+
+  view(): PlanView {
+    const task = this.current();
+    return task === undefined ? emptyPlanView(this.sessionId) : toPlanView(task);
+  }
+
+  status() {
+    const task = this.current();
+    return task === undefined ? ('abandoned' as const) : derivePlanStatus(task);
+  }
+
+  isPlanning(): boolean {
+    const status = this.status();
+    return status === 'drafting' || status === 'proposed';
+  }
+
+  isExecuting(): boolean {
+    return this.status() === 'executing';
+  }
+
+  /**
+   * 开始规划（`mode: 'plan'` 的首条消息，或 `plan_start`）。
+   * 已有未结束的计划时**采纳而不是新建**——用户多半想改计划，而不是丢掉它。
+   */
+  startPlanning(message: string): PlanView {
+    const existing = this.current();
+    if (existing !== undefined) {
+      const status = derivePlanStatus(existing);
+      if (status === 'paused' || status === 'proposed' || status === 'drafting') {
+        // 回到草稿：允许 submit_plan 整体替换；已提出的澄清问题保留给模型参考。
+        this.tasks.setPlanState(existing.id, { status: 'drafting' });
+        this.applyPlanTools('planning');
+        this.publish();
+        return this.view();
+      }
+    }
+    const task = this.tasks.createPlan({
+      title: planTitleFromMessage(message),
+      goal: message,
+      sessionId: this.sessionId,
+      ...(this.cwd === undefined ? {} : { cwd: this.cwd }),
+    });
+    this.bindPlan(task);
+    this.applyPlanTools('planning');
+    this.appendRef(task);
+    this.publish();
+    return this.view();
+  }
+
+  /** 采纳/切换当前计划：绑定工具箱与权限。 */
+  bindPlan(task: TaskRecord | undefined): void {
+    this.planTaskId = task?.id;
+    this.toolbox.bind(task?.id);
+    if (task === undefined) {
+      this.restorePlanTools();
+      return;
+    }
+    const status = derivePlanStatus(task);
+    this.applyPlanTools(status === 'executing' ? 'executing' : 'planning');
+    if (status === 'completed' || status === 'abandoned') this.restorePlanTools();
+  }
+
+  /** 进入执行态：恢复被拦的工具，保留计划工具。 */
+  enterExecution(): void {
+    this.applyPlanTools('executing');
+    this.publish();
+  }
+
+  /** 计划结束（完成/放弃）：撤销工具差集。 */
+  exitPlan(): void {
+    this.restorePlanTools();
+    this.publish();
+  }
+
+  /**
+   * tool_call：规划期按能力集拦截。
+   * 中文说明：这是「权限」的最终约束点——即使某个工具还在 activeTools 里
+   * （例如用户手动打开过），规划期的写操作依然会被这里拦下。
+   */
   onToolCall(event: {
     toolName: string;
     toolCallId: string;
     input: unknown;
   }): { block: true; reason: string } | undefined {
     const block = this.evaluateToolCall(event);
-    // 让可观测性知道“这次拦截是策略生效，不是工具失败”（M0 修正 ④）。
     if (block) this.service.noteBlock(this.sessionId, event.toolCallId, block.reason);
     return block;
   }
 
-  /** 规划期的工具拦截规则（返回非空表示拦下并给出原因）。 */
   private evaluateToolCall(event: {
     toolName: string;
     toolCallId: string;
     input: unknown;
   }): { block: true; reason: string } | undefined {
-    if (!this.planning) return undefined;
-    if (event.toolName === 'edit' || event.toolName === 'write')
+    // 只有规划期（草稿/待确认）是只读的：执行期该写就写。
+    if (!this.isPlanning()) return undefined;
+    const policy = this.service.policy;
+    if (DEFAULT_BLOCKED_TOOLS.includes(event.toolName))
       return {
         block: true,
         reason:
-          'Plan mode is read-only. Confirm execution or disable Plan mode before editing files.',
+          'Plan mode is read-only while the plan is not confirmed. Ask the user to confirm execution (plan_execute) before editing files.',
       };
-    // MCP 工具可能修改外部状态，无法证明只读，规划期一律拦截。
-    if (event.toolName.startsWith(MCP_TOOL_PREFIX))
+    if (event.toolName.startsWith(MCP_TOOL_PREFIX) && !policy.allowMcp)
       return {
         block: true,
         reason:
-          'Plan mode is read-only. MCP tools may modify external state; confirm execution or disable Plan mode before calling them.',
+          'Plan mode does not allow MCP tools (read-onlyness cannot be proven). Confirm the plan first, or ask the user to allow MCP in the plan policy.',
       };
     if (event.toolName === 'bash') {
-      const command = (event.input as { command?: unknown }).command;
-      if (typeof command !== 'string' || !isSafePlanCommand(command))
-        return {
-          block: true,
-          reason: 'Plan mode only permits allowlisted local read-only bash commands.',
-        };
+      const verdict = evaluatePlanBash((event.input as { command?: unknown }).command, policy);
+      if (!verdict.allowed) return { block: true, reason: verdict.reason };
     }
     return undefined;
   }
 
   /**
-   * context：清理与当前模式不符的 plan 上下文，并把当前模式的注入压缩到**仅最后一条**。
-   *
-   * 中文说明：为什么不能只做“按模式过滤”：
-   * `before_agent_start` 在**每一轮**都会重新注入一条 `web-plan-context`，而这些消息会
-   * 随 message_end 持久化进会话 JSONL。所以一次 3 轮的规划会在上下文里留下 3 份完全
-   * 相同的 [PLAN MODE ACTIVE] 指令，随轮数线性膨胀。这里只保留最后一条（内容已包含
-   * 当前待办全集），旧条目仅在 JSONL 里留审计痕迹。
-   *
-   * 无变化时返回 undefined，避免无意义地整体替换消息数组。
+   * context：清理过期的 plan 注入，并把当前模式注入压到**仅最后一条**。
+   * 中文说明：`before_agent_start` 每轮都会注入一条，而消息会持久化进 JSONL，
+   * 不清理会随轮数线性膨胀；同时历史里会残留与当前状态矛盾的指令。
    */
   onContext(event: ContextEvent): { messages: ContextEvent['messages'] } | undefined {
-    // 当前模式“可以保留”的类型；其余 plan 类型一律丢弃。
-    const keep: ReadonlySet<string> = this.planning
-      ? PLANNING_CONTEXT_TYPES
-      : this.executing
-        ? EXECUTION_CONTEXT_TYPES
+    const keep: ReadonlySet<string> = this.isPlanning()
+      ? new Set([PLANNING_CONTEXT_TYPE])
+      : this.isExecuting()
+        ? new Set([EXECUTING_CONTEXT_TYPE])
         : EMPTY_TYPES;
-    // 每个保留类型最后一条的下标（同类型只留最新）。
     const lastIndex = new Map<string, number>();
     event.messages.forEach((message, index) => {
       const customType = customTypeOf(message);
@@ -259,176 +264,219 @@ class PlanMachine {
     });
     const filtered = event.messages.filter((message, index) => {
       const customType = customTypeOf(message);
-      if (customType === undefined) return true; // 非 plan 注入消息原样保留
-      if (!keep.has(customType)) return false; // 不属于当前模式 → 丢
-      return lastIndex.get(customType) === index; // 同类型只留最后一条
+      if (customType === undefined) return true;
+      // M4 之前的旧注入类型一律丢弃（它们描述的是已废弃的状态机）。
+      if (LEGACY_CONTEXT_TYPES.has(customType)) return false;
+      if (!keep.has(customType)) return false;
+      return lastIndex.get(customType) === index;
     });
     return filtered.length === event.messages.length ? undefined : { messages: filtered };
   }
 
-  /** before_agent_start：把当前模式/待办作为隐藏上下文注入。 */
+  /** before_agent_start：注入当前计划上下文（隐藏消息，模型可见、界面不显示）。 */
   beforeAgentStart():
     { message: { customType: string; content: string; display: boolean } } | undefined {
-    if (this.planning)
+    const task = this.current();
+    if (task === undefined) return undefined;
+    if (this.isPlanning())
       return {
         message: {
-          customType: 'web-plan-context',
+          customType: PLANNING_CONTEXT_TYPE,
           display: false,
-          content:
-            '[PLAN MODE ACTIVE]\nYou are in read-only planning mode. Discuss and inspect first, then present a detailed numbered plan under a `Plan:` header. Do not make changes.',
+          content: buildPlanningContext(task, this.service.policy),
         },
       };
-    if (this.executing && this.todos.length)
+    if (this.isExecuting())
       return {
         message: {
-          customType: 'web-plan-execution-context',
+          customType: EXECUTING_CONTEXT_TYPE,
           display: false,
-          content: `[EXECUTING PLAN]\nComplete remaining steps in order and write [DONE:n] only after verification.\n${this.todos
-            .filter((todo) => !todo.completed)
-            .map((todo) => `${todo.step}. ${todo.text}`)
-            .join('\n')}`,
+          content: buildExecutingContext(task),
         },
       };
     return undefined;
   }
 
-  /** turn_end：执行期从 [DONE:n] 更新步骤完成状态。 */
-  onTurnEnd(event: { message: unknown }): void {
-    if (
-      this.executing &&
-      isAssistant(event.message) &&
-      markDone(assistantText(event.message), this.todos)
-    )
-      this.publish();
+  /** 状态变化后广播视图（服务层转成 SSE `plan_updated`）。 */
+  publish(): void {
+    this.service.publishState(this.view());
   }
 
-  /** agent_end：规划期从消息里提取第一条可解析的 Plan，进入等待确认。 */
-  onAgentEnd(event: { messages: unknown[] }): void {
-    if (this.executing && this.todos.length && this.todos.every((todo) => todo.completed)) {
-      this.executing = false;
-      this.todos = [];
-      this.publish();
-      return;
-    }
-    if (!this.planning) return;
-    // 计划可能出现在中间某条 assistant 消息（末条只是收尾话），反向取第一条可解析的计划。
-    let proposal: Todo[] = [];
-    for (const message of [...event.messages].reverse()) {
-      if (!isAssistant(message)) continue;
-      const found = extractPlan(assistantText(message));
-      if (found.length) {
-        proposal = found;
-        break;
-      }
-    }
-    if (proposal.length) {
-      this.todos = proposal;
-      this.awaitingConfirmation = true;
-      this.publish();
+  private appendRef(task: TaskRecord): void {
+    try {
+      this.pi.appendEntry(PLAN_REF_CUSTOM_TYPE, {
+        planId: task.id,
+        taskId: task.id,
+        sessionId: this.sessionId,
+      });
+    } catch {
+      // 指针只是给 CLI/审计用的痕迹，写不进去不影响计划本身（真相源在任务库）。
     }
   }
 
-  enable(): void {
-    this.planning = true;
-    this.executing = false;
-    this.awaitingConfirmation = false;
-    this.todos = [];
-    this.restrictTools();
-    this.publish();
-  }
-  disable(): void {
-    this.planning = false;
-    this.executing = false;
-    this.awaitingConfirmation = false;
-    this.todos = [];
-    this.restoreTools();
-    this.publish();
-  }
-  /** refine：用户给出修改意见，恢复规划并让 Agent 重新产出计划。 */
-  refine(message: string): void {
-    this.awaitingConfirmation = false;
-    this.publish();
-    this.pi.sendUserMessage(message, { deliverAs: 'followUp' });
-  }
-  execute(): void {
-    this.planning = false;
-    this.executing = true;
-    this.awaitingConfirmation = false;
-    this.restoreTools();
-    this.publish();
-    const remaining = this.todos
-      .filter((todo) => !todo.completed)
-      .map((todo) => `${todo.step}. ${todo.text}`)
-      .join('\n');
-    this.pi.sendMessage(
-      {
-        customType: 'web-plan-execute',
-        content: `[EXECUTING PLAN]\n\nRemaining steps:\n${remaining}\n\nExecute in order. Only write [DONE:n] after a completed, verified step.`,
-        display: false,
-      },
-      { triggerTurn: true, deliverAs: 'followUp' },
-    );
-  }
-
-  snapshot(): PlanSnapshot {
-    return {
-      sessionId: this.sessionId,
-      mode: this.executing ? 'executing' : this.planning ? 'planning' : 'normal',
-      todos: this.todos,
-      awaitingConfirmation: this.awaitingConfirmation,
-    };
-  }
-
-  private restrictTools(): void {
-    this.toolsBeforePlanMode ??= this.pi.getActiveTools();
-    this.pi.setActiveTools([
-      ...new Set([
-        ...this.toolsBeforePlanMode.filter((name) => !PLAN_DISABLED_TOOLS.has(name)),
-        ...PLAN_TOOLS,
-      ]),
+  /** 记录并应用工具差集。 */
+  private applyPlanTools(mode: 'planning' | 'executing'): void {
+    const policy = this.service.policy;
+    const blocked = new Set([
+      ...DEFAULT_BLOCKED_TOOLS,
+      ...(policy.allowMcp ? [] : this.mcpToolNames()),
     ]);
+    const active = new Set(this.pi.getActiveTools());
+    if (mode === 'planning') {
+      for (const name of [...active]) {
+        if (!blocked.has(name)) continue;
+        active.delete(name);
+        if (!this.toolsDisabled.includes(name)) this.toolsDisabled.push(name);
+      }
+    } else {
+      // 执行态：把规划期关掉的工具打开（仅限我们自己关的那些）。
+      for (const name of this.toolsDisabled) active.add(name);
+      this.toolsDisabled = [];
+    }
+    for (const name of PLAN_TOOL_NAMES) {
+      if (active.has(name)) continue;
+      active.add(name);
+      if (!this.toolsAdded.includes(name)) this.toolsAdded.push(name);
+    }
+    this.pi.setActiveTools([...active]);
   }
-  private restoreTools(): void {
-    if (this.toolsBeforePlanMode) this.pi.setActiveTools(this.toolsBeforePlanMode);
-    this.toolsBeforePlanMode = undefined;
+
+  /**
+   * 撤销工具差集（P6：只撤销自己造成的改动）。
+   * 中文说明：不写回旧快照——规划期间用户通过 `set_tools` 关掉的工具必须保持关闭。
+   * 已不在 activeTools 里的名字不做处理（用户可能已经手动改回来了）。
+   */
+  private restorePlanTools(): void {
+    if (this.toolsAdded.length === 0 && this.toolsDisabled.length === 0) return;
+    const active = new Set(this.pi.getActiveTools());
+    for (const name of this.toolsAdded) active.delete(name);
+    for (const name of this.toolsDisabled) active.add(name);
+    this.toolsAdded = [];
+    this.toolsDisabled = [];
+    this.pi.setActiveTools([...active]);
   }
-  private publish(): void {
-    this.pi.appendEntry(CUSTOM_TYPE, {
-      enabled: this.planning,
-      executing: this.executing,
-      todos: this.todos,
-      toolsBeforePlanMode: this.toolsBeforePlanMode,
-      awaitingConfirmation: this.awaitingConfirmation,
-    } satisfies StoredState);
-    this.service.publishState(this.snapshot());
+
+  /** 当前会话里名字像 MCP 的工具（规划期默认拦下，无法证明只读）。 */
+  private mcpToolNames(): string[] {
+    try {
+      return this.pi.getActiveTools().filter((name) => name.startsWith(MCP_TOOL_PREFIX));
+    } catch {
+      return [];
+    }
   }
 }
 
-/** Web Plan 模式服务：按会话持有状态机，并向注册表转发状态快照。 */
-export class PlanModeService {
-  private readonly machines = new Map<string, PlanMachine>();
-  private listener: ((state: PlanSnapshot) => void) | undefined;
-  private trace: PlanTraceSink | undefined;
+/** 规划期隐藏上下文：说清「现在只读、产出方式是调用工具」。 */
+export function buildPlanningContext(task: TaskRecord, policy: PlanPolicy): string {
+  const view = toPlanView(task);
+  const lines: string[] = [
+    '[PLAN MODE ACTIVE]',
+    `计划：${view.title}（planId=${view.planId}，revision=${view.revision}，状态=${view.status}）`,
+    '你现在处于**只读规划期**：可以调研、读代码、跑验证类命令，但不要修改工作区。',
+    '',
+    '产出计划的方式是**调用工具**，不是写 `Plan:` 标题或编号列表：',
+    '- 调研完成后调用 `submit_plan` 提交（或 `update_plan` 修订）结构化计划，每步尽量可验证（verification）。',
+    '- 需要用户拍板时调用 `ask_user` 提问，然后结束本轮等回复。',
+    '',
+    `可用命令：${policy.bash === 'none' ? '（本会话禁止执行命令）' : '只读命令与验证类命令（如类型检查、测试、构建）'}；写操作请等用户确认计划后再做。`,
+  ];
+  if (view.steps.length > 0) {
+    lines.push('', '当前计划步骤：');
+    for (const step of view.steps) {
+      lines.push(`- [${step.id}] ${step.title}（${step.status}）`);
+    }
+  } else {
+    lines.push('', '当前还没有提交任何步骤：请调研后调用 `submit_plan`。');
+  }
+  if (view.question) lines.push('', `待用户回答的问题：${view.question}`);
+  return lines.join('\n');
+}
 
-  /** 生成"Web Plan 模式"内联扩展：每个会话注册一套生命周期钩子。 */
+/** 执行期隐藏上下文：列出步骤与推进方式（每轮刷新，状态永远是最新的）。 */
+export function buildExecutingContext(task: TaskRecord): string {
+  const view = toPlanView(task);
+  const done = view.steps.filter(
+    (step) => step.status === 'completed' || step.status === 'skipped',
+  );
+  const remaining = view.steps.filter(
+    (step) => step.status !== 'completed' && step.status !== 'skipped',
+  );
+  const lines: string[] = [
+    '[PLAN EXECUTING]',
+    `计划：${view.title}（planId=${view.planId}，revision=${view.revision}）`,
+    `进度：${done.length}/${view.steps.length} 步完成`,
+  ];
+  if (done.length > 0) {
+    lines.push('已完成：');
+    for (const step of done) {
+      const evidence = step.evidence?.summary ?? step.evidence?.commands?.[0]?.command;
+      lines.push(`- [${step.id}] ${step.title}${evidence ? `｜证据：${evidence}` : ''}`);
+    }
+  }
+  if (remaining.length > 0) {
+    lines.push('待推进：');
+    for (const step of remaining) {
+      const need =
+        step.verification?.kind === 'file'
+          ? `（需产物 ${step.verification.path ?? '?'}）`
+          : step.verification?.kind === 'command'
+            ? `（需命令 ${step.verification.command ?? '?'} 退出码 ${step.verification.expectExitCode ?? 0}）`
+            : '';
+      lines.push(`- [${step.id}] ${step.title}（${step.status}）${need}`);
+    }
+  }
+  lines.push(
+    '',
+    '推进方式（必须用工具，不要用文字声称完成）：',
+    '- 完成一步 → `complete_step`，带真实证据（summary / commands + 退出码 / files）；声明了 verification 的步骤服务端会校验。',
+    '- 无法继续 → `block_step` 说明原因，然后停下等用户处理，不要绕路或伪造完成。',
+    '- 需要改计划 → `update_plan`（带当前 revision）。',
+  );
+  return lines.join('\n');
+}
+
+/** Web Plan 模式服务：按会话持有状态机，向注册表转发计划视图。 */
+export class PlanModeService {
+  private readonly sessions = new Map<string, PlanSession>();
+  private listener: ((plan: PlanView) => void) | undefined;
+  private trace: PlanTraceSink | undefined;
+  private tasks: TaskService | undefined;
+  private executor: PlanExecutor | undefined;
+  readonly policy: PlanPolicy;
+
+  constructor(private readonly options: PlanModeServiceOptions = {}) {
+    this.policy = options.policy ?? DEFAULT_PLAN_POLICY;
+  }
+
+  /** 注入任务服务（计划就是任务，没有它无法工作）。 */
+  setTaskService(tasks: TaskService): void {
+    this.tasks = tasks;
+  }
+
+  /** 注入执行器（计划执行走它的租约与绑定）。 */
+  setExecutor(executor: PlanExecutor): void {
+    this.executor = executor;
+  }
+
+  /** 生成「Web Plan 模式」内联扩展：每个会话一套钩子 + 五个计划工具。 */
   buildExtension(): InlineExtension {
     return (pi: ExtensionAPI) => {
-      const machine = new PlanMachine(pi, this);
-      pi.on('session_start', (_event, ctx) => machine.attach(ctx as SessionContext));
-      pi.on('tool_call', (event) => machine.onToolCall(event));
-      pi.on('context', (event) => machine.onContext(event));
-      pi.on('before_agent_start', () => machine.beforeAgentStart());
-      pi.on('turn_end', (event) => machine.onTurnEnd(event));
-      pi.on('agent_end', (event) => machine.onAgentEnd(event));
+      const toolbox = new PlanToolbox({ tasks: this.requireTasks(), sessionId: '' });
+      const session = new PlanSession(pi, this, toolbox, this.requireTasks());
+      // 工具写入后立即广播新视图（计划状态的主要写入者是工具，不是 app 层桥接）。
+      toolbox.setOnChanged(() => session.publish());
+      session.registerTools();
+      pi.on('session_start', (_event, ctx) => session.attach(ctx as SessionContext));
+      pi.on('tool_call', (event) => session.onToolCall(event));
+      pi.on('context', (event) => session.onContext(event));
+      pi.on('before_agent_start', () => session.beforeAgentStart());
     };
   }
 
-  /** 注册"状态快照更新"监听器（注册表用它发 SSE 事件）。 */
-  setListener(listener: (state: PlanSnapshot) => void): void {
+  setListener(listener: (plan: PlanView) => void): void {
     this.listener = listener;
   }
 
-  /** 注册阻断观测钩子（账本用它区分策略拦截与工具失败）。 */
   setTraceSink(sink: PlanTraceSink): void {
     this.trace = sink;
   }
@@ -442,60 +490,193 @@ export class PlanModeService {
     }
   }
 
-  /** 状态快照（无活跃状态机时返回默认 normal）。 */
-  state(sessionId: string): PlanSnapshot {
-    return (
-      this.machines.get(sessionId)?.snapshot() ?? {
-        sessionId,
-        mode: 'normal',
-        todos: [],
-        awaitingConfirmation: false,
-      }
-    );
+  /** 会话当前计划视图（无计划时返回空视图，`planId` 为空串）。 */
+  view(sessionId: string): PlanView {
+    return this.sessions.get(sessionId)?.view() ?? this.viewFromStore(sessionId);
   }
 
-  /** 下发 Plan 命令：校验当前状态后委托给对应会话的状态机。 */
-  command(
-    sessionId: string,
-    action: 'enable' | 'disable' | 'execute' | 'refine',
-    message?: string,
-  ): void {
-    const current = this.state(sessionId);
-    if (action === 'execute' && (!current.awaitingConfirmation || current.todos.length === 0)) {
-      throw new ApiError(409, 'plan_not_ready', 'No generated plan is awaiting confirmation');
-    }
-    if (action === 'refine' && (!current.awaitingConfirmation || !message?.trim())) {
-      throw new ApiError(
-        422,
-        'validation_error',
-        'A refinement message is required for the current generated plan',
+  /** 兼容旧调用点：`/api/agent/:id` 的 `plan` 字段现在返回 PlanView。 */
+  state(sessionId: string): PlanView {
+    return this.view(sessionId);
+  }
+
+  /** 开始规划（`mode:'plan'` 或 `plan_start`）。 */
+  startPlanning(sessionId: string, message: string): PlanView {
+    const session = this.requireSession(sessionId);
+    return session.startPlanning(message);
+  }
+
+  /** 采纳会话里未结束的计划（会话打开时调用；失败不抛，降级为「当前无计划」）。 */
+  adoptPlan(sessionId: string): TaskRecord | undefined {
+    try {
+      return this.tasks?.activePlanForSession(sessionId);
+    } catch (error) {
+      this.options.logger?.warn(
+        { sessionId, error: error instanceof Error ? error.message : String(error) },
+        'plan adoption failed',
       );
+      return undefined;
     }
-    const machine = this.machines.get(sessionId);
-    if (!machine)
-      throw new ApiError(409, 'plan_unavailable', 'Plan mode is unavailable for this session');
-    if (action === 'enable') machine.enable();
-    else if (action === 'disable') machine.disable();
-    else if (action === 'execute') machine.execute();
-    else machine.refine(message!.trim());
+  }
+
+  /** 计划/任务状态变化后的广播入口（任务监听器也会调用它刷新面板）。 */
+  refresh(sessionId: string): void {
+    this.sessions.get(sessionId)?.publish();
+  }
+
+  /** 结束会话（注册表 remove 时调用）。 */
+  remove(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    session?.exitPlan();
+    this.sessions.delete(sessionId);
+  }
+
+  /** 下发 Plan 命令：校验当前状态后委托给对应会话的状态机 / 执行器。 */
+  async command(
+    sessionId: string,
+    action: 'start' | 'execute' | 'pause' | 'resume' | 'refine' | 'abandon',
+    message?: string,
+  ): Promise<PlanView> {
+    const session = this.requireSession(sessionId);
+    const task = session.current();
+    const status = session.status();
+    switch (action) {
+      case 'start': {
+        if (!message?.trim())
+          throw new ApiError(
+            422,
+            'validation_error',
+            'A message is required to start planning (or send a prompt with mode="plan")',
+          );
+        return session.startPlanning(message.trim());
+      }
+      case 'refine': {
+        if (task === undefined)
+          throw new ApiError(409, 'plan_unavailable', 'No plan is active in this session');
+        if (!message?.trim())
+          throw new ApiError(422, 'validation_error', 'A refinement message is required');
+        // 修订只是把用户意见交给模型，模型用 update_plan 落地（状态仍由服务端校验）。
+        session.setCwd(task.cwd);
+        this.requireTasks().setPlanState(task.id, { status: 'drafting' });
+        session.publish();
+        return session.view();
+      }
+      case 'execute': {
+        if (task === undefined)
+          throw new ApiError(409, 'plan_unavailable', 'No plan is active in this session');
+        if (status === 'executing') return session.view();
+        if (status !== 'proposed' && status !== 'paused')
+          throw new ApiError(
+            409,
+            'plan_not_ready',
+            `Plan cannot start executing from status "${status}"`,
+          );
+        if (task.steps.length === 0)
+          throw new ApiError(409, 'plan_not_ready', 'The plan has no steps to execute');
+        this.requireTasks().setPlanState(task.id, { status: 'executing' });
+        session.enterExecution();
+        await this.startExecution(task.id, `开始执行计划「${task.title}」。`);
+        return session.view();
+      }
+      case 'resume': {
+        if (task === undefined)
+          throw new ApiError(409, 'plan_unavailable', 'No plan is active in this session');
+        this.requireTasks().setPlanState(task.id, { status: 'executing' });
+        session.enterExecution();
+        await this.startExecution(task.id, `继续执行计划「${task.title}」。`);
+        return session.view();
+      }
+      case 'pause': {
+        if (task === undefined)
+          throw new ApiError(409, 'plan_unavailable', 'No plan is active in this session');
+        this.requireTasks().setPlanState(task.id, { status: 'paused' });
+        // 暂停 = 停手：释放租约并让当前轮结束（由调用方 abort），不留「还在跑」的假象。
+        this.executor?.stop(task.id);
+        session.publish();
+        return session.view();
+      }
+      case 'abandon': {
+        if (task === undefined)
+          throw new ApiError(409, 'plan_unavailable', 'No plan is active in this session');
+        this.executor?.stop(task.id);
+        this.requireTasks().abandonPlan(
+          task.id,
+          typeof message === 'string' && message.trim() ? message.trim() : '用户放弃计划',
+        );
+        session.exitPlan();
+        return session.view();
+      }
+      default:
+        throw new ApiError(
+          422,
+          'unsupported_command',
+          `Unsupported plan action: ${String(action)}`,
+        );
+    }
+  }
+
+  /** 启动执行：优先走执行器（租约 + 绑定）；没有执行器时用会话自身的 prompt 通道。 */
+  private async startExecution(taskId: string, prompt: string): Promise<void> {
+    const executor = this.executor;
+    if (executor === undefined)
+      throw new ApiError(409, 'plan_unavailable', 'Plan execution is unavailable (no executor)');
+    const task = await executor.start(taskId, prompt);
+    this.refresh(task.sessionId ?? '');
   }
 
   /** 状态机登记（attach 时调用）。 */
-  attach(machine: PlanMachine, sessionId: string): void {
-    this.machines.set(sessionId, machine);
+  register(session: PlanSession): void {
+    this.sessions.set(session.sessionId, session);
   }
 
-  /** 会话移除时清理其状态机。 */
-  remove(sessionId: string): void {
-    this.machines.delete(sessionId);
-  }
-
-  /** 状态快照更新转发给监听器。 */
-  publishState(state: PlanSnapshot): void {
-    this.listener?.(state);
+  /** 状态视图更新转发给监听器（注册表把它转成 SSE `plan_updated`）。 */
+  publishState(plan: PlanView): void {
+    try {
+      this.listener?.(plan);
+    } catch (error) {
+      this.options.logger?.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'plan publish failed',
+      );
+    }
   }
 
   dispose(): void {
-    this.machines.clear();
+    this.sessions.clear();
+  }
+
+  private requireSession(sessionId: string): PlanSession {
+    const session = this.sessions.get(sessionId);
+    if (session === undefined)
+      throw new ApiError(
+        409,
+        'plan_unavailable',
+        `Plan mode is unavailable for this session (not opened yet)`,
+      );
+    return session;
+  }
+
+  private requireTasks(): TaskService {
+    const tasks = this.tasks;
+    if (tasks === undefined)
+      throw new ApiError(409, 'plan_unavailable', 'Plan mode requires the task service');
+    return tasks;
+  }
+
+  /** 无活跃状态机时（会话未打开）从库里直接投影。 */
+  private viewFromStore(sessionId: string): PlanView {
+    const tasks = this.tasks;
+    if (tasks === undefined) return emptyPlanView(sessionId);
+    try {
+      const task = tasks.activePlanForSession(sessionId);
+      return task === undefined ? emptyPlanView(sessionId) : toPlanView(task);
+    } catch {
+      return emptyPlanView(sessionId);
+    }
+  }
+
+  /** 会话状态机（测试与注册表用）。 */
+  session(sessionId: string): PlanSession | undefined {
+    return this.sessions.get(sessionId);
   }
 }

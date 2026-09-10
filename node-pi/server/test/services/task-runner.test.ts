@@ -362,3 +362,107 @@ describe('TaskRunner dispose', () => {
     }
   }, 20_000);
 });
+
+describe('TaskRunner.start（M4：计划执行复用同一套租约与绑定）', () => {
+  it('acquires a lease, binds the task to the session and sends the prompt', async () => {
+    const process = startProcess({ dbPath: join(tempDir(), 'platform.db') });
+    await openSession(process);
+    const task = process.tasks.create({
+      title: '手动任务',
+      goal: 'G',
+      sessionId: process.session.sessionId,
+    });
+    const started = await process.runner.start(task.id, '开始执行');
+    expect(process.session.prompts).toEqual(['开始执行']);
+    expect(process.runner.activeTaskIds()).toEqual([task.id]);
+    expect(started.execution.lease?.owner).toBe(process.owner);
+    // 绑定生效：此后的工具事件会记到该任务的在飞动作上（M3 的恢复依据）。
+    process.tracker.noteToolStart(process.session.sessionId, 'edit', 'call-9', { path: 'a.ts' });
+    expect(process.tasks.get(task.id).execution.inFlight).toMatchObject({
+      kind: 'tool',
+      toolName: 'edit',
+      sideEffect: 'write',
+    });
+    process.tracker.noteToolEnd(process.session.sessionId);
+
+    // 结算后释放租约。
+    process.runner.handleSettled(process.session.sessionId);
+    expect(process.tasks.get(task.id).execution.lease).toBeUndefined();
+  });
+
+  it('refuses a task without a session and never double-starts', async () => {
+    const process = startProcess({ dbPath: join(tempDir(), 'platform.db') });
+    await openSession(process);
+    const orphan = process.tasks.create({ title: 't', goal: 'g' });
+    await expect(process.runner.start(orphan.id, 'x')).rejects.toMatchObject({
+      code: 'task_session_missing',
+    });
+
+    const bound = process.tasks.create({
+      title: 't',
+      goal: 'g',
+      sessionId: process.session.sessionId,
+    });
+    await process.runner.start(bound.id, 'x');
+    // 同进程再启动 = 继续执行（租约是自己的）；别的进程则被租约拦住。
+    await process.runner.start(bound.id, 'x');
+    const otherProcess = startProcess({
+      dbPath: join(tempDir(), 'platform-other.db'),
+      owner: 'owner-b',
+    });
+    otherProcess.tasks.create({ title: 'x', goal: 'g' });
+    expect(() => process.tasks.acquireLease(bound.id, 'owner-b')).toThrowError(
+      /being executed by owner-a/,
+    );
+  });
+
+  it('stop() releases the lease without waiting for settle', async () => {
+    const process = startProcess({ dbPath: join(tempDir(), 'platform.db') });
+    await openSession(process);
+    const task = process.tasks.create({
+      title: 't',
+      goal: 'g',
+      sessionId: process.session.sessionId,
+    });
+    await process.runner.start(task.id, 'x');
+    process.runner.stop(task.id);
+    expect(process.tasks.get(task.id).execution.lease).toBeUndefined();
+    expect(process.runner.activeTaskIds()).toEqual([]);
+  });
+});
+
+describe('TaskRunner.resume replan（M4 的 M3 接线）', () => {
+  it('sends a plan back to drafting and asks the model to re-plan', async () => {
+    const process = startProcess({ dbPath: join(tempDir(), 'platform.db') });
+    await openSession(process);
+    const plan = process.tasks.createPlan({
+      title: '重构 Plan 模式',
+      goal: 'G',
+      sessionId: process.session.sessionId,
+    });
+    process.tasks.replacePlanSteps(plan.id, [{ title: 'a' }, { title: 'b' }]);
+    const current = process.tasks.get(plan.id);
+    process.tasks.updateStep(plan.id, 's1', {
+      status: 'in_progress',
+      ifRevision: current.revision,
+    });
+
+    const outcome = await process.runner.resume(plan.id, { mode: 'replan' });
+    expect(outcome.prompt).toContain('重新规划任务');
+    expect(process.tasks.get(plan.id).execution.plan?.status).toBe('drafting');
+    // 恢复摘要仍然注入（模型要先复述中断前的状态）。
+    expect(process.session.prompts[0]).toContain('重新规划任务');
+
+    // 非计划任务仍然拒绝 replan。
+    const manual = process.tasks.create({
+      title: 't',
+      goal: 'g',
+      sessionId: process.session.sessionId,
+      steps: [{ title: 'a' }],
+    });
+    expect(() => process.recovery.describeItem(manual.id)).not.toThrow();
+    await expect(process.runner.resume(manual.id, { mode: 'replan' })).rejects.toMatchObject({
+      code: 'replan_unavailable',
+    });
+  });
+});

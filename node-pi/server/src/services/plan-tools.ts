@@ -107,8 +107,28 @@ export interface PlanToolboxOptions {
 /** 工具用例层：把参数变成任务写入，并把领域错误翻译成模型能照做的错误信息。 */
 export class PlanToolbox {
   private planTaskId: string | undefined;
+  private onChanged: ((task: TaskRecord) => void) | undefined;
 
   constructor(private readonly options: PlanToolboxOptions) {}
+
+  /**
+   * 注册「已写入」回调（Plan 会话用它立即广播新视图）。
+   * 中文说明：不依赖外部「任务变更 → 刷新计划视图」的桥接——工具是计划状态的主要写入者，
+   * 让它自己触发广播，计划面板才不会在工具调用后停在旧状态。
+   */
+  setOnChanged(listener: (task: TaskRecord) => void): void {
+    this.onChanged = listener;
+  }
+
+  /** 写入后广播（回调失败不影响工具结果）。 */
+  private changed(task: TaskRecord): TaskRecord {
+    try {
+      this.onChanged?.(task);
+    } catch {
+      // 广播是增量能力，失败降级为不推送。
+    }
+    return task;
+  }
 
   /** 绑定当前会话正在处理的计划（会话 attach 或 startPlanning 时设置）。 */
   bind(taskId: string | undefined): void {
@@ -144,8 +164,9 @@ export class PlanToolbox {
         ifRevision: next.revision,
       });
     }
-    next = this.options.tasks.setPlanState(task.id, { status: 'proposed', question: null });
-    return next;
+    return this.changed(
+      this.options.tasks.setPlanState(task.id, { status: 'proposed', question: null }),
+    );
   }
 
   /** 修订计划（标题/步骤）；`revision` 不匹配时把当前版本回给模型让它重读。 */
@@ -181,7 +202,7 @@ export class PlanToolbox {
         next = this.options.tasks.setPlanState(task.id, { status: 'proposed' });
       }
     }
-    return next;
+    return this.changed(next);
   }
 
   /** 完成一步：校验证据 → 写状态；证据不符则抛错（模型据此补齐后重试）。 */
@@ -216,10 +237,12 @@ export class PlanToolbox {
       ...(this.options.exists === undefined ? {} : { exists: this.options.exists }),
     });
     if (!check.ok) throw new Error(`证据不足，暂不能标记完成：${check.detail}`);
-    const saved = this.options.tasks.completeStepWithEvidence(task.id, step.id, {
-      ...evidence,
-      summary: evidence.summary ?? check.detail,
-    });
+    const saved = this.changed(
+      this.options.tasks.completeStepWithEvidence(task.id, step.id, {
+        ...evidence,
+        summary: evidence.summary ?? check.detail,
+      }),
+    );
     return { task: saved, detail: check.detail };
   }
 
@@ -228,20 +251,24 @@ export class PlanToolbox {
     const task = this.requirePlan();
     const step = task.steps.find((item) => item.id === params.stepId);
     if (step === undefined) throw new Error(`找不到步骤 ${params.stepId}`);
-    return this.options.tasks.updateStep(task.id, step.id, {
-      status: 'blocked',
-      blockedReason: params.reason,
-      ifRevision: task.revision,
-    });
+    return this.changed(
+      this.options.tasks.updateStep(task.id, step.id, {
+        status: 'blocked',
+        blockedReason: params.reason,
+        ifRevision: task.revision,
+      }),
+    );
   }
 
   /** 向用户提问（规划期澄清）：登记问题，等用户在对话里回答。 */
   askUser(params: AskUserParams): TaskRecord {
     const task = this.requirePlan();
-    return this.options.tasks.setPlanState(task.id, {
-      question: params.question,
-      ...(params.options === undefined ? {} : { questionOptions: params.options }),
-    });
+    return this.changed(
+      this.options.tasks.setPlanState(task.id, {
+        question: params.question,
+        ...(params.options === undefined ? {} : { questionOptions: params.options }),
+      }),
+    );
   }
 
   private requirePlan(): TaskRecord {

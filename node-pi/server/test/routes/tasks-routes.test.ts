@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -521,7 +521,7 @@ describe('task recovery routes (M3)', () => {
     expect(confirmed.statusCode).toBe(202);
   });
 
-  it('rejects replan with a pointer to M4', async () => {
+  it('rejects replan for manual tasks (only plan tasks can be re-planned)', async () => {
     const store = memoryStore();
     const app = createApp({ store });
     apps.push(app);
@@ -585,5 +585,128 @@ describe('task recovery routes (M3)', () => {
     const silent = new AgentRegistry(new FakeSessionFactory());
     silent.announceRecovery('session-1', []);
     expect(silent.hasSubscribers('session-1')).toBe(false);
+  });
+});
+
+describe('plan routes（M4）', () => {
+  /**
+   * 路由层只验证「命令到服务的搬运」：Plan 状态机与工具的完整行为在
+   * plan-mode.test.ts 覆盖（那里能拿到真实的扩展 API 与任务服务），
+   * 与 app.test.ts 对 `/plan` 的做法一致——假 session 没有扩展运行时。
+   */
+  function stubPlans(view: Record<string, unknown>) {
+    const calls: Array<{ action: string; message?: string }> = [];
+    const stub = {
+      calls,
+      setListener: () => undefined,
+      setTraceSink: () => undefined,
+      setTaskService: () => undefined,
+      setExecutor: () => undefined,
+      refresh: () => undefined,
+      remove: () => undefined,
+      dispose: () => undefined,
+      startPlanning: (_sessionId: string, message: string) => {
+        calls.push({ action: 'start', message });
+        return view;
+      },
+      state: () => view,
+      command: async (_sessionId: string, action: string, message?: string) => {
+        calls.push({ action, ...(message === undefined ? {} : { message }) });
+        return view;
+      },
+    };
+    return stub as unknown as PlanModeService & { calls: typeof calls };
+  }
+
+  const PLAN_VIEW = {
+    planId: 'task-1',
+    taskId: 'task-1',
+    sessionId: 'session-1',
+    status: 'drafting',
+    revision: 1,
+    title: '重构 Plan 模式',
+    goal: 'G',
+    steps: [],
+    awaitingUserAction: false,
+    updatedAt: '2026-08-21T10:00:00.000Z',
+  };
+
+  it('starts planning when a prompt carries mode="plan"', async () => {
+    const plans = stubPlans(PLAN_VIEW);
+    const app = createApp({
+      store: memoryStore(),
+      registry: new AgentRegistry(factory, undefined, plans),
+      planService: plans,
+    });
+    apps.push(app);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: tempWorkspace(), message: '重构 Plan 模式', mode: 'plan' },
+    });
+    expect(created.statusCode).toBe(202);
+    expect(plans.calls).toEqual([{ action: 'start', message: '重构 Plan 模式' }]);
+
+    // 非法 mode 不能被静默当成 direct。
+    const bad = await app.inject({
+      method: 'POST',
+      url: `/api/agent/${created.json().sessionId}`,
+      payload: { type: 'prompt', message: 'x', mode: 'nope' },
+    });
+    expect(bad.statusCode).toBe(422);
+    expect(plans.calls).toHaveLength(1);
+  });
+
+  it('maps plan commands to service actions and aborts on pause/abandon', async () => {
+    const plans = stubPlans(PLAN_VIEW);
+    const registry = new AgentRegistry(factory, undefined, plans);
+    const app = createApp({ store: memoryStore(), registry, planService: plans });
+    apps.push(app);
+    const sessionId = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/agent/new',
+        payload: { cwd: tempWorkspace(), message: 'hello' },
+      })
+    ).json().sessionId as string;
+    const abort = vi.spyOn(registry.get(sessionId)!.session, 'abort');
+
+    const commands = [
+      { type: 'plan_start', message: '重构 Plan 模式', action: 'start' },
+      { type: 'plan_execute', action: 'execute' },
+      { type: 'plan_refine', message: '把第二步拆开', action: 'refine' },
+      { type: 'plan_pause', action: 'pause' },
+      { type: 'plan_resume', action: 'resume' },
+      { type: 'plan_abandon', action: 'abandon' },
+      // 弃用别名：一个版本内继续工作。
+      { type: 'plan_enable', message: '旧客户端', action: 'start' },
+      { type: 'plan_disable', action: 'abandon' },
+    ];
+    for (const command of commands) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/agent/${sessionId}`,
+        payload: {
+          type: command.type,
+          ...(command.message === undefined ? {} : { message: command.message }),
+        },
+      });
+      expect(response.statusCode, command.type).toBe(200);
+      expect(response.json().data, command.type).toMatchObject({
+        plan: { status: 'drafting' },
+      });
+    }
+    expect(plans.calls.map((call) => call.action)).toEqual([
+      'start',
+      'execute',
+      'refine',
+      'pause',
+      'resume',
+      'abandon',
+      'start',
+      'abandon',
+    ]);
+    // pause / abandon / plan_disable 都要真的停手（否则模型会继续跑完）。
+    expect(abort).toHaveBeenCalledTimes(3);
   });
 });

@@ -55,6 +55,8 @@ export function remindRecovery(
 
 /** POST /new 请求体的宽松类型（运行期还要逐个校验，见下方辅助函数）。 */
 interface NewAgentBody {
+  /** 执行方式（M4）：direct（默认）直接执行；plan 先进入只读规划。 */
+  mode?: 'direct' | 'plan';
   cwd?: unknown;
   message?: unknown;
   provider?: unknown;
@@ -230,10 +232,13 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       compaction: optionalCompaction(body.compaction),
       mcpServers: optionalMcpServers(body.mcpServers),
     });
+    // `mode: 'plan'` 是消息级属性（M4）：同一请求里先建/采纳计划，再发这条消息，
+    // 因此新建会话也能直接「先规划」，不再需要「先发一条消息再开开关」。
     await options.registry.command(entry.session.sessionId, {
       type: 'prompt',
       message,
       images: inputImages,
+      ...(body.mode === undefined ? {} : { mode: body.mode }),
     });
     return reply.code(202).send({ success: true, sessionId: entry.session.sessionId });
   });

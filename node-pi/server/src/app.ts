@@ -149,7 +149,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 工具调用审批中枢 + Plan 模式服务：都以"内联扩展"注入每个会话，
   // 闭包直接引用这两个实例（不走事件总线），挂起等待由 broker 的 Promise 结算。
   const approvals = new ToolApprovalBroker();
-  const plans = options.planService ?? new PlanModeService();
+  const plans = options.planService ?? new PlanModeService({ logger: app.log });
 
   const agentDir =
     options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? '.'}/.pi/agent`;
@@ -184,6 +184,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     : undefined;
   // 任务服务（M2）：同步写入、错误会冒泡成 API 错误，与 trace 的「尽力而为」刻意不同。
   const tasks = options.taskService ?? new TaskService(store.tasks);
+  // Plan 服务（M4）需要任务服务才能工作：计划就是 origin='plan' 的任务。
+  plans.setTaskService(tasks);
 
   // 任务断点续跑（M3）：租约 owner（pid + 本次启动的 bootId）、在飞动作跟踪、恢复清单与执行器。
   // runner 与 tracker 互相引用（tracker 在 agent_settled 时通知 runner 释放租约），
@@ -234,6 +236,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     owner,
     logger: app.log,
   });
+  // 计划执行（plan_execute / plan_resume）复用执行器的租约与任务绑定，
+  // 不另建一套「谁在跑」的内存状态。
+  plans.setExecutor(runner);
   const workspaceService =
     options.workspaceService ??
     new WorkspaceService(options.workspaceParent, join(agentDir, 'node-server-workspaces.json'));
@@ -321,7 +326,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     runner,
   });
   // 任务变更 → SSE `task_updated`；任务绑定到会话 → 之后开始的 run 带上 task_id。
-  tasks.setListener((task) => registry.announceTask(task));
+  // 计划（origin='plan'）额外推一条 `plan_updated`：计划面板与任务面板是两个视图，
+  // 但真相源是同一个任务——把它放在这里，任何写入路径（工具、面板、执行器）都自动同步。
+  tasks.setListener((task) => {
+    registry.announceTask(task);
+    if (task.origin === 'plan' && task.sessionId !== undefined) plans.refresh(task.sessionId);
+  });
   tasks.setSessionTaskListener((sessionId, taskId) => registry.setActiveTask(sessionId, taskId));
 
   // 前端静态托管：web 构建产物（默认 ../../web/dist）。显式 /api 路由优先于

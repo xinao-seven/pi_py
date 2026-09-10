@@ -163,15 +163,21 @@ describe('Fastify application', () => {
     });
   });
 
-  it('exposes the session Plan snapshot through the agent API', async () => {
-    // 用桩替换 PlanModeService：本测试只验证 HTTP 路由把服务的状态快照透传出去，
-    // 状态机的完整行为在 plan-mode.test.ts 覆盖。
+  it('exposes the session Plan view through the agent API', async () => {
+    // 用桩替换 PlanModeService：本测试只验证 HTTP 路由把计划视图透传出去，
+    // 状态机与工具的完整行为在 plan-mode.test.ts / plan-tools.test.ts 覆盖。
     const plans = {
       state: () => ({
+        planId: 'task-1',
+        taskId: 'task-1',
         sessionId: 'node-test-session',
-        mode: 'planning' as const,
-        todos: [{ step: 1, text: 'Inspect the API', completed: false }],
-        awaitingConfirmation: true,
+        status: 'proposed' as const,
+        revision: 3,
+        title: '重构 Plan 模式',
+        goal: '把正则换成工具契约',
+        steps: [{ id: 's1', title: 'Inspect the API', status: 'pending' as const }],
+        awaitingUserAction: true,
+        updatedAt: '2026-08-21T10:00:00.000Z',
       }),
       // AgentRegistry 构造时会给 plans 挂 setListener（SSE 转发），桩里保持无操作。
       setListener: () => undefined,
@@ -193,7 +199,12 @@ describe('Fastify application', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      plan: { mode: 'planning', awaitingConfirmation: true, todos: [{ text: 'Inspect the API' }] },
+      plan: {
+        planId: 'task-1',
+        status: 'proposed',
+        awaitingUserAction: true,
+        steps: [{ id: 's1', title: 'Inspect the API' }],
+      },
     });
   });
 

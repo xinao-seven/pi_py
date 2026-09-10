@@ -50,7 +50,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 任务续跑执行器：目前只有 resume 一条路径（M4 会让计划执行复用同一套租约/注入机制）。 */
+/** 任务续跑执行器：`resume`（崩溃恢复）与 `start`（计划开始/继续执行）共用同一套租约与绑定。 */
 export class TaskRunner {
   private readonly active = new Map<string, ActiveRun>();
 
@@ -112,7 +112,10 @@ export class TaskRunner {
     }
 
     // retry_step：把当前步骤重置回 pending 再继续。
+    // replan（M4）：把计划打回草稿，让模型用 update_plan/submit_plan 重新提交计划。
     if (request.mode === 'retry_step') task = tasks.resetCurrentStep(taskId);
+    else if (request.mode === 'replan' && task.origin === 'plan')
+      task = tasks.setPlanState(taskId, { status: 'drafting' });
     else task = tasks.get(taskId);
 
     // 绑定会话与任务，并登记一次性恢复摘要。
@@ -145,6 +148,73 @@ export class TaskRunner {
       throw error;
     }
     return { task, item, prompt };
+  }
+
+  /**
+   * 开始/继续执行一个任务（M4 的 plan_execute / plan_resume 走这里）。
+   *
+   * 中文说明：与 `resume` 的区别只在于「不做恢复判定、不注入一次性恢复摘要」——
+   * 计划执行期的上下文由 Plan 扩展**每轮**注入（`[PLAN EXECUTING]`），
+   * 所以这里只需要：取租约 → 绑定会话与任务（在飞动作才会记到任务上）→ 发一条可见 prompt。
+   * 租约同样由 `handleSettled` 在 run 结算时释放，暂停时由 `stop()` 主动释放。
+   */
+  async start(taskId: string, prompt: string): Promise<TaskRecord> {
+    const { tasks, registry, tracker } = this.options;
+    const existing = tasks.get(taskId);
+    if (existing.sessionId === undefined) {
+      throw new ApiError(409, 'task_session_missing', 'Task is not bound to a session');
+    }
+    const sessionId = existing.sessionId;
+    let task = tasks.acquireLease(taskId, this.options.owner, {
+      ...(this.options.leaseTtlMs === undefined ? {} : { ttlMs: this.options.leaseTtlMs }),
+    });
+    try {
+      await registry.open(sessionId);
+    } catch (error) {
+      tasks.releaseLease(taskId, this.options.owner);
+      throw new ApiError(
+        409,
+        'task_session_missing',
+        `Session ${sessionId} cannot be opened: ${messageOf(error)}`,
+      );
+    }
+    tracker.track(sessionId, taskId);
+    const keeper = new TaskLeaseKeeper({
+      renew: () =>
+        tasks.renewLease(
+          taskId,
+          this.options.owner,
+          this.options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
+        ),
+      onLost: (error) =>
+        this.options.logger?.warn({ taskId, error: messageOf(error) }, 'task lease renew failed'),
+      intervalMs: this.options.renewIntervalMs ?? DEFAULT_RENEW_INTERVAL_MS,
+    });
+    keeper.start();
+    this.active.set(taskId, { taskId, sessionId, keeper });
+    try {
+      await registry.command(sessionId, { type: 'prompt', message: prompt });
+    } catch (error) {
+      keeper.dispose();
+      this.active.delete(taskId);
+      tasks.releaseLease(taskId, this.options.owner);
+      throw error;
+    }
+    task = tasks.get(taskId);
+    return task;
+  }
+
+  /** 主动停手（暂停/放弃计划）：停续期并释放租约，不留「还在跑」的假象。 */
+  stop(taskId: string): void {
+    const run = this.active.get(taskId);
+    if (run === undefined) return;
+    run.keeper.dispose();
+    this.active.delete(taskId);
+    try {
+      this.options.tasks.releaseLease(taskId, this.options.owner);
+    } catch (error) {
+      this.options.logger?.warn({ taskId, error: messageOf(error) }, 'task lease release failed');
+    }
   }
 
   /** run 结束（agent_settled）时释放租约并停续期。 */
@@ -232,7 +302,9 @@ export function buildResumeContext(
 
 /** 生成发给会话的可见指令（细节在被注入的隐藏摘要里）。 */
 export function buildResumePrompt(task: TaskRecord, request: ResumeRequest): string {
-  return request.mode === 'retry_step'
-    ? `重试任务「${task.title}」的当前步骤。先按 [TASK RESUME] 复述状态，再重新执行这一步。`
-    : `继续任务「${task.title}」。先按 [TASK RESUME] 复述状态，再推进当前步骤。`;
+  if (request.mode === 'retry_step')
+    return `重试任务「${task.title}」的当前步骤。先按 [TASK RESUME] 复述状态，再重新执行这一步。`;
+  if (request.mode === 'replan')
+    return `重新规划任务「${task.title}」：先按 [TASK RESUME] 复述中断前的状态，再用 update_plan（或 submit_plan）提交修订后的计划，然后停下等用户确认。`;
+  return `继续任务「${task.title}」。先按 [TASK RESUME] 复述状态，再推进当前步骤。`;
 }

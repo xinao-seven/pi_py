@@ -37,7 +37,8 @@ import { ApiError } from '../errors.js';
 import type { ServiceLogger } from './service-logger.js';
 import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
-import { PlanModeService, type PlanSnapshot } from './plan-mode-service.js';
+import { PlanModeService } from './plan-mode-service.js';
+import { emptyPlanView, type PlanView } from './platform/plan-model.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
@@ -246,7 +247,7 @@ export interface StreamEvent {
   payload:
     | AgentSessionEvent
     | { type: 'agent_end'; error: string }
-    | { type: 'plan_updated'; plan: PlanSnapshot }
+    | { type: 'plan_updated'; plan: PlanView }
     | { type: 'task_updated'; task: TaskRecord }
     | { type: 'task_recovery_required'; tasks: TaskRecoveryItem[] }
     | {
@@ -687,7 +688,15 @@ export class AgentRegistry {
     const message = typeof command.message === 'string' ? command.message : '';
     const images = this.images(command.images);
     switch (command.type) {
-      case 'prompt':
+      case 'prompt': {
+        // `mode: 'plan'` 表示「这条消息进入规划」——一次性、消息级属性，
+        // 而不是 M4 之前的会话级预开关：因此必须先建/采纳计划，
+        // 模型随后拿到的 before_agent_start 上下文才是规划期的。
+        if (command.mode === 'plan') {
+          this.requirePlans().startPlanning(sessionId, message);
+        } else if (command.mode !== undefined && command.mode !== 'direct') {
+          throw new ApiError(422, 'validation_error', 'mode must be "direct" or "plan"');
+        }
         // prompt 是异步长任务（模型思考+输出可能很久）：不 await，
         // 启动后立刻返回，结果通过 SSE 事件流推送（见 start() 的说明）。
         this.start(
@@ -695,6 +704,7 @@ export class AgentRegistry {
           sessionId,
         );
         return {};
+      }
       case 'steer': // 干预：打断当前输出并插入新指令
         await session.steer(message, images);
         return {};
@@ -745,20 +755,37 @@ export class AgentRegistry {
         this.approveTool(sessionId, toolCallId, command.approved);
         return {};
       }
-      case 'plan_enable':
-      case 'plan_disable':
+      case 'plan_start':
       case 'plan_execute':
-      case 'plan_refine': {
-        if (!this.plans)
-          throw new ApiError(409, 'plan_unavailable', 'Plan mode is unavailable for this session');
+      case 'plan_pause':
+      case 'plan_resume':
+      case 'plan_refine':
+      case 'plan_abandon': {
         const action = command.type.replace('plan_', '') as
-          'enable' | 'disable' | 'execute' | 'refine';
-        this.plans.command(
+          'start' | 'execute' | 'pause' | 'resume' | 'refine' | 'abandon';
+        const plan = await this.requirePlans().command(
           sessionId,
           action,
           typeof command.message === 'string' ? command.message : undefined,
         );
-        return {};
+        // 暂停要真的停手：改状态之后立刻中止当前轮，否则模型会继续跑完。
+        if (action === 'pause' || action === 'abandon') await session.abort();
+        return { plan };
+      }
+      case 'plan_enable': // 兼容旧客户端：等价于「用这条消息开始规划」
+      case 'plan_disable': {
+        // 兼容旧客户端：等价于放弃计划
+        this.logger?.warn(
+          { sessionId, type: command.type },
+          'deprecated plan command received (use plan_start / plan_abandon)',
+        );
+        const plan = await this.requirePlans().command(
+          sessionId,
+          command.type === 'plan_enable' ? 'start' : 'abandon',
+          typeof command.message === 'string' ? command.message : undefined,
+        );
+        if (command.type === 'plan_disable') await session.abort();
+        return { plan };
       }
       default:
         throw new ApiError(
@@ -918,15 +945,16 @@ export class AgentRegistry {
     this.approvals.decide(sessionId, toolCallId, approved);
   }
 
-  planState(sessionId: string): PlanSnapshot {
-    return (
-      this.plans?.state(sessionId) ?? {
-        sessionId,
-        mode: 'normal',
-        todos: [],
-        awaitingConfirmation: false,
-      }
-    );
+  /** 会话当前计划视图（M4：PlanView，来自任务库；无计划时 `planId` 为空串）。 */
+  planState(sessionId: string): PlanView {
+    return this.plans?.state(sessionId) ?? emptyPlanView(sessionId);
+  }
+
+  /** 取 Plan 服务（未装配时 409，避免散落的 `if (!this.plans)`）。 */
+  private requirePlans(): PlanModeService {
+    if (!this.plans)
+      throw new ApiError(409, 'plan_unavailable', 'Plan mode is unavailable for this session');
+    return this.plans;
   }
 
   /** 取活跃条目，不存在抛 404（区别于 open 的自动恢复语义）。 */
@@ -1109,7 +1137,7 @@ export class AgentRegistry {
     });
   }
 
-  private announcePlan(plan: PlanSnapshot): void {
+  private announcePlan(plan: PlanView): void {
     const entry = this.entries.get(plan.sessionId);
     if (entry) this.publish(entry, { type: 'plan_updated', plan });
   }

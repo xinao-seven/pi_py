@@ -226,8 +226,31 @@ describe('TaskRecoveryService scan', () => {
   });
 });
 
+describe('TaskRecoveryService：计划的 replan（M4）', () => {
+  it('allows replan for plan tasks and exposes origin in the item', () => {
+    const harness = makeHarness();
+    const plan = harness.tasks.createPlan({
+      title: '重构 Plan 模式',
+      goal: 'G',
+      sessionId: 'session-1',
+      cwd: process.cwd(),
+    });
+    harness.tasks.replacePlanSteps(plan.id, [{ title: 'a' }, { title: 'b' }]);
+    const started = harness.tasks.get(plan.id);
+    harness.tasks.updateStep(plan.id, 's1', {
+      status: 'in_progress',
+      ifRevision: started.revision,
+    });
+    const item = harness.recovery.describeItem(plan.id);
+    expect(item.origin).toBe('plan');
+    expect(() => harness.recovery.assertResumable(item, resume('replan'))).not.toThrow();
+    // 普通任务仍然不行。
+    expect(harness.recovery.describeItem(interruptedTask(harness).id).origin).toBe('user');
+  });
+});
+
 describe('TaskRecoveryService assertResumable', () => {
-  it('rejects terminal tasks, missing sessions, replan and empty step lists', () => {
+  it('rejects terminal tasks, missing sessions, non-plan replan and empty step lists', () => {
     const harness = makeHarness();
     const task = interruptedTask(harness);
     const item = harness.recovery.describeItem(task.id);
@@ -242,6 +265,7 @@ describe('TaskRecoveryService assertResumable', () => {
       409,
       'task_session_missing',
     );
+    // replan 只对计划任务开放（普通任务没有计划可重排）。
     expectError(
       () => harness.recovery.assertResumable(item, resume('replan')),
       409,

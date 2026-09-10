@@ -66,6 +66,8 @@ export interface TaskRecoveryItem {
   title: string;
   goal: string;
   status: TaskRecord['status'];
+  /** 任务来源：plan 任务可以 `replan`（M4），手工任务不行。 */
+  origin: TaskRecord['origin'];
   sessionId?: string;
   cwd?: string;
   attempt: number;
@@ -123,13 +125,13 @@ export class TaskRecoveryService {
    * 抛错是必要的：resume 绝不能在不满足前提时静默开始跑。
    */
   assertResumable(item: TaskRecoveryItem, request: ResumeRequest): void {
-    // 先判「请求本身支持不支持」：不支持的 mode 不该被任务状态的问题掩盖。
-    if (request.mode === 'replan') {
-      // M4 的 Plan 重构会接管这条路径（提交新计划 → 覆盖步骤）。
+    // replan（M4）：只有 plan 任务能重新规划——它需要走 submit_plan/update_plan 那条
+    // 结构化路径，普通任务没有计划可重排。
+    if (request.mode === 'replan' && item.origin !== 'plan') {
       throw new ApiError(
         409,
         'replan_unavailable',
-        'replan will be provided by the M4 plan refactor; use continue or retry_step',
+        'replan is only available for tasks created by a plan; use continue or retry_step',
       );
     }
     if (item.status === 'completed' || item.status === 'cancelled') {
@@ -209,6 +211,7 @@ export class TaskRecoveryService {
       title: task.title,
       goal: task.goal,
       status: task.status,
+      origin: task.origin,
       ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
       ...(task.cwd === undefined ? {} : { cwd: task.cwd }),
       attempt: execution.attempt,
