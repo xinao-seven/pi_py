@@ -27,6 +27,7 @@ import {
   type AgentSessionEvent,
   type CompactionSettings,
   type InlineExtension,
+  type LoadExtensionsResult,
   type SessionInfo,
 } from '@earendil-works/pi-coding-agent';
 import { readdir } from 'node:fs/promises';
@@ -42,6 +43,57 @@ import type { McpService } from './mcp/mcp-service.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
+
+/**
+ * 由服务端“内联扩展”接管的扩展目录名。
+ *
+ * 中文说明：SDK 的 DefaultResourceLoader 会自动发现 `~/.pi/agent/extensions/` 与
+ * `{cwd}/.pi/extensions/`。如果用户在这两个位置装了**同名**扩展（例如官方自带的
+ * `plan-mode`），它会与我们的内联实现同时生效，形成两套状态机：
+ * - 两者都钩 tool_call，而 SDK 在首个 `{block:true}` 后短路 → 拦截规则不可预测；
+ * - 两者都钩 before_agent_start / agent_end / turn_end → 上下文重复注入、状态双写；
+ * - 官方实现会从**共享的会话 JSONL** 里恢复自己的状态（`customType: "plan-mode"`），
+ *   因此 CLI 里敲过 `/plan` 的会话会在 Web 侧“隐形地”进入规划期。
+ *
+ * 这里按**目录名**过滤掉被内联实现接管的那几个，只影响本服务的资源加载，
+ * **不修改、不删除用户目录里的任何文件**（CLI 仍照常加载它们）。
+ */
+export const INLINE_OWNED_EXTENSION_DIRS = ['plan-mode'] as const;
+
+/** 从 unknown 错误里取出可读消息（不泄露堆栈）。 */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 从扩展路径中取出它所在的目录名（用于识别被内联实现接管的扩展）。
+ * 例：`.../extensions/plan-mode/index.ts` → `plan-mode`。
+ */
+function extensionDirName(path: string): string | undefined {
+  const segments = path.split(/[\\/]/);
+  const index = segments.lastIndexOf('extensions');
+  return index >= 0 ? segments[index + 1] : undefined;
+}
+
+/**
+ * 过滤掉被内联实现接管的同名文件扩展（只影响本服务的资源加载）。
+ * 返回被过滤掉的路径，供调用方记日志。
+ */
+export function dropInlineOwnedExtensions(result: LoadExtensionsResult): {
+  result: LoadExtensionsResult;
+  dropped: string[];
+} {
+  const owned = new Set<string>(INLINE_OWNED_EXTENSION_DIRS);
+  const dropped: string[] = [];
+  const extensions = result.extensions.filter((extension) => {
+    // 内联扩展的 path 形如 `<inline:N>`，不会被误伤（其目录名取不到）。
+    const name = extensionDirName(extension.path);
+    if (name === undefined || !owned.has(name)) return true;
+    dropped.push(extension.path);
+    return false;
+  });
+  return { result: { ...result, extensions }, dropped };
+}
 
 /**
  * 模型响应日志所需的 assistant 消息元数据（结构化子集）。
@@ -136,6 +188,16 @@ export interface PiSession {
   };
   getActiveToolNames(): string[];
   subscribe(listener: (event: AgentSessionEvent) => void): () => void; // 返回取消订阅函数
+  /**
+   * 绑定扩展运行时（SDK 的 AgentSession.bindExtensions）。
+   *
+   * 中文说明：**这是 `session_start` 扩展事件的唯一发出点**——SDK 里只有
+   * interactive / print / rpc 三种 CLI mode 会调它，直接调 `createAgentSession()`
+   * 不会发 `session_start`。若不调用，所有依赖该钩子做初始化的扩展
+   * （如 PlanModeService 的状态机登记与 JSONL 恢复）永远不会生效。
+   * 传空对象即“无额外绑定”，只触发事件。
+   */
+  bindExtensions?(bindings?: Record<string, unknown>): Promise<void>;
   prompt(message: string, options?: { images?: ImageAttachment[] }): Promise<void>;
   steer(message: string, images?: ImageAttachment[]): Promise<void>;
   followUp(message: string, images?: ImageAttachment[]): Promise<void>;
@@ -218,6 +280,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     private readonly mcpService?: McpService,
     private readonly approvals?: ToolApprovalBroker,
     private readonly plans?: PlanModeService,
+    private readonly logger?: ServiceLogger,
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -357,6 +420,17 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       // 使"默认预设"破坏用户已有的文件级提示词）。空串/未提供 → 走 SDK 默认发现。
       ...(systemPrompt ? { systemPrompt } : {}),
       extensionFactories: factories,
+      // 过滤掉被上面这些内联扩展接管的同名文件扩展。只影响本服务的资源加载，
+      // 不碰磁盘：用户目录里的文件保持原样，CLI 仍会正常加载它们。
+      extensionsOverride: (base) => {
+        const { result, dropped } = dropInlineOwnedExtensions(base);
+        if (dropped.length > 0)
+          this.logger?.info(
+            { cwd, dropped, ownedBy: [...INLINE_OWNED_EXTENSION_DIRS] },
+            'file extensions suppressed (inline implementation owns these names)',
+          );
+        return result;
+      },
     });
     await loader.reload();
     return loader;
@@ -401,7 +475,9 @@ export class AgentRegistry {
     plans?.setListener((plan) => this.announcePlan(plan));
   }
 
-  /** 创建新会话并登记。会话 id 冲突（已活跃）则 409。 */
+  /**
+   * 创建新会话并登记。会话 id 冲突（已活跃）则 409。
+   */
   async create(input: CreateSessionInput): Promise<RegistryEntry> {
     const session = await this.sessionFactory.create(input);
     const existing = this.entries.get(session.sessionId);
@@ -470,13 +546,19 @@ export class AgentRegistry {
     return this.register(session, info.cwd, info.created, info);
   }
 
-  /** 把新建/恢复的会话登记进注册表，并订阅它的 SDK 事件。 */
-  private register(
+  /**
+   * 把新建/恢复的会话登记进注册表，订阅它的 SDK 事件，并触发 `session_start`。
+   *
+   * 中文说明：顺序很重要——先 `entries.set` 再触发 `session_start`，
+   * 这样扩展在 session_start 里同步产生的状态（如 Plan 状态机登记、SSE 状态快照）
+   * 已经能通过注册表找到本会话。
+   */
+  private async register(
     session: PiSession,
     cwd: string,
     createdAt: Date,
     persisted?: PersistedSessionInfo,
-  ): RegistryEntry {
+  ): Promise<RegistryEntry> {
     if (this.entries.has(session.sessionId)) {
       throw new ApiError(409, 'session_active', `Session ${session.sessionId} is already active`);
     }
@@ -494,6 +576,18 @@ export class AgentRegistry {
     // 订阅 SDK 事件：所有事件先进缓存（publish 内部处理），再广播给订阅者。
     entry.unsubscribe = session.subscribe((event) => this.publish(entry, event));
     this.entries.set(session.sessionId, entry);
+    // 触发 session_start：SDK 只在 CLI 的 interactive/print/rpc mode 里调用
+    // bindExtensions()，直接 createAgentSession() 不会发该事件。此处补上，
+    // 否则 Plan 等依赖 session_start 做初始化的内联扩展会完全失效。
+    // 失败不阻断会话可用性（扩展是增量能力，不该让会话建不起来）。
+    try {
+      await session.bindExtensions?.({});
+    } catch (error) {
+      this.logger?.warn(
+        { sessionId: session.sessionId, error: messageOf(error) },
+        'session_start dispatch failed',
+      );
+    }
     return entry;
   }
 

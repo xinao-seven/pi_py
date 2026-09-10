@@ -139,7 +139,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       // 传入 mcpService/approvals/plans，loader 把它们包装成内联扩展注入每个会话
       // （闭包直连实例，共享 MCP 连接与审批中枢，支持按预设开关）。
       // 第 4 参 app.log：会话事件（模型请求/响应、工具执行）的结构化日志器。
-      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans),
+      new OriginalPiSessionFactory(agentDir, mcpService, approvals, plans, app.log),
       approvals,
       plans,
       app.log,
