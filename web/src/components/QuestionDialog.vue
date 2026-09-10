@@ -31,7 +31,11 @@ function reset(pending: PendingQuestion): void {
   for (const question of pending.questions) next[question.id] = { selected: [], text: '' };
   draft.value = next;
 }
-watch(() => props.pending.questionId, () => reset(props.pending), { immediate: true });
+watch(
+  () => props.pending.questionId,
+  () => reset(props.pending),
+  { immediate: true },
+);
 
 function stateOf(id: string): { selected: string[]; text: string } {
   return draft.value[id] ?? { selected: [], text: '' };
@@ -88,7 +92,9 @@ function submit(): void {
     <section class="question-dialog" role="dialog" aria-modal="true" aria-label="Agent 的提问">
       <header class="question-head">
         <span class="question-badge">Agent 提问</span>
-        <span class="question-progress">{{ answeredCount }}/{{ pending.questions.length }} 已答</span>
+        <span class="question-progress"
+          >{{ answeredCount }}/{{ pending.questions.length }} 已答</span
+        >
       </header>
 
       <p class="question-intro">
@@ -118,7 +124,9 @@ function submit(): void {
               :key="option"
               type="button"
               class="question-option"
-              :class="{ 'question-option--selected': stateOf(question.id).selected.includes(option) }"
+              :class="{
+                'question-option--selected': stateOf(question.id).selected.includes(option),
+              }"
               :role="question.multiSelect ? 'checkbox' : 'radio'"
               :aria-checked="stateOf(question.id).selected.includes(option)"
               :disabled="busy"

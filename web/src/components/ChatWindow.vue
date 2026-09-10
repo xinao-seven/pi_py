@@ -407,7 +407,10 @@ function removePlanStep(payload: { stepId: string }): void {
   const current = plan.value;
   if (!current) return;
   const step = current.steps.find((item) => item.id === payload.stepId);
-  if (step?.status === 'completed' && !window.confirm('这一步已完成，删除会丢失它的证据，确定吗？')) {
+  if (
+    step?.status === 'completed' &&
+    !window.confirm('这一步已完成，删除会丢失它的证据，确定吗？')
+  ) {
     return;
   }
   void actTask(async () => {

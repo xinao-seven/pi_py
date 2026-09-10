@@ -170,7 +170,13 @@ function submitRefine(): void {
             >
               跳过
             </button>
-            <button v-else type="button" :disabled="busy" title="恢复为待开始" @click="reopenStep(step)">
+            <button
+              v-else
+              type="button"
+              :disabled="busy"
+              title="恢复为待开始"
+              @click="reopenStep(step)"
+            >
               恢复
             </button>
             <button
@@ -192,8 +198,8 @@ function submitRefine(): void {
         计划已提交，等待你确认后开始执行（确认前 Agent 不会改动工作区）。
       </p>
       <p v-else-if="plan?.status === 'executing'" class="plan-progress-note">
-        执行中：Agent 每完成一步会通过 complete_step 汇报并附上证据，服务端按步骤声明的
-        verification 校验后才算完成。
+        执行中：Agent 每完成一步会通过 complete_step 汇报并附上证据，服务端按步骤声明的 verification
+        校验后才算完成。
       </p>
       <p v-else-if="plan?.status === 'paused'" class="plan-empty">
         计划已暂停{{

@@ -122,7 +122,12 @@ describe('QuestionDialog（M4.1 提问弹窗）', () => {
 
     await wrapper.get('.question-submit').trigger('click');
     expect(wrapper.emitted('submit')).toEqual([
-      [[{ id: 'q1', selected: ['a'] }, { id: 'q2', selected: [], skipped: true }]],
+      [
+        [
+          { id: 'q1', selected: ['a'] },
+          { id: 'q2', selected: [], skipped: true },
+        ],
+      ],
     ]);
   });
 
@@ -139,9 +144,7 @@ describe('QuestionDialog（M4.1 提问弹窗）', () => {
     const wrapper = mount(QuestionDialog, {
       props: {
         pending: pending({
-          questions: [
-            { id: 'q1', question: '选一个', options: ['a', 'b'], allowFreeText: false },
-          ],
+          questions: [{ id: 'q1', question: '选一个', options: ['a', 'b'], allowFreeText: false }],
         }),
       },
     });

@@ -15,11 +15,7 @@ import {
   listTasks,
   sendAgentCommand,
 } from '@/lib/api';
-import {
-  INITIAL_STREAM_STATE,
-  normalizeQuestion,
-  reduceAgentEvent,
-} from '@/lib/agent-events';
+import { INITIAL_STREAM_STATE, normalizeQuestion, reduceAgentEvent } from '@/lib/agent-events';
 import { fireUnauthorized } from '@/lib/session';
 import type {
   AgentEvent,
@@ -493,9 +489,11 @@ export function useAgentSession(options: AgentSessionOptions) {
    * 提交对「向用户提问」的回答（M4.1）。
    * `cancelled` 表示让 AI 自己决定（不是错误）：模型会按最合理的假设继续并写明假设。
    */
-  async function answerQuestion(
-    payload: { questionId: string; answers?: QuestionAnswer[]; cancelled?: boolean },
-  ): Promise<void> {
+  async function answerQuestion(payload: {
+    questionId: string;
+    answers?: QuestionAnswer[];
+    cancelled?: boolean;
+  }): Promise<void> {
     if (!activeSessionId.value) return;
     try {
       await sendAgentCommand(activeSessionId.value, {

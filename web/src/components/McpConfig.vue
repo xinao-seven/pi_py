@@ -59,7 +59,11 @@ const GROUP_LABEL: Record<McpTemplate['group'], string> = {
 };
 const groupedTemplates = computed(() =>
   (Object.keys(GROUP_LABEL) as Array<McpTemplate['group']>)
-    .map((group) => ({ group, label: GROUP_LABEL[group], items: templates.value.filter((item) => item.group === group) }))
+    .map((group) => ({
+      group,
+      label: GROUP_LABEL[group],
+      items: templates.value.filter((item) => item.group === group),
+    }))
     .filter((entry) => entry.items.length > 0),
 );
 
@@ -528,7 +532,12 @@ function messageOf(cause: unknown): string {
                 <button type="button" class="config-add" @click="fillTemplate(template)">
                   填入表单
                 </button>
-                <a class="mcp-template-link" :href="template.homepage" target="_blank" rel="noreferrer">
+                <a
+                  class="mcp-template-link"
+                  :href="template.homepage"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   文档 ↗
                 </a>
               </div>

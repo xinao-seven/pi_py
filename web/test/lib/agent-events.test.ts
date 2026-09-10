@@ -1,4 +1,9 @@
-import { INITIAL_STREAM_STATE, messageText, normalizeQuestion, reduceAgentEvent } from '@/lib/agent-events';
+import {
+  INITIAL_STREAM_STATE,
+  messageText,
+  normalizeQuestion,
+  reduceAgentEvent,
+} from '@/lib/agent-events';
 
 describe('reduceAgentEvent', () => {
   it('tracks a streaming assistant response through completion', () => {
@@ -170,13 +175,16 @@ describe('question_pending / question_resolved（M4.1 提问通道）', () => {
       type: 'question_pending',
       question: pendingQuestion(),
     });
-    expect(reduceAgentEvent(asked, { type: 'question_resolved', questionId: 'question-1' }).pendingQuestion).toBeNull();
+    expect(
+      reduceAgentEvent(asked, { type: 'question_resolved', questionId: 'question-1' })
+        .pendingQuestion,
+    ).toBeNull();
     // 没必要的变化不产生新对象（避免无谓重渲染）。
     const cleared = reduceAgentEvent(asked, { type: 'question_resolved' });
     expect(cleared.pendingQuestion).toBeNull();
-    expect(
-      reduceAgentEvent(cleared, { type: 'question_resolved', questionId: 'question-1' }),
-    ).toBe(cleared);
+    expect(reduceAgentEvent(cleared, { type: 'question_resolved', questionId: 'question-1' })).toBe(
+      cleared,
+    );
     expect(reduceAgentEvent(asked, { type: 'agent_end' }).pendingQuestion).toBeNull();
   });
 

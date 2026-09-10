@@ -4,15 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import McpConfig from '@/components/McpConfig.vue';
 import type { McpTemplate } from '@/types';
 
-const { getMcpServers, getMcpTemplates, upsertMcpServer, deleteMcpServer, updateMcpServer, testMcpServer } =
-  vi.hoisted(() => ({
-    getMcpServers: vi.fn(),
-    getMcpTemplates: vi.fn(),
-    upsertMcpServer: vi.fn(),
-    deleteMcpServer: vi.fn(),
-    updateMcpServer: vi.fn(),
-    testMcpServer: vi.fn(),
-  }));
+const {
+  getMcpServers,
+  getMcpTemplates,
+  upsertMcpServer,
+  deleteMcpServer,
+  updateMcpServer,
+  testMcpServer,
+} = vi.hoisted(() => ({
+  getMcpServers: vi.fn(),
+  getMcpTemplates: vi.fn(),
+  upsertMcpServer: vi.fn(),
+  deleteMcpServer: vi.fn(),
+  updateMcpServer: vi.fn(),
+  testMcpServer: vi.fn(),
+}));
 
 vi.mock('@/lib/api', () => ({
   getMcpServers,

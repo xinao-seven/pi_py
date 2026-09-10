@@ -58,7 +58,12 @@ describe('PlanProgress（M4：计划是任务的视图）', () => {
             title: '跑测试',
             status: 'completed',
             verification: { kind: 'command', command: 'npm test' },
-            evidence: { command: undefined, summary: '测试全绿', toolCallIds: [], filesTouched: [] },
+            evidence: {
+              command: undefined,
+              summary: '测试全绿',
+              toolCallIds: [],
+              filesTouched: [],
+            },
           }),
           step({
             id: 's2',
@@ -82,7 +87,9 @@ describe('PlanProgress（M4：计划是任务的视图）', () => {
   });
 
   it('emits execute / refine / abandon while awaiting confirmation', async () => {
-    const wrapper = mountPlan(view({ status: 'proposed', steps: [step({ id: 's1', title: 'a' })] }));
+    const wrapper = mountPlan(
+      view({ status: 'proposed', steps: [step({ id: 's1', title: 'a' })] }),
+    );
 
     await wrapper.get('.primary-action').trigger('click');
     expect(wrapper.emitted('execute')).toHaveLength(1);
@@ -150,7 +157,10 @@ describe('PlanProgress（M4：计划是任务的视图）', () => {
 
   it('hides step editing on terminal plans but keeps the history visible', () => {
     const wrapper = mountPlan(
-      view({ status: 'completed', steps: [step({ id: 's1', title: '已完成的一步', status: 'completed' })] }),
+      view({
+        status: 'completed',
+        steps: [step({ id: 's1', title: '已完成的一步', status: 'completed' })],
+      }),
     );
     expect(wrapper.text()).toContain('已完成的一步');
     expect(wrapper.find('.plan-step-actions').exists()).toBe(false);

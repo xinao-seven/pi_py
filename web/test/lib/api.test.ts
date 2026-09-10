@@ -333,9 +333,7 @@ describe('sendPlanCommand（M4 契约）', () => {
   });
 
   it('forwards the refinement message and tolerates a missing payload', async () => {
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({ success: true, data: undefined }, 200),
-    );
+    const fetchMock = vi.fn(async () => jsonResponse({ success: true, data: undefined }, 200));
     vi.stubGlobal('fetch', fetchMock);
     const result = await sendPlanCommand('session-1', 'refine', '把第二步拆开');
     expect(result.plan).toBeUndefined();

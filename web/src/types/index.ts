@@ -233,6 +233,32 @@ export interface McpServerConfigInput {
   approval?: 'required';
 }
 
+/** 子任务工具结果的 details（M5：`subagent` 工具）。 */
+export interface SubagentToolDetails {
+  status: 'completed' | 'failed' | 'aborted' | 'budget_exceeded' | 'timeout' | 'unavailable';
+  preset: string;
+  /** 子会话深度（父会话的子任务是 1）。 */
+  depth: number;
+  subagentSessionId: string | null;
+  runId: string | null;
+  model: ModelRef | null;
+  usage: {
+    turns: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    costUsd: number;
+  };
+  durationMs: number;
+  /** 子会话调用过的工具（名称 + 是否出错）。 */
+  trajectory: Array<{ tool: string; ok: boolean }>;
+  /** 模型回退等需要让人知道的说明。 */
+  note?: string;
+  /** 失败/截断原因。 */
+  reason?: string;
+  maxDepth: number;
+}
+
 /** MCP server 模板（GET /api/mcp/templates）：推荐清单，前端据此一键填入/添加。 */
 export type McpTemplateGroup = 'core' | 'research' | 'browser' | 'code' | 'data' | 'team' | 'debug';
 export type McpTemplateAccess = 'read-only' | 'local-write' | 'external-write';
@@ -383,12 +409,7 @@ export interface PendingQuestion {
 }
 
 export type PlanStatus =
-  | 'drafting'
-  | 'proposed'
-  | 'executing'
-  | 'paused'
-  | 'completed'
-  | 'abandoned';
+  'drafting' | 'proposed' | 'executing' | 'paused' | 'completed' | 'abandoned';
 
 export interface PlanStepView {
   id: string;
@@ -422,12 +443,7 @@ export interface PlanView {
 
 /** 计划命令（POST /api/agent/:id 的 type）。 */
 export type PlanCommandType =
-  | 'plan_start'
-  | 'plan_execute'
-  | 'plan_pause'
-  | 'plan_resume'
-  | 'plan_refine'
-  | 'plan_abandon';
+  'plan_start' | 'plan_execute' | 'plan_pause' | 'plan_resume' | 'plan_refine' | 'plan_abandon';
 
 /** 发送方式（M4）：消息级属性，取代 M4 之前的会话级 Plan 预开关。 */
 export type PromptMode = 'direct' | 'plan';

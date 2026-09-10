@@ -54,9 +54,7 @@ const canSend = computed(
   () => (message.value.trim().length > 0 || images.value.length > 0) && !props.disabled,
 );
 
-function submit(
-  kind: 'send' | 'steer' | 'followUp' = props.running ? 'followUp' : 'send',
-): void {
+function submit(kind: 'send' | 'steer' | 'followUp' = props.running ? 'followUp' : 'send'): void {
   // 提交：运行中默认排队跟进；steer 立即插入；发送后清空输入与图片
   if (!canSend.value) return;
   // `/plan` 前缀 = 这一次进入规划（不改变记忆的默认选择）。

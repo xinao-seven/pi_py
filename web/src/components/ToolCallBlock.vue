@@ -3,7 +3,8 @@
 import { computed } from 'vue';
 
 import { messageText } from '@/lib/agent-events';
-import type { AgentMessage, ContentBlock } from '@/types';
+import SubagentCallBlock from '@/components/SubagentCallBlock.vue';
+import type { AgentMessage, ContentBlock, SubagentToolDetails } from '@/types';
 
 const props = defineProps<{
   call: ContentBlock;
@@ -12,6 +13,15 @@ const props = defineProps<{
 }>();
 
 const argumentsText = computed(() => JSON.stringify(props.call.arguments ?? {}, null, 2));
+/**
+ * subagent 工具的结果 details（M5）：有它就交给专门卡片渲染（预设/预算/轨迹/摘要），
+ * 没有就退回通用的「参数 + 结果」视图——历史会话与其它工具都不受影响。
+ */
+const subagentDetails = computed<SubagentToolDetails | undefined>(() => {
+  if ((props.call.name ?? '') !== 'subagent') return undefined;
+  const details = props.result?.details as SubagentToolDetails | undefined;
+  return details && typeof details.preset === 'string' ? details : undefined;
+});
 const resultText = computed(() => (props.result ? messageText(props.result) : ''));
 const status = computed(() => {
   // 状态文案：失败优先，其次完成/运行中/等待
@@ -22,7 +32,14 @@ const status = computed(() => {
 </script>
 
 <template>
+  <SubagentCallBlock
+    v-if="subagentDetails"
+    :details="subagentDetails"
+    :result-text="resultText"
+    :streaming="streaming"
+  />
   <details
+    v-else
     class="tool-call"
     :class="{
       'tool-call--error': result?.isError,
