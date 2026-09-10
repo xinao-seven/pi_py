@@ -28,6 +28,14 @@ export interface PendingToolApproval {
   rule: string; // 命中的规则名
   risk: ApprovalRisk;
   category: ApprovalCategory;
+  /**
+   * M5：当这条待审批来自**子会话**时，它的父会话 id。
+   * 中文说明：弹窗会出现在父会话的界面上（子会话没有自己的 UI），
+   * 用户点「拒绝」时前端只有父会话 id 可用，所以这里必须记下来。
+   */
+  parentSessionId?: string;
+  /** 子会话的预设名（弹窗上写「子任务 scout 请求执行 …」）。 */
+  agent?: string;
 }
 
 export interface CommandApproval {
@@ -244,6 +252,9 @@ export class ToolApprovalBroker {
   private readonly waiting = new Map<string, Waiter>();
   private onPending: ((pending: PendingToolApproval) => void) | undefined;
   private trace: ApprovalTraceSink | undefined;
+  /** 子会话 → 父会话（M5）。由注册表注入：审批中枢不该自己知道会话树。 */
+  private parentResolver:
+    ((sessionId: string) => { parentSessionId: string; agent?: string } | undefined) | undefined;
 
   constructor(private readonly options: ToolApprovalOptions = {}) {}
 
@@ -258,12 +269,21 @@ export class ToolApprovalBroker {
         if (event.toolName !== 'bash' || ctx.hasUI) return undefined;
         const approval = classifyBashCommand(event.input);
         if (!approval) return undefined;
+        const sessionId = ctx.sessionManager.getSessionId();
+        // 子会话的审批要带上父会话（弹窗出现在父会话界面，见 announceApproval）。
+        const lineage = this.parentResolver?.(sessionId);
         const pending: PendingToolApproval = {
-          sessionId: ctx.sessionManager.getSessionId(),
+          sessionId,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.input as Record<string, unknown>,
           ...approval,
+          ...(lineage === undefined
+            ? {}
+            : {
+                parentSessionId: lineage.parentSessionId,
+                ...(lineage.agent === undefined ? {} : { agent: lineage.agent }),
+              }),
         };
         const approved = await this.requestApproval(pending, ctx.signal);
         return approved ? undefined : { block: true, reason: 'Tool execution was not approved' };
@@ -329,19 +349,47 @@ export class ToolApprovalBroker {
     this.trace = sink;
   }
 
-  /** 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项。 */
+  /** 注册「子会话 → 父会话」解析器（M5）：注册表注入，审批中枢不依赖会话树。 */
+  setParentResolver(
+    resolver: (sessionId: string) => { parentSessionId: string; agent?: string } | undefined,
+  ): void {
+    this.parentResolver = resolver;
+  }
+
+  /**
+   * 前端给出审批结论（approve_tool 命令的底层实现）：结算挂起项。
+   *
+   * 中文说明：传入的 `sessionId` 可能是**父会话**（子会话的弹窗显示在父会话界面上），
+   * 因此先按 `sessionId:toolCallId` 精确查，再按「这条挂起项属于该父会话」回退查。
+   */
   decide(sessionId: string, toolCallId: string, approved: boolean): void {
-    const waiter = this.waiting.get(this.key(sessionId, toolCallId));
+    const waiter =
+      this.waiting.get(this.key(sessionId, toolCallId)) ??
+      this.findChildWaiter(sessionId, toolCallId);
     if (!waiter)
       throw new ApiError(404, 'approval_not_found', 'Tool approval is no longer pending');
     waiter.settle(approved ? 'approved' : 'denied', 'user');
   }
 
-  /** 会话关闭/删除时，把该会话所有挂起项按“拒绝”结算。 */
+  /**
+   * 会话关闭/删除时，把该会话所有挂起项按“拒绝”结算。
+   * 中文说明：父会话关闭时，它名下子会话的挂起项同样要结算，否则子会话的
+   * tool_call 会一直等到超时（父会话已经不在了，用户不可能再点）。
+   */
   cancelSession(sessionId: string): void {
     for (const [key, waiter] of [...this.waiting]) {
-      if (key.startsWith(`${sessionId}:`)) waiter.settle('denied', 'session');
+      if (key.startsWith(`${sessionId}:`) || waiter.pending.parentSessionId === sessionId)
+        waiter.settle('denied', 'session');
     }
+  }
+
+  /** 按「该挂起项属于这个父会话」找（子会话审批被父会话结算时的回退路径）。 */
+  private findChildWaiter(parentSessionId: string, toolCallId: string): Waiter | undefined {
+    for (const waiter of this.waiting.values()) {
+      if (waiter.pending.toolCallId !== toolCallId) continue;
+      if (waiter.pending.parentSessionId === parentSessionId) return waiter;
+    }
+    return undefined;
   }
 
   /** 查询某会话当前是否有待审批项（供状态快照展示 pendingToolCall）。 */

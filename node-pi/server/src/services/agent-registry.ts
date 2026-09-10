@@ -300,6 +300,12 @@ export interface StreamEvent {
           | 'git_remote'
           | 'destructive'
           | 'system';
+        /** M5：子会话发起的审批——真正要执行工具的是这个会话。 */
+        sessionId?: string;
+        /** M5：弹窗显示在哪个会话上（子会话的审批挂到父会话的流）。 */
+        parentSessionId?: string;
+        /** M5：子会话的预设名（弹窗上标注「子任务 scout 请求执行 …」）。 */
+        agent?: string;
       };
 }
 
@@ -617,6 +623,13 @@ export class AgentRegistry {
   ) {
     // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
     approvals?.setPendingListener((pending) => this.announceApproval(pending));
+    // 子会话的审批要能认出父会话（M5）：审批中枢只管「这个会话属于谁」，不碰会话树。
+    approvals?.setParentResolver((sessionId) => {
+      const link = this.entries.get(sessionId)?.subagent;
+      return link === undefined
+        ? undefined
+        : { parentSessionId: link.parentSessionId, agent: link.preset };
+    });
     plans?.setListener((plan) => this.announcePlan(plan));
     questions?.setPendingListener((question) => this.announceQuestion(question));
     questions?.setResolvedListener((sessionId, questionId) =>
@@ -1282,11 +1295,18 @@ export class AgentRegistry {
     }
   }
 
-  /** 工具审批待处理时发布 tool_call_pending 事件（驱动前端审批对话框）。 */
+  /**
+   * 工具审批待处理时发布 tool_call_pending 事件（驱动前端审批对话框）。
+   *
+   * 中文说明：子会话的审批**挂到父会话的流上**——用户看的是父会话，弹窗也只在那里；
+   * 若子会话自己也有订阅者（有人直接打开了它），则两边都发，避免那个界面看不到。
+   * 父会话不在活跃列表里时退回自己的流（总比丢掉好）。
+   */
   private announceApproval(pending: PendingToolApproval): void {
-    const entry = this.entries.get(pending.sessionId);
-    if (!entry) return;
-    this.publish(entry, {
+    const owner = this.entries.get(pending.sessionId);
+    const parent =
+      pending.parentSessionId === undefined ? undefined : this.entries.get(pending.parentSessionId);
+    const payload: StreamEvent['payload'] = {
       type: 'tool_call_pending',
       toolCallId: pending.toolCallId,
       toolName: pending.toolName,
@@ -1295,7 +1315,21 @@ export class AgentRegistry {
       rule: pending.rule,
       risk: pending.risk,
       category: pending.category,
-    });
+      ...(parent === undefined
+        ? {}
+        : {
+            sessionId: pending.sessionId,
+            parentSessionId: pending.parentSessionId as string,
+            ...(pending.agent === undefined ? {} : { agent: pending.agent }),
+          }),
+    };
+    if (parent !== undefined) {
+      this.publish(parent, payload);
+      if (owner !== undefined && owner !== parent && owner.subscribers.size > 0)
+        this.publish(owner, payload);
+      return;
+    }
+    if (owner !== undefined) this.publish(owner, payload);
   }
 
   private announceQuestion(question: PendingQuestion): void {

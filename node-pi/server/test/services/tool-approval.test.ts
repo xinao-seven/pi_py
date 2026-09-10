@@ -57,6 +57,63 @@ function pendingCall(sessionId: string, toolCallId: string) {
   };
 }
 
+describe('子会话审批（M5：权限继承）', () => {
+  it('stamps the parent session and preset on pending items from a subagent', async () => {
+    const broker = makeBroker();
+    broker.setParentResolver((sessionId) =>
+      sessionId === 'child-1' ? { parentSessionId: 'parent-1', agent: 'scout' } : undefined,
+    );
+    const seen: Array<Record<string, unknown>> = [];
+    broker.setPendingListener((pending) => seen.push(pending as never));
+
+    const pi = makeFakePi();
+    (broker.buildExtension() as (api: unknown) => void)(pi);
+    const settled = broker.requestApproval({
+      ...pendingCall('child-1', 'call-1'),
+      parentSessionId: 'parent-1',
+      agent: 'scout',
+    });
+
+    expect(seen[0]).toMatchObject({ parentSessionId: 'parent-1', agent: 'scout' });
+    broker.decide('parent-1', 'call-1', true);
+    await expect(settled).resolves.toBe(true);
+  });
+
+  it('lets the parent session decide a child pending call (approve_tool arrives on the parent)', async () => {
+    const broker = makeBroker();
+    const pending = broker.requestApproval({
+      ...pendingCall('child-1', 'call-9'),
+      parentSessionId: 'parent-1',
+    });
+    // 前端只有父会话 id：仍要能结算子会话的挂起项
+    broker.decide('parent-1', 'call-9', false);
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('still rejects an unrelated session deciding a child call', async () => {
+    const broker = makeBroker();
+    const pending = broker.requestApproval({
+      ...pendingCall('child-1', 'call-9'),
+      parentSessionId: 'parent-1',
+    });
+    expect(() => broker.decide('other-parent', 'call-9', true)).toThrowError(/no longer pending/);
+    broker.decide('child-1', 'call-9', true);
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('cancels child pendings when the parent session closes', async () => {
+    const broker = makeBroker();
+    const pending = broker.requestApproval({
+      ...pendingCall('child-1', 'call-2'),
+      parentSessionId: 'parent-1',
+    });
+    broker.cancelSession('parent-1');
+    // 父会话没了，用户不可能再点——必须按拒绝结算，而不是等到超时
+    await expect(pending).resolves.toBe(false);
+    expect(broker.pendingForSession('child-1')).toBeUndefined();
+  });
+});
+
 describe('dangerous command rules', () => {
   it('does not require approval for read-only shell inspection', () => {
     for (const command of ['find . -maxdepth 2 -type f', 'ls -la', 'git log --oneline -5']) {
