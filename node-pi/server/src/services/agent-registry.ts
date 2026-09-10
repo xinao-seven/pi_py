@@ -42,6 +42,7 @@ import { SessionLedger, type LedgerSessionContext } from './observability/sessio
 import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
 import type { TaskRecord } from './platform/task-model.js';
+import type { TaskRecoveryItem } from './task-recovery.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -247,6 +248,7 @@ export interface StreamEvent {
     | { type: 'agent_end'; error: string }
     | { type: 'plan_updated'; plan: PlanSnapshot }
     | { type: 'task_updated'; task: TaskRecord }
+    | { type: 'task_recovery_required'; tasks: TaskRecoveryItem[] }
     | {
         type: 'tool_call_pending';
         toolCallId: string;
@@ -299,6 +301,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     private readonly logger?: ServiceLogger,
     /** 可观测性扩展：把 provider 层 HTTP 观测接入每个会话（可选）。 */
     private readonly observability?: { buildExtension(): InlineExtension },
+    /** 任务恢复扩展：把 turn/tool 事件写成任务的在飞动作（M3，可选）。 */
+    private readonly taskRecovery?: { buildExtension(): InlineExtension },
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -429,6 +433,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       factories.push(this.approvals.buildExtension());
     // 观测扩展：只读 provider 层的两个钩子（不改请求、不阻断），排在审批之后。
     if (this.observability) factories.push(this.observability.buildExtension());
+    // 任务恢复扩展（M3）：记录在飞动作 + 注入恢复摘要，同样不做决策。
+    if (this.taskRecovery) factories.push(this.taskRecovery.buildExtension());
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
     if (this.mcpService)
@@ -866,8 +872,7 @@ export class AgentRegistry {
     else entry.activeTaskId = taskId;
   }
 
-  /**
-   * 把任务变更广播给相关会话（SSE `task_updated`）。
+  /** 把任务变更广播给相关会话（SSE `task_updated`）。
    *
    * 中文说明：本服务的 SSE 通道是**按会话**的，没有全局流，所以路由规则必须写清楚：
    * - 任务绑定了 sessionId → 只推给该会话；
@@ -884,6 +889,22 @@ export class AgentRegistry {
     for (const entry of this.entries.values()) {
       if (task.cwd === undefined || entry.cwd === task.cwd) this.publish(entry, payload);
     }
+  }
+
+  /**
+   * 向一个会话补推「有任务需要恢复」（SSE `task_recovery_required`）。
+   * 中文说明：走注册表的 publish 而不是直接写 SSE 帧，这样事件有正确的递增 id
+   * 并进入重放缓存（断线重连不会丢）。没有待恢复任务时不发（不发空事件）。
+   */
+  announceRecovery(sessionId: string, items: TaskRecoveryItem[]): void {
+    if (items.length === 0) return;
+    const entry = this.entries.get(sessionId);
+    if (entry) this.publish(entry, { type: 'task_recovery_required', tasks: items });
+  }
+
+  /** 该会话当前是否有 SSE 订阅者（用来判断“是不是首个连接”）。 */
+  hasSubscribers(sessionId: string): boolean {
+    return (this.entries.get(sessionId)?.subscribers.size ?? 0) > 0;
   }
 
   /** 把审批结果交给审批中枢（挂起的 bash 工具调用会据此放行/拦截）。 */

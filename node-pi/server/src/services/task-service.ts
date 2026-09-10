@@ -17,10 +17,13 @@
 import { randomUUID } from 'node:crypto';
 
 import { ApiError } from '../errors.js';
+import { DEFAULT_LEASE_TTL_MS, leaseUntil, leaseView, type LeaseView } from './task-lease.js';
 import {
   applyStepStatus,
+  currentStep,
   deriveTaskStatus,
   emptyExecution,
+  isTerminalStatus,
   moveStep,
   newStep,
   nextStepId,
@@ -36,6 +39,7 @@ import {
   type TaskRecord,
   type TaskStep,
   type TaskStatus,
+  type TaskExecution,
 } from './platform/task-model.js';
 import type { TaskRepository } from './platform/task-repository.js';
 
@@ -377,6 +381,137 @@ export class TaskService {
     return this.commit({ ...current, sessionId: sessionId ?? undefined }, expected);
   }
 
+  // ---- M3：执行租约与在飞动作 ----
+
+  /**
+   * 取得执行租约；已被其它活跃 owner 持有时 409 `task_leased`（任务只读）。
+   * `attempt` 不传则保持原值（首次执行是 1，resume 时由调用方 +1）。
+   */
+  acquireLease(
+    taskId: string,
+    owner: string,
+    options: { ttlMs?: number; attempt?: number } = {},
+  ): TaskRecord {
+    const ttlMs = options.ttlMs ?? DEFAULT_LEASE_TTL_MS;
+    return this.mutate(taskId, (task) => {
+      const view = leaseView(task.execution, owner, this.nowMs());
+      this.assertLeaseFree(view, task.id);
+      return {
+        ...task,
+        execution: {
+          ...task.execution,
+          attempt: options.attempt ?? task.execution.attempt,
+          lease: leaseUntil(owner, this.nowMs(), ttlMs),
+          lastHeartbeatAt: this.nowIso(),
+        },
+      };
+    });
+  }
+
+  /** 续租（心跳）；租约已归属别人则 409。 */
+  renewLease(taskId: string, owner: string, ttlMs = DEFAULT_LEASE_TTL_MS): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      const view = leaseView(task.execution, owner, this.nowMs());
+      this.assertLeaseFree(view, task.id);
+      return {
+        ...task,
+        execution: {
+          ...task.execution,
+          lease: leaseUntil(owner, this.nowMs(), ttlMs),
+          lastHeartbeatAt: this.nowIso(),
+        },
+      };
+    });
+  }
+
+  /** 释放租约（幂等）；不是自己持有就不动。 */
+  releaseLease(taskId: string, owner: string): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      const lease = task.execution.lease;
+      if (lease !== undefined && lease.owner !== owner) return task; // 别人的租约不碰
+      const execution: TaskExecution = { ...task.execution };
+      delete execution.lease;
+      return { ...task, execution };
+    });
+  }
+
+  /**
+   * 记录/清除在飞动作（副作用判定的数据源，见 task-recovery.ts）。
+   * 中文说明：带副作用的动作会同时留在 `lastSideEffect` 里（见 task-model.ts 的说明），
+   * 直到该步骤的本次尝试结束（步骤被重置回 pending）才会自然失效。
+   * 终态任务直接忽略：执行器不应该再去碰已完成/已取消的任务。
+   */
+  setInFlight(taskId: string, inFlight: NonNullable<TaskExecution['inFlight']> | null): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      if (isTerminalStatus(task.status)) return task;
+      const execution: TaskExecution = { ...task.execution, lastHeartbeatAt: this.nowIso() };
+      if (inFlight === null) {
+        delete execution.inFlight;
+        return { ...task, execution };
+      }
+      execution.inFlight = inFlight;
+      if (inFlight.sideEffect !== 'none') {
+        execution.lastSideEffect = {
+          ...(inFlight.stepId === undefined ? {} : { stepId: inFlight.stepId }),
+          toolName: inFlight.toolName ?? 'unknown',
+          sideEffect: inFlight.sideEffect,
+          at: inFlight.startedAt,
+        };
+      }
+      return { ...task, execution };
+    });
+  }
+
+  /** 把当前步骤重置为 pending（`retry_step` 用）：同时清掉它的开始时间与阻塞原因。 */
+  resetCurrentStep(taskId: string): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      const step = currentStep(task.steps);
+      if (step === undefined) return task;
+      const steps = task.steps.map((item): TaskStep => {
+        if (item.id !== step.id) return item;
+        const next: TaskStep = { ...item, status: 'pending' };
+        delete next.startedAt;
+        delete next.completedAt;
+        delete next.blockedReason;
+        return next;
+      });
+      return this.withDerivedStatus({ ...task, steps });
+    });
+  }
+
+  /**
+   * 用「验证通过」的方式完成步骤（恢复时补记）：写入证据并把状态推到 completed。
+   * 中文说明：只用于恢复路径——产物已在（或人工已确认），不应该重跑该步骤。
+   */
+  completeStepWithEvidence(taskId: string, stepId: string, evidence: StepEvidence): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      const now = this.nowIso();
+      const steps = task.steps.map((item) =>
+        item.id === stepId ? { ...applyStepStatus(item, 'completed', now), evidence } : item,
+      );
+      return this.withDerivedStatus({ ...task, steps });
+    });
+  }
+
+  /**
+   * 把任务标为「被中断」（不可自动继续时用）：状态 blocked + 说明 + 清在飞 + 释放租约。
+   * 中文说明：这是「宁可不跑也不能重复副作用」的落地点——无法确认产物状态时停在这里，
+   * 由人来判断，而不是自动重试。
+   */
+  markInterrupted(taskId: string, reason: string, owner?: string): TaskRecord {
+    return this.mutate(taskId, (task) => {
+      const execution: TaskExecution = { ...task.execution };
+      delete execution.inFlight;
+      if (owner === undefined || execution.lease?.owner === owner) delete execution.lease;
+      return {
+        ...task,
+        status: 'blocked',
+        blockedReason: this.requiredText(reason, 'reason', LIMITS.reason),
+        execution,
+      };
+    });
+  }
+
   /** 释放资源（服务关闭时调用）。 */
   dispose(): void {
     this.listener = undefined;
@@ -384,6 +519,36 @@ export class TaskService {
   }
 
   // ---- 内部 ----
+
+  /**
+   * 内部写入（租约/在飞动作）：读→改→写，版本冲突自动重试。
+   * 中文说明：这些写入来自执行器与事件钩子，不是用户操作；即便如此也会**广播**——
+   * 否则面板手里的 `revision` 会静默落后，用户下一次点击就会莫名其妙 409。
+   */
+  private mutate(taskId: string, change: (task: TaskRecord) => TaskRecord): TaskRecord {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = this.get(taskId);
+      const stored: TaskRecord = { ...change(current), updatedAt: this.nowIso() };
+      if (this.repository.save(stored, current.revision)) {
+        const saved = this.repository.get(taskId) ?? stored;
+        this.notify(saved);
+        return saved;
+      }
+    }
+    throw new ApiError(409, 'task_conflict', 'Task was modified concurrently');
+  }
+
+  private assertLeaseFree(view: LeaseView, taskId: string): void {
+    if (!view.heldByOther) return;
+    throw new ApiError(409, 'task_leased', `Task ${taskId} is being executed by ${view.owner}`, {
+      owner: view.owner,
+      expiresAt: view.expiresAt,
+    });
+  }
+
+  private nowMs(): number {
+    return (this.options.now?.() ?? new Date()).getTime();
+  }
 
   /** 写入 + 广播：乐观并发失败统一转 409。 */
   private commit(next: TaskRecord, expectedRevision: number): TaskRecord {

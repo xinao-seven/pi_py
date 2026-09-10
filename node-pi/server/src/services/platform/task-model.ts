@@ -60,11 +60,17 @@ export interface TaskStep {
   completedAt?: string;
 }
 
-/** 执行态（M3 断点续跑用；M2 只保证字段存在且默认值正确）。 */
+/** 执行租约：谁在跑、跑到什么时候（M3）。 */
+export interface TaskLease {
+  owner: string;
+  expiresAt: string;
+}
+
+/** 执行态（M3 断点续跑用）。 */
 export interface TaskExecution {
   attempt: number;
   lastHeartbeatAt?: string;
-  lease?: { owner: string; expiresAt: string };
+  lease?: TaskLease;
   inFlight?: {
     stepId?: string;
     kind: 'turn' | 'tool';
@@ -72,6 +78,22 @@ export interface TaskExecution {
     startedAt: string;
     /** 崩溃时无法判定副作用是否已落地 → 恢复时必须人工确认 */
     sideEffect: 'none' | 'write' | 'unknown';
+    /** 在飞动作的工具名（面板/恢复清单用）。 */
+    toolName?: string;
+  };
+  /**
+   * 最近一次有副作用的动作（比规划更保守的一处）：
+   *
+   * 中文说明：inFlight 在 `tool_execution_end` 就清空了，但那时**步骤本身还没被标记完成**——
+   * 如果在下一个工具调用之前进程被杀，只看 inFlight 会得到「两步之间→可自动继续」，
+   * 而实际上刚才那个写操作已经落地、重跑会重复副作用。所以这里多留一个标记：
+   * 只要它属于**当前步骤的本次尝试**（`at >= step.startedAt`），恢复时就仍要求人工确认。
+   */
+  lastSideEffect?: {
+    stepId?: string;
+    toolName: string;
+    sideEffect: 'write' | 'unknown';
+    at: string;
   };
 }
 
@@ -211,7 +233,35 @@ export function newStep(input: {
   };
 }
 
-/** 空的执行态（新建任务时的默认值）。 */
+/** 空执行态（新建任务时）。 */
 export function emptyExecution(): TaskExecution {
   return { attempt: 1 };
+}
+
+/** 当前步骤：优先进行中的，其次第一个待开始的。 */
+export function currentStep(steps: readonly TaskStep[]): TaskStep | undefined {
+  const ordered = sortSteps(steps);
+  return (
+    ordered.find((step) => step.status === 'in_progress') ??
+    ordered.find((step) => step.status === 'pending')
+  );
+}
+
+/** 租约是否仍然有效（时间到了就算过期，哪怕持有进程还活着）。 */
+export function isLeaseActive(lease: TaskLease | undefined, nowMs: number): lease is TaskLease {
+  if (lease === undefined) return false;
+  const expires = Date.parse(lease.expiresAt);
+  return Number.isFinite(expires) && expires > nowMs;
+}
+
+/**
+ * 任务是否处于「疑似中断」状态（M3 恢复清单的入口条件）。
+ *
+ * 中文说明：判定刻意只看「任务在推进 且 租约不活跃」——不区分是崩溃、强杀还是优雅退出，
+ * 因为服务重启后这三者在库里长得一模一样：任务还是 in_progress，但没人在跑它。
+ * 已 blocked 的任务不进恢复清单：它已经在面板上等人处理了，不是「静默中断」。
+ */
+export function isInterrupted(task: TaskRecord, nowMs: number): boolean {
+  if (task.status !== 'in_progress') return false;
+  return !isLeaseActive(task.execution.lease, nowMs);
 }
