@@ -123,6 +123,53 @@ interface QuestionSpec {
   原生控件在「label 包裹 input」时会同时触发 label 激活与 change，容易变成「点一下切换两次」。
 - 状态归约上，`question_pending` 与 `tool_call_pending` 同类（都表示「Agent 正在等外部输入」）：
   进入 `phase: 'tool'`；`question_resolved` 与 `agent_end` 都会清掉弹窗。
+- **规约结果必须整对象写回响应式状态**（`applyStreamState()`）：`useAgentSession` 里
+  任何「逐字段手写拷贝」都会把新字段悄悄丢掉，见下面的修复记录。
+
+### 5.1 修复记录：弹窗不显示（2026-09-10）
+
+**现象**：模型调用 `ask_user` 后后端确实挂起等待（会话状态快照里 `pendingQuestion` 有值），
+但前端**既不弹窗也没有选项**，模型一直等下去，只能手动「停止」；刷新页面后弹窗反而出现了。
+
+**根因**：`web/src/composables/useAgentSession.ts` 的 `assignStream()` 是**逐字段手写拷贝**，
+只抄了 `running / phase / streamingMessage / error / pendingToolCall` 五个字段，漏掉 `pendingQuestion`。
+于是所有 SSE 事件算出的提问状态都在写回时被静默丢弃：
+
+| 链路 | 结果 |
+| --- | --- |
+| SSE `question_pending` → 归约 → `assignStream` | 弹窗状态被丢掉，**永远不显示** |
+| SSE `question_resolved` / `agent_end` → 归约 → `assignStream` | 弹窗状态清不掉（同一个漏字段缺陷的另一半） |
+| 刷新页面 → `loadSession` 直接给 `stream.pendingQuestion` 赋值 | 绕过 `assignStream`，所以能看到弹窗（掩盖了缺陷） |
+
+后端与契约完全正常，所以 `eval` 的 `ask-user-roundtrip`（真实管线里跑边答）与后端单测都测不出来——
+缺陷只存在于「SSE 事件写回前端状态」这一步。
+
+**修法**：新增纯函数 `applyStreamState(target, next)`（`web/src/lib/agent-events.ts`）做**整对象拷贝**，
+`assignStream()` 改为调用它。以后给 `AgentStreamState` 加字段不用记得改赋值代码，
+新增字段也自动被带走。
+
+**回归防线**（两条，均在修复前会失败）：
+
+1. `web/test/lib/agent-events.test.ts`：遍历 `INITIAL_STREAM_STATE` 的**每个键**用哨兵值断言
+   `applyStreamState` 都拷了过去——将来再漏字段会直接红，而不是靠肉眼发现「某个弹窗不出现」；
+2. `web/test/composables/useAgentSession.test.ts`：mock `@/lib/api`，用可控 `ReadableStream` 推
+   `question_pending` / `question_resolved` / `agent_end` 帧，断言 `stream.pendingQuestion` 出现与消失——
+   即 ChatWindow `v-if="pendingQuestion"` 真正读的那个字段。
+
+**发版注意（真机上「测试全绿却仍不弹窗」的第二层原因）**：上面修的是源码，而浏览器加载的是
+`node-pi/server` 静态托管的 `web/dist` 构建产物（修复落地时线上仍是修复前的 `index-BTqmcR1x.js`）。
+所以改完必须 `npm run build` 重建产物并硬刷新（Ctrl+F5），否则页面照旧没有弹窗。
+判定产物是否含修复：压缩后的 `assignStream` 应调用整对象拷贝，即
+`function Jc(e,t){return Object.assign(e,t)}` + `function F(e){Jc(u,e)}`（`u` = 响应式 stream）。
+
+**验证记录（2026-09-10）**：
+
+| 项 | 结果 |
+| --- | --- |
+| 红/绿（缺陷可被捕捉） | 把 `assignStream` 临时还原成逐字段手写 → `useAgentSession.test.ts` 2 条全红（`pendingQuestion` 始终为 `null`）→ 恢复修复 → 与 `agent-events.test.ts` 合计 14 条全绿 |
+| 前端质量门 | `npm run typecheck` 0；`npm run lint` 0 error（62 条既有 warning）；`npx vitest run` 133 passed（28 files） |
+| 产物与托管 | `npm run build` 产出 `index-BqgIUeb3.js`，`GET http://127.0.0.1:8001/` 已引用新 bundle，且产物中确认存在上述整对象拷贝链路 |
+| 真机弹窗（端到端验收） | ✅ 用户硬刷新后实测：弹窗出现、选项可点、多选可勾多个、自由输入可用；提交后模型**立即**拿到结构化答案（不再等到超时或被手动停止） |
 
 ---
 
@@ -133,7 +180,8 @@ interface QuestionSpec {
 | `test/services/user-question.test.ts`（18） | 参数规整（补 id/去重/上限/`allowFreeText` 语义）、挂起与结算（回答、部分回答补跳过、取消、超时、abort、会话关闭、服务关闭）、二次提问拒绝、`answers` 校验、渲染文本、扩展注册与激活、工具结果形状与校验错误 |
 | `test/routes/tasks-routes.test.ts`（+2） | `question_pending` 后状态快照可见、`answer_question` 结算它；未知 questionId → 404、`answers` 非数组 → 422 |
 | `web/test/components/QuestionDialog.test.ts`（10） | 选项渲染与选中、多题（单选+多选+文本）、自由输入、未答按跳过、取消、新提问清空草稿、busy 禁用 |
-| `web/test/lib/agent-events.test.ts`（+3） | `question_pending` 进入等待外部输入状态、`question_resolved`/`agent_end` 清理、非法载荷归一化 |
+| `web/test/lib/agent-events.test.ts`（+5） | `question_pending` 进入等待外部输入状态、`question_resolved`/`agent_end` 清理、非法载荷归一化；`applyStreamState` 字段完整性（每个键都要拷）+ 提问状态写回/清除 |
+| `web/test/composables/useAgentSession.test.ts`（2） | **端到端止损点**：mock API + 可控 SSE 流，验证 `question_pending` 真的写进 `stream.pendingQuestion`（弹窗）、`question_resolved`/`agent_end` 真的清掉它（见 §5.1） |
 | `eval` 用例 `ask-user-roundtrip` | **真实管线**里边跑边答：工具挂起 run（`whileExecuting` 钩子像前端一样轮询并回答）→ 答案回流进模型的下一次 `complete_step` 证据里 → 计划完成 |
 
 ---

@@ -347,6 +347,10 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 - 真机 HTTP：`state.pendingQuestion` 出现在状态快照；无挂起提问时 `answer_question` → 404。
 - **eval 用例 `ask-user-roundtrip`**：真实管线里边跑边答（工具挂起 run → 轮询到挂起问题 →
   回答 → 答案回流进模型下一次 `complete_step` 的证据），8/8 通过。
+- 遗留缺陷（2026-09-10 用户实测发现，已修）：前端 `assignStream` 逐字段拷贝漏掉 `pendingQuestion`，
+  SSE 的提问状态被静默丢弃→模型挂起等待但界面不弹窗（后端与 eval 均正常，只有真实浏览器能发现）。
+  修法与回归防线见 `docs/node-question-channel.md` §5.1。坑在于修完还得 `npm run build` 重建 `web/dist`
+  并硬刷新，否则线上加载的仍是旧 bundle（已重建，133 条前端用例全绿）。
 
 ---
 
@@ -849,6 +853,7 @@ web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.v
 | 提问的答案不支持图片/文件 | 只支持选项与文本；要附件就让用户直接发消息 | 可选 |
 | 同时只有一个挂起提问 | 前端只有一个弹窗；需要并行问多件事时放进同一次调用的 questions 数组（默认上限 8 题） | 可选 |
 | 提问没有独立指标 | 提问与回答会作为普通会话事件进 M1 账本，但没有「提问耗时/回答率」这类统计 | 可选 |
+| ~~ask_user 弹窗不显示~~ | ✅ 已修并真机验收（前端）：`assignStream` 逐字段拷贝漏掉 `pendingQuestion`，SSE 提问状态被静默丢弃；改为整对象拷贝 + 字段完整性/SSE 链路回归测试（`docs/node-question-channel.md` §5.1） | 已完成 |
 | MCP 模板库不含 OAuth server | 仓库只支持静态请求头鉴权；要做 OAuth 交互授权是独立工作量 | 可选 |
 | 模板库不支持自定义/分享 | 模板是仓库内常量表；用户自己的 server 仍走手工配置 | 可选 |
 | Plan 模式仍拦 MCP 工具 | 规划期无法用 context7/搜索类 server 查资料；可给 `PlanPolicy` 加只读 MCP 白名单 | 可选 |
