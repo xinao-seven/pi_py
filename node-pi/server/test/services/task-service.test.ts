@@ -436,3 +436,116 @@ describe('TaskService refreshStatus', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe('TaskService plan（M4：Plan 是 origin=plan 的任务）', () => {
+  it('creates a plan shell in drafting state', () => {
+    const { service } = makeService();
+    const plan = service.createPlan({
+      title: '重构 Plan 模式',
+      goal: '把正则解析换成结构化工具契约',
+      sessionId: 'session-1',
+      cwd: '/workspace',
+    });
+    expect(plan).toMatchObject({
+      origin: 'plan',
+      status: 'pending',
+      sessionId: 'session-1',
+      steps: [],
+    });
+    expect(plan.execution.plan).toMatchObject({ status: 'drafting' });
+    expect(plan.execution.plan?.draftingSince).toBeDefined();
+  });
+
+  it('replaces plan steps, reusing ids and progress by title', () => {
+    const { service } = makeService();
+    const plan = service.createPlan({ title: 'P', goal: 'G' });
+    const submitted = service.replacePlanSteps(plan.id, [
+      { title: '读现有实现' },
+      { title: '写迁移' },
+      { title: '删正则' },
+    ]);
+    expect(submitted.steps.map((step) => [step.id, step.title])).toEqual([
+      ['s1', '读现有实现'],
+      ['s2', '写迁移'],
+      ['s3', '删正则'],
+    ]);
+
+    // 完成第一步后改写后续步骤：已完成的按标题保留进度，新步骤取新 id。
+    service.updateStep(submitted.id, 's1', { status: 'completed', ifRevision: submitted.revision });
+    const revised = service.replacePlanSteps(plan.id, [
+      { title: '读现有实现' },
+      { title: '写迁移脚本' },
+    ]);
+    expect(revised.steps.map((step) => [step.id, step.title, step.status])).toEqual([
+      ['s1', '读现有实现', 'completed'],
+      ['s4', '写迁移脚本', 'pending'], // 标题变了 → 视为新步骤，取下一个编号（不复用 s2 的旧语义）
+    ]);
+    expect(revised.status).toBe('in_progress');
+  });
+
+  it('keeps numbering increasing across step replacement (never reuses a deleted id)', () => {
+    const { service } = makeService();
+    const plan = service.createPlan({ title: 'P', goal: 'G' });
+    const first = service.replacePlanSteps(plan.id, [{ title: 'a' }, { title: 'b' }]);
+    expect(first.steps.map((step) => step.id)).toEqual(['s1', 's2']);
+    const second = service.replacePlanSteps(plan.id, [{ title: 'c' }]);
+    expect(second.steps.map((step) => step.id)).toEqual(['s3']);
+  });
+
+  it('rejects an empty plan or duplicate titles', () => {
+    const { service } = makeService();
+    const plan = service.createPlan({ title: 'P', goal: 'G' });
+    expectApiError(() => service.replacePlanSteps(plan.id, []), 422, 'validation_error');
+    expectApiError(
+      () => service.replacePlanSteps(plan.id, [{ title: 'a' }, { title: ' A ' }]),
+      422,
+      'validation_error',
+    );
+  });
+
+  it('tracks plan lifecycle state and pending clarification questions', () => {
+    const { service } = makeService();
+    const plan = service.createPlan({ title: 'P', goal: 'G' });
+    const proposed = service.setPlanState(plan.id, { status: 'proposed' });
+    expect(proposed.execution.plan?.status).toBe('proposed');
+
+    const asked = service.setPlanState(plan.id, {
+      question: '要兼容 CLI 吗？',
+      questionOptions: ['要', '不要'],
+    });
+    expect(asked.execution.plan).toMatchObject({
+      question: '要兼容 CLI 吗？',
+      questionOptions: ['要', '不要'],
+    });
+
+    const answered = service.setPlanState(plan.id, { question: null });
+    expect(answered.execution.plan?.question).toBeUndefined();
+    expect(answered.execution.plan?.questionOptions).toBeUndefined();
+  });
+
+  it('lists the active plan for a session (unfinished first, else most recent)', () => {
+    const { service } = makeService();
+    const first = service.createPlan({ title: '旧计划', goal: 'G', sessionId: 'session-1' });
+    service.abandonPlan(first.id, '换方案');
+    const second = service.createPlan({ title: '新计划', goal: 'G', sessionId: 'session-1' });
+    expect(service.activePlanForSession('session-1')?.id).toBe(second.id);
+    expect(service.activePlanForSession('session-2')).toBeUndefined();
+
+    service.abandonPlan(second.id);
+    // 都终态时仍取最近更新的一个（历史计划可查）。
+    expect(service.activePlanForSession('session-1')?.id).toBe(second.id);
+  });
+
+  it('abandonPlan cancels the task but keeps the record', () => {
+    const { service, repository } = makeService();
+    const plan = service.createPlan({ title: 'P', goal: 'G' });
+    const cancelled = service.abandonPlan(plan.id, '改需求了');
+    expect(cancelled).toMatchObject({ status: 'cancelled' });
+    expect(repository.get(plan.id)).toMatchObject({ status: 'cancelled' });
+    expectApiError(
+      () => service.replacePlanSteps(plan.id, [{ title: 'a' }]),
+      409,
+      'task_cancelled',
+    );
+  });
+});

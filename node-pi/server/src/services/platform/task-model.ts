@@ -66,9 +66,32 @@ export interface TaskLease {
   expiresAt: string;
 }
 
+/**
+ * Plan 的持久化子状态（M4）。
+ *
+ * 中文说明：`completed` / `abandoned` **不在这里落库**——它们分别等价于任务状态
+ * `completed` / `cancelled`，由 `derivePlanStatus()` 推导。少存一份状态就少一处可能自相矛盾的地方。
+ * 因此这里只有「任务状态表达不了」的四种意图：草稿中、待确认、执行中、已暂停。
+ */
+export const STORED_PLAN_STATUSES = ['drafting', 'proposed', 'executing', 'paused'] as const;
+export type StoredPlanStatus = (typeof STORED_PLAN_STATUSES)[number];
+
+/** 计划作为任务时的生命周期状态（存在 `execution.plan` 里，与租约/在飞动作同属运行时状态）。 */
+export interface TaskPlanState {
+  status: StoredPlanStatus;
+  /** 开始撰写计划的时间（面板显示「已调研 N 分钟」）。 */
+  draftingSince?: string;
+  /** 待用户回答的澄清问题（`ask_user` 工具写入）；回答后清空。 */
+  question?: string;
+  questionOptions?: string[];
+  updatedAt?: string;
+}
+
 /** 执行态（M3 断点续跑用）。 */
 export interface TaskExecution {
   attempt: number;
+  /** 计划生命周期（M4，仅 origin='plan' 的任务使用）。 */
+  plan?: TaskPlanState;
   lastHeartbeatAt?: string;
   lease?: TaskLease;
   inFlight?: {

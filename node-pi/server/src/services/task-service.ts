@@ -30,11 +30,14 @@ import {
   normalizePositions,
   sortSteps,
   STEP_STATUSES,
+  STORED_PLAN_STATUSES,
   TASK_STATUSES,
   type StepEvidence,
   type StepStatus,
   type StepVerification,
+  type StoredPlanStatus,
   type TaskOrigin,
+  type TaskPlanState,
   type TaskQuery,
   type TaskRecord,
   type TaskStep,
@@ -42,6 +45,11 @@ import {
   type TaskExecution,
 } from './platform/task-model.js';
 import type { TaskRepository } from './platform/task-repository.js';
+
+/** 标题归一化（用于 update_plan 按标题匹配保留进度）：折叠空白、忽略大小写。 */
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, ' ').trim().toLowerCase();
+}
 
 /** 字段长度上限（防止把整篇文件塞进任务里）。 */
 const LIMITS = {
@@ -103,6 +111,21 @@ export interface TaskServiceOptions {
   idFactory?: () => string;
   /** 注入时间源（测试用）。 */
   now?: () => Date;
+}
+
+/** 新建计划（M4：计划就是 `origin='plan'` 的任务）。 */
+export interface CreatePlanInput {
+  title: string;
+  goal: string;
+  sessionId?: string;
+  cwd?: string;
+}
+
+/** 计划步骤的写入形态（`submit_plan` / `update_plan` 用）。 */
+export interface PlanStepInput {
+  title: string;
+  details?: string;
+  verification?: StepVerification;
 }
 
 /** 任务服务：路由与（后续）Plan/断点续跑都通过它操作任务。 */
@@ -516,6 +539,155 @@ export class TaskService {
   dispose(): void {
     this.listener = undefined;
     this.sessionTaskListener = undefined;
+  }
+
+  // ---- M4：计划（Plan 是 origin='plan' 的任务）----
+
+  /**
+   * 新建计划：立刻落一个空步骤的任务壳，状态 `drafting`。
+   *
+   * 中文说明：为什么一进入规划就建任务，而不是等 `submit_plan` 再建——
+   * 「Agent 正在调研」这个阶段同样需要被持久化和被面板看到；若只在提交计划时才落库，
+   * 崩溃/刷新后连「刚才在规划什么」都找不到，等于把 P8 的坑换个地方挖。空步骤任务
+   * 由 `deriveTaskStatus` 聚合为 `pending`，不会与「空闲」混淆（有空步骤列表就算未完成）。
+   */
+  createPlan(input: CreatePlanInput): TaskRecord {
+    const now = this.nowIso();
+    const record: TaskRecord = {
+      id: this.options.idFactory?.() ?? randomUUID(),
+      title: this.requiredText(input.title, 'title', LIMITS.title),
+      goal: this.requiredText(input.goal, 'goal', LIMITS.goal),
+      status: 'pending',
+      steps: [],
+      origin: 'plan',
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+      revision: 1,
+      execution: { attempt: 1, plan: { status: 'drafting', draftingSince: now } },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.repository.insert(record);
+    this.notify(record);
+    return record;
+  }
+
+  /**
+   * 更新计划的运行时状态（drafting / proposed / executing / paused）。
+   * `question: null` 显式清空澄清问题（不传则保持原值）。
+   */
+  setPlanState(
+    taskId: string,
+    patch: {
+      status?: StoredPlanStatus;
+      question?: string | null;
+      questionOptions?: string[] | null;
+    },
+  ): TaskRecord {
+    const status =
+      patch.status === undefined
+        ? undefined
+        : this.oneOf(patch.status, STORED_PLAN_STATUSES, 'plan.status');
+    return this.mutate(taskId, (task) => {
+      const current: TaskPlanState = task.execution.plan ?? { status: 'drafting' };
+      const next: TaskPlanState = { ...current, updatedAt: this.nowIso() };
+      if (status !== undefined) next.status = status;
+      if (patch.question === null) {
+        delete next.question;
+        delete next.questionOptions;
+      } else if (patch.question !== undefined) {
+        next.question = this.requiredText(patch.question, 'question', LIMITS.reason);
+        if (patch.questionOptions === null) delete next.questionOptions;
+        else if (patch.questionOptions !== undefined) {
+          next.questionOptions = this.stringList(patch.questionOptions, 'questionOptions');
+        }
+      }
+      return { ...task, execution: { ...task.execution, plan: next } };
+    });
+  }
+
+  /**
+   * 整体替换计划步骤（`submit_plan` / `update_plan`）。
+   *
+   * 中文说明：**按标题匹配保留已有进度**——`update_plan` 的常见场景是「执行到一半发现后面
+   * 几步要改」，如果无脑重建步骤，已完成步骤的 status/evidence 会被清空（等于忘掉刚做完的工作）。
+   * 因此规则是：标题（忽略首尾与内部多余空白）相同的步骤沿用原 id、状态与证据；
+   * 其余按新步骤创建，id 取现有最大编号 +1（不复用已删编号）。步骤顺序以传入顺序为准。
+   */
+  replacePlanSteps(taskId: string, steps: readonly PlanStepInput[]): TaskRecord {
+    if (steps.length === 0)
+      throw new ApiError(422, 'validation_error', 'A plan needs at least one step');
+    const normalized = steps.map((step, index) => ({
+      title: this.requiredText(step.title, `steps[${index}].title`, LIMITS.stepTitle),
+      ...(step.details === undefined
+        ? {}
+        : { details: this.requiredText(step.details, `steps[${index}].details`, LIMITS.details) }),
+      ...(step.verification === undefined
+        ? {}
+        : { verification: this.verificationOf(step.verification, `steps[${index}].verification`) }),
+    }));
+    const seen = new Set<string>();
+    for (const [index, step] of normalized.entries()) {
+      const key = normalizeTitle(step.title);
+      if (seen.has(key))
+        throw new ApiError(
+          422,
+          'validation_error',
+          `Duplicate plan step title at index ${index}: ${step.title}`,
+        );
+      seen.add(key);
+    }
+    return this.mutate(taskId, (task) => {
+      this.assertMutable(task);
+      const reused = new Set<string>();
+      let steps = task.steps;
+      const next = normalized.map((input, position): TaskStep => {
+        const key = normalizeTitle(input.title);
+        const existing = task.steps.find(
+          (step) => !reused.has(step.id) && normalizeTitle(step.title) === key,
+        );
+        if (existing !== undefined) {
+          reused.add(existing.id);
+          return {
+            ...existing,
+            title: input.title,
+            position,
+            ...(input.details === undefined ? {} : { details: input.details }),
+            ...(input.verification === undefined ? {} : { verification: input.verification }),
+          };
+        }
+        const step = newStep({
+          id: nextStepId(steps),
+          title: input.title,
+          position,
+          ...(input.details === undefined ? {} : { details: input.details }),
+          ...(input.verification === undefined ? {} : { verification: input.verification }),
+        });
+        steps = [...steps, step]; // 让 nextStepId 看到刚占用的编号
+        return step;
+      });
+      return this.withDerivedStatus({ ...task, steps: normalizePositions(next) });
+    });
+  }
+
+  /** 放弃计划：取消任务（记录保留，视图由任务状态推导为 abandoned）。 */
+  abandonPlan(taskId: string, reason?: string): TaskRecord {
+    const current = this.get(taskId);
+    return this.cancel(taskId, {
+      ifRevision: current.revision,
+      ...(reason === undefined ? {} : { reason }),
+    });
+  }
+
+  /** 会话当前活跃计划：优先未完成的，其次最近更新的（用于会话打开时重新接管）。 */
+  activePlanForSession(sessionId: string): TaskRecord | undefined {
+    const plans = this.repository
+      .list({ sessionId, limit: LIMITS.listLimit })
+      .filter((task) => task.origin === 'plan');
+    return (
+      plans.find((task) => !isTerminalStatus(task.status)) ??
+      plans.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+    );
   }
 
   // ---- 内部 ----
