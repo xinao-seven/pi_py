@@ -170,6 +170,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-question-channel.md` | **向用户提问通道**（`ask_user`）：工具契约、弹窗、SSE/命令、行为取舍 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/node-session-tree-flat.md` | 长会话读取崩溃修复：`GET /api/sessions/:id` 分支树扁平化契约与前端归一化 |
+| `docs/web-observability-panel-scroll.md` | 前端修复：设置 →「用量」面板的高度与滚动契约（滚不动的根因与回归防线） |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |
