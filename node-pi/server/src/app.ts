@@ -261,6 +261,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     tracker: inFlight,
     owner,
     logger: app.log,
+    subagents,
   });
   // 计划执行（plan_execute / plan_resume）复用执行器的租约与任务绑定，
   // 不另建一套「谁在跑」的内存状态。

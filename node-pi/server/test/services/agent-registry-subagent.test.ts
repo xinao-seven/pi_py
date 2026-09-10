@@ -78,6 +78,22 @@ class FakeSession implements PiSession {
 }
 
 /** 一套完整装配：注册表 + 真实审批中枢 + 真实账本（内存 trace 存储）。 */
+/** 假子任务服务：只关心「谁在什么时候叫停」。 */
+function fakeSubagents() {
+  const aborted: Array<{ parentSessionId: string; reason?: string }> = [];
+  let allAborted: string[] = [];
+  return {
+    aborted,
+    getAllAborted: () => allAborted,
+    abortAll(parentSessionId: string, reason?: string) {
+      aborted.push(reason === undefined ? { parentSessionId } : { parentSessionId, reason });
+    },
+    abortAllSessions(reason?: string) {
+      allAborted.push(reason ?? '');
+    },
+  };
+}
+
 async function makeHarness() {
   const store = openPlatformStore({ mode: 'memory' });
   stores.push(store);
@@ -85,7 +101,16 @@ async function makeHarness() {
   const broker = new ToolApprovalBroker({ timeoutMs: 10_000 });
   brokers.push(broker);
   const factory = new MultiSessionFactory();
-  const registry = new AgentRegistry(factory, broker, undefined, undefined, ledger);
+  const subagents = fakeSubagents();
+  const registry = new AgentRegistry(
+    factory,
+    broker,
+    undefined,
+    undefined,
+    ledger,
+    undefined,
+    subagents as never,
+  );
   const cwd = mkdtempSync(join(tmpdir(), 'pi-subagent-approval-'));
   tempDirs.push(cwd);
 
@@ -100,7 +125,7 @@ async function makeHarness() {
       maxDepth: 1,
     },
   });
-  return { registry, broker, ledger, factory, parent, child, store, cwd };
+  return { registry, broker, ledger, factory, parent, child, store, cwd, subagents };
 }
 
 /** 用真实内联扩展触发一次危险命令（走 resolver + 事件广播的完整链路）。 */
@@ -186,6 +211,30 @@ describe('子会话的审批继承（M5）', () => {
     // 父 run id 来自创建子会话时父会话正在跑的 run（此处由测试注入）
     expect(store.traces.getRun(childRun!.id)?.children).toEqual([]);
     registry.get(child.session.sessionId);
+  });
+
+  it('cascades aborts to child tasks when the parent session is aborted', async () => {
+    const { registry, parent, subagents } = await makeHarness();
+    await registry.command(parent.session.sessionId, { type: 'abort' });
+    expect(subagents.aborted).toEqual([
+      { parentSessionId: parent.session.sessionId, reason: '父会话已中止' },
+    ]);
+  });
+
+  it('cascades aborts when the parent session is removed', async () => {
+    const { registry, parent, subagents } = await makeHarness();
+    await registry.remove(parent.session.sessionId);
+    expect(subagents.aborted).toEqual([
+      { parentSessionId: parent.session.sessionId, reason: '会话已关闭' },
+    ]);
+    expect(registry.get(parent.session.sessionId)).toBeUndefined();
+  });
+
+  it('cancels every child task when the registry closes', async () => {
+    const { registry, subagents } = await makeHarness();
+    await registry.close();
+    expect(subagents.getAllAborted()).toEqual(['服务已关闭']);
+    expect(registry.list()).toEqual([]);
   });
 
   it('inherits the parent task id so delegated work counts towards the task', async () => {

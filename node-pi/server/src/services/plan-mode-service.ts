@@ -28,6 +28,7 @@ import {
 } from './platform/plan-model.js';
 import { buildPlanTools, PLAN_TOOL_NAMES, PlanToolbox } from './plan-tools.js';
 import { DEFAULT_PLAN_POLICY, evaluatePlanBash, type PlanPolicy } from './plan-policy.js';
+import { SUBAGENT_TOOL_NAME } from './subagent-tools.js';
 import type { TaskRecord } from './platform/task-model.js';
 import type { TaskService } from './task-service.js';
 
@@ -239,6 +240,24 @@ class PlanSession {
         reason:
           'Plan mode does not allow MCP tools (read-onlyness cannot be proven). Confirm the plan first, or ask the user to allow MCP in the plan policy.',
       };
+    // 子任务委派（M5）：规划期只放行**结构上只读**的预设。
+    // 中文说明：子会话是独立会话，不受本策略约束（它的 planMode 是关的），
+    // 所以不能「信任预设的自觉」——带 bash / 写工具的预设一律不放行。
+    if (event.toolName === SUBAGENT_TOOL_NAME) {
+      if (!policy.allowSubagentDelegation)
+        return {
+          block: true,
+          reason:
+            'Plan mode does not allow delegating to subagents. Confirm the plan first, then delegate while executing.',
+        };
+      const preset = (event.input as { preset?: unknown } | null | undefined)?.preset;
+      if (typeof preset !== 'string' || !this.service.canDelegateTo(this.cwd ?? '', preset))
+        return {
+          block: true,
+          reason:
+            'Plan mode only allows delegating to read-only subagent presets (tools within read/grep/find/ls and no bash). Confirm the plan to delegate to writing agents.',
+        };
+    }
     if (event.toolName === 'bash') {
       const verdict = evaluatePlanBash((event.input as { command?: unknown }).command, policy);
       if (!verdict.allowed) return { block: true, reason: verdict.reason };
@@ -453,6 +472,8 @@ export class PlanModeService {
   private trace: PlanTraceSink | undefined;
   private tasks: TaskService | undefined;
   private executor: PlanExecutor | undefined;
+  /** 只读预设判定（M5，由子任务服务注入；未注入时规划期不放行委派）。 */
+  private readOnlyAgent: ((cwd: string, preset: string) => boolean) | undefined;
   readonly policy: PlanPolicy;
 
   constructor(private readonly options: PlanModeServiceOptions = {}) {
@@ -467,6 +488,21 @@ export class PlanModeService {
   /** 注入执行器（计划执行走它的租约与绑定）。 */
   setExecutor(executor: PlanExecutor): void {
     this.executor = executor;
+  }
+
+  /**
+   * 注入「只读预设」判定（M5）。
+   * 中文说明：PlanModeService 只关心「这个预设能不能在规划期用」，而预设发现属于
+   * SubagentService，所以用注入打破依赖（与 setTaskService / setExecutor 同一手法）。
+   * 未注入时规划期一律不放行委派（宁严不宽）。
+   */
+  setReadOnlyAgentResolver(resolver: (cwd: string, preset: string) => boolean): void {
+    this.readOnlyAgent = resolver;
+  }
+
+  /** 规划期能否把子任务委派给这个预设（未注入判定器时一律不能）。 */
+  canDelegateTo(cwd: string, preset: string): boolean {
+    return this.readOnlyAgent?.(cwd, preset) === true;
   }
 
   /** 生成「Web Plan 模式」内联扩展：每个会话一套钩子 + 五个计划工具。 */

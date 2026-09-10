@@ -100,6 +100,46 @@ describe('规划期只读（能力集，而不是白名单快照）', () => {
     expect(blocked('read', { path: 'a.ts' })).toBeUndefined();
   });
 
+  it('only allows delegating to structurally read-only presets while planning', () => {
+    const { service, pi } = makeHarness({ activeTools: [...ALL_TOOLS] });
+    // 未注入判定器时宁严不宽：规划期一律不放行委派
+    service.startPlanning('session-1', '调研');
+    const call = (preset: string) =>
+      pi.handlers.get('tool_call')!({ toolName: 'subagent', toolCallId: 'c1', input: { preset } });
+    expect(call('scout')).toMatchObject({ block: true });
+
+    // 注入判定器（真实实现来自 SubagentService.isReadOnlyPreset）
+    service.setReadOnlyAgentResolver((_cwd, preset) => preset === 'planner');
+    expect(call('planner')).toBeUndefined();
+    expect(call('worker')).toMatchObject({ block: true });
+    expect(call('scout')).toMatchObject({ block: true });
+    // 没给 preset 也拦（工具参数校验之外的第二道）
+    expect(
+      pi.handlers.get('tool_call')!({ toolName: 'subagent', toolCallId: 'c2', input: {} }),
+    ).toMatchObject({ block: true });
+  });
+
+  it('blocks delegation when the policy turns it off', () => {
+    const repository = new MemoryTaskRepository();
+    const tasks = new TaskService(repository);
+    const service = new PlanModeService({
+      policy: { ...DEFAULT_PLAN_POLICY, allowSubagentDelegation: false },
+    });
+    service.setTaskService(tasks);
+    service.setReadOnlyAgentResolver(() => true);
+    const pi = makeFakePi([...ALL_TOOLS]);
+    service.buildExtension()(pi as never);
+    pi.handlers.get('session_start')!({}, sessionContext());
+    service.startPlanning('session-1', '调研');
+    expect(
+      pi.handlers.get('tool_call')!({
+        toolName: 'subagent',
+        toolCallId: 'c1',
+        input: { preset: 'planner' },
+      }),
+    ).toMatchObject({ block: true });
+  });
+
   it('registers the plan tools and activates them only while planning', async () => {
     const { service, pi } = makeHarness();
     expect([...pi.tools.keys()]).toEqual([

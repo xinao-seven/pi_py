@@ -35,6 +35,15 @@ export interface PlanPolicy {
   verifyCommands: string[];
   /** 是否允许 MCP 只读工具（默认禁止：无法证明 MCP 工具只读）。 */
   allowMcp: boolean;
+  /**
+   * 规划期是否允许把**只读子任务**委派出去（M5，默认允许）。
+   * 中文说明：委派本身很契合规划期（大范围搜代码又不污染主上下文），
+   * 但子会话是不受本策略约束的独立会话，所以这里只开一道缝：
+   * 预设必须**结构上只读**（工具集全在 `readOnlyTools` 里，不能有 bash）。
+   * 想让某个带 bash 的预设也能在规划期用，就把它自己改为不带 bash，
+   * 而不是把策略放宽成「信任预设」。
+   */
+  allowSubagentDelegation: boolean;
 }
 
 export type BashCapability = 'read' | 'verify' | 'write' | 'unknown';
@@ -52,6 +61,7 @@ export const DEFAULT_PLAN_POLICY: PlanPolicy = {
   bash: 'verify',
   verifyCommands: [],
   allowMcp: false,
+  allowSubagentDelegation: true,
 };
 
 /** 纯只读命令（首程序名）。 */

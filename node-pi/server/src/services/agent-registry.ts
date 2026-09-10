@@ -620,6 +620,8 @@ export class AgentRegistry {
     private readonly ledger?: SessionLedger,
     /** 提问通道（M4.1）：挂起/结算时通过注册表发 SSE 事件。 */
     private readonly questions?: QuestionBroker,
+    /** 子任务委派（M5）：会话中止/移除/服务关闭时级联停掉它派出去的子任务。 */
+    private readonly subagents?: SubagentService,
   ) {
     // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
     approvals?.setPendingListener((pending) => this.announceApproval(pending));
@@ -852,7 +854,7 @@ export class AgentRegistry {
         await session.followUp(message, images);
         return {};
       case 'abort':
-        await session.abort();
+        await this.abortSession(sessionId, session);
         return {};
       case 'set_model': {
         const provider = this.requiredString(command.provider, 'provider');
@@ -929,7 +931,8 @@ export class AgentRegistry {
           typeof command.message === 'string' ? command.message : undefined,
         );
         // 暂停要真的停手：改状态之后立刻中止当前轮，否则模型会继续跑完。
-        if (action === 'pause' || action === 'abandon') await session.abort();
+        if (action === 'pause' || action === 'abandon')
+          await this.abortSession(sessionId, session, '计划已暂停或放弃');
         return { plan };
       }
       case 'plan_enable': // 兼容旧客户端：等价于「用这条消息开始规划」
@@ -944,7 +947,8 @@ export class AgentRegistry {
           command.type === 'plan_enable' ? 'start' : 'abandon',
           typeof command.message === 'string' ? command.message : undefined,
         );
-        if (command.type === 'plan_disable') await session.abort();
+        if (command.type === 'plan_disable')
+          await this.abortSession(sessionId, session, '计划已放弃');
         return { plan };
       }
       default:
@@ -999,6 +1003,8 @@ export class AgentRegistry {
 
   /** 关闭注册表：释放所有活跃会话（服务关闭钩子调用）。 */
   async close(): Promise<void> {
+    // 子任务先停：它们的父会话马上要被 dispose，留着就是没有归属的孤儿。
+    this.subagents?.abortAllSessions('服务已关闭');
     for (const entry of this.entries.values()) {
       entry.unsubscribe();
       entry.subscribers.clear();
@@ -1023,6 +1029,8 @@ export class AgentRegistry {
   async remove(sessionId: string): Promise<void> {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
+    // 会话被移除（删除会话 / 子会话收尾）时，级联停掉它派出去的子任务。
+    this.subagents?.abortAll(sessionId, '会话已关闭');
     entry.unsubscribe();
     entry.subscribers.clear();
     this.approvals?.cancelSession(sessionId);
@@ -1118,6 +1126,20 @@ export class AgentRegistry {
     if (!this.plans)
       throw new ApiError(409, 'plan_unavailable', 'Plan mode is unavailable for this session');
     return this.plans;
+  }
+
+  /**
+   * 中止会话的当前轮，并级联停掉它派出去的子任务（M5）。
+   * 中文说明：单独抽出来是因为「停手」有四个入口（abort 命令、计划暂停/放弃、
+   * 兼容命令 plan_disable），漏掉任何一个都会留下还在跑的子会话。
+   */
+  private async abortSession(
+    sessionId: string,
+    session: PiSession,
+    reason = '父会话已中止',
+  ): Promise<void> {
+    await session.abort();
+    this.subagents?.abortAll(sessionId, reason);
   }
 
   /** 取活跃条目，不存在抛 404（区别于 open 的自动恢复语义）。 */

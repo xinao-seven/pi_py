@@ -31,6 +31,8 @@ export interface TaskRunnerOptions {
   logger?: ServiceLogger;
   leaseTtlMs?: number;
   renewIntervalMs?: number;
+  /** M5：任务停手时级联停掉子任务（只依赖一个方法，避免与 SubagentService 硬耦合）。 */
+  subagents?: { abortAll(parentSessionId: string, reason?: string): void };
 }
 
 export interface ResumeOutcome {
@@ -208,6 +210,9 @@ export class TaskRunner {
   stop(taskId: string): void {
     const run = this.active.get(taskId);
     if (run === undefined) return;
+    // 任务停手时，这个会话派出去的子任务也要停（M5）：否则「暂停计划」之后
+    // 子任务还在跑，完成时又去改工作区，与「停手」矛盾。
+    this.options.subagents?.abortAll(run.sessionId, '任务已停止');
     run.keeper.dispose();
     this.active.delete(taskId);
     try {

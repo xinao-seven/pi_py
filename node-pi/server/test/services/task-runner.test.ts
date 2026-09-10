@@ -113,7 +113,21 @@ function startProcess(options: {
     onSettled: (sessionId) => runner?.handleSettled(sessionId),
     now,
   });
-  runner = new TaskRunner({ tasks, recovery, registry, tracker, owner });
+  const abortedChildren: Array<{ parentSessionId: string; reason?: string }> = [];
+  runner = new TaskRunner({
+    tasks,
+    recovery,
+    registry,
+    tracker,
+    owner,
+    // M5：任务停手时也要停掉它派出去的子任务
+    subagents: {
+      abortAll: (parentSessionId, reason) =>
+        abortedChildren.push(
+          reason === undefined ? { parentSessionId } : { parentSessionId, reason },
+        ),
+    },
+  });
   return {
     store,
     tasks,
@@ -123,6 +137,7 @@ function startProcess(options: {
     recovery,
     runner,
     owner,
+    abortedChildren,
     advance: (ms: number) => (clock.now += ms),
     nowIso: () => new Date(clock.now).toISOString(),
   };
@@ -428,6 +443,10 @@ describe('TaskRunner.start（M4：计划执行复用同一套租约与绑定）'
     process.runner.stop(task.id);
     expect(process.tasks.get(task.id).execution.lease).toBeUndefined();
     expect(process.runner.activeTaskIds()).toEqual([]);
+    // 停手要连子任务一起停：否则「暂停计划」之后子任务还在改工作区
+    expect(process.abortedChildren).toEqual([
+      { parentSessionId: process.session.sessionId, reason: '任务已停止' },
+    ]);
   });
 });
 
