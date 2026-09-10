@@ -36,7 +36,7 @@ pi_py/
 │   │   │   ├── config.ts   # 环境变量基础设施配置（PI_NODE_*）
 │   │   │   ├── errors.ts   # 统一 API 错误
 │   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/tasks/workspaces
-│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-{mode-service,tools,policy}/task-{service,lease,recovery,runner}/mcp/...
+│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/user-question/plan-{mode-service,tools,policy}/task-{service,lease,recovery,runner}/mcp/（含模板库）...
 │   │   │       ├── platform/       # SQLite/内存存储（M1/M2）：migrations/trace-model/trace-repository/task-* /store
 │   │   │       └── observability/  # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
 │   │   ├── spike/          # 能力守护脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
@@ -91,6 +91,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
 - 断点续跑（M3）：`task-lease.ts`（租约，owner = pid + bootId）→ `task-recovery-extension.ts`（在飞动作与副作用分级）→ `task-recovery.ts`（恢复清单与判定）→ `task-runner.ts`（续跑：校验 → 取租约 → 注入 `[TASK RESUME]` 隐藏上下文 → 发 prompt → 续期保活）。三条不可让步的规则：**只列不跑**（恢复清单不自动执行）、**无法判定副作用必须人工确认**、**产物在就补记完成、绝不重跑**。任何执行态写入都要经 `TaskService`（乐观锁 + 广播），不要绕开它直接写库。
 - Plan 模式（M4）：**Plan 是 Task 的受控视图**（`origin='plan'`），不是第二套模型。分工：`platform/plan-model.ts`（纯投影 `PlanView`/`derivePlanStatus`）→ `plan-tools.ts`（`submit_plan`/`update_plan`/`complete_step`/`block_step`/`ask_user` + `PlanToolbox` 用例层）→ `plan-policy.ts`（规划期能力分类）→ `plan-mode-service.ts`（会话状态机：工具差集、上下文注入、`tool_call` 拦截、命令分发）。三条不可让步的规则：**只有用户能确认执行**、**步骤完成必须有证据且按 verification 校验**、**规划期只读（能力分类，未归类即不放行）**。改 `plan_*` 命令或 SSE `plan_updated` 载荷（`PlanView`）必须同步 `web/src/types`、`web/src/lib/agent-events.ts` 与 Pinia/组件。
+- MCP：协议层支持任意 server（stdio 子进程 / streamable-http 静态头），配置两层合并（`~/.pi/agent/mcp.json` 用户级 + `{cwd}/.pi/mcp.json` 工作区级，同名工作区优先），每 server 可 `approval: "required"`，预设可白名单。**凭据只能写成 `$ENV` 引用**（env / headers / **args** 三处都会在 spawn 时插值）——该配置文件与原版 CLI 共享，禁止落明文密钥。推荐清单在 `services/mcp/mcp-templates.ts`（前端配置页「模板库」，一键添加/填入表单），新增模板必须过 `assertTemplateTable()`。
 - 人机交互两条通道：危险命令走 `ToolApprovalBroker`（`tool_call_pending` / `approve_tool`），提问走 `QuestionBroker`（`question_pending` / `answer_question`，见 `docs/node-question-channel.md`）。两者语义一致——工具挂起 → SSE → 用户动作 → Promise 结算；超时/中止/会话关闭都要有确定归宿。**「谁在等用户」只有一个真相源**：不要在任务/计划里再镜像一份（M4.1 移除了 `PlanView.question*`）。
 - 版本号语义：`task.revision` 是**用户可见内容的版本**。执行期运行时写入（租约/心跳/在飞）用 `keepRevision: true` 不占版本号；`TaskService.mutate` 的 `change()` 返回原对象即「无变化」（不写库、不广播、不动版本号）。所有写入都先重读记录再改，因此不会用陈旧副本覆盖运行时字段。
 

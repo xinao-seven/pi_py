@@ -118,6 +118,7 @@ node-pi/server/
       "command": "npx",                        // 必填，启动命令
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:/code"],
       "env": { "KEY": "$MY_TOKEN" },           // 附加环境变量，值支持 $ENV 插值
+      // args 里的 $ENV 也会在 spawn 时插值（很多 server 只能用 --token=$VAR 传凭据）
       "cwd": "E:/work",                        // 可选，子进程工作目录（默认会话工作区）
       // streamable-http 专用：
       "url": "https://…/mcp",                  // 必填，MCP endpoint
@@ -140,15 +141,64 @@ node-pi/server/
 | `DELETE` | `/api/mcp/servers/:name?cwd=&scope=` | 删除 |
 | `POST` | `/api/mcp/servers/:name/test` | 试连（body 带 `server` 则测未保存的表单） |
 | `POST` | `/api/mcp/refresh` | 强制重连某 cwd 下所有 server |
+| `GET` | `/api/mcp/templates` | **推荐模板库**（静态目录，不需要 cwd） |
 
 > 注意：`cwd` 指**会话工作区**，与 stdio 子进程的 `cwd` 是两个概念，因此请求体把 server 配置嵌套在
 > `server` 键下，避免重名。
+
+### 推荐模板库（一键添加）
+
+**不必自己查包名和参数**：配置页顶部有「模板库（N 个推荐）」，18 个模板按 7 组分类
+（通用能力 / 联网检索 / 浏览器 / 代码仓库 / 数据库 / 协作排障 / 调试），每张卡片带风险徽标：
+
+| 徽标 | 含义 |
+| --- | --- |
+| 只读 / 本地写 / 外部副作用 | 它可能影响什么（决定要不要开审批） |
+| 需要凭据 / 需填参数 | 光有点击还不够，得准备环境变量或补参数 |
+| 建议审批 | 建议打开 `approval: "required"`（模板已默认勾选） |
+| 工具 ~N | 会往系统提示词里塞多少工具，用来判断上下文成本 |
+
+- **一键添加**：无凭据且不缺必填输入的模板（当前：memory、sequential-thinking、context7、
+  playwright、debug-echo）直接写入配置，随后可点「连接测试」确认；
+- **填入表单**：其余模板只填好表单，你补上 `$ENV` 变量（或参数）再保存；
+- 每个模板都给了注意事项（首次下载、额外依赖、与本项目能力重复等）与包主页链接。
+
+模板库的硬约束（`assertTemplateTable()` 在测试里守住）：凭据**只能是 `$ENV` 引用**
+（env / headers / args 都是），因此配置文件里永远不会出现明文密钥；`stdio` 必须有 `command`、
+`http` 必须有 `url`；`needsInput` 的模板不允许一键添加（否则会加出一个起不来的 server）。
+
+#### 推荐清单（模板库内容）
+
+| 分组 | server | 需要什么 | 备注 |
+| --- | --- | --- | --- |
+| 通用能力 | `memory` | — | 本地知识图谱，跨会话记住项目约定 |
+| 通用能力 | `sequential-thinking` | — | 结构化思考，规划类任务更稳 |
+| 联网检索 | `context7` | —（可选 key） | 查库/框架最新文档 |
+| 联网检索 | `tavily` / `brave-search` | API key | 搜索与抓取 |
+| 联网检索 | `fetch` | 装 `uv` | 网页转 markdown（Python 系） |
+| 浏览器 | `playwright` | —（首次下 Chromium） | 真浏览器验证前端改动；工具约 20 个 |
+| 代码仓库 | `filesystem` | **根目录参数** | 访问工作区之外的项目；建议开审批 |
+| 代码仓库 | `github` | PAT | 仓库/PR/Issue；建议用只读 token |
+| 代码仓库 | `git` / `serena` | 装 `uv`（serena 建议项目路径） | git 考古 / LSP 语义检索 |
+| 数据库 | `postgres` / `mongodb` | 连接串（`$ENV`） | 建议只读账号 + 人工审批 |
+| 数据库 | `sqlite` | 装 `uv` + db 路径 | 排查 M1 trace / M2 任务数据很好用 |
+| 协作排障 | `sentry` | access token | 线上错误与堆栈 |
+| 协作排障 | `slack` / `figma` | bot token / API key | 频道上下文 / 设计稿还原 |
+| 调试 | `debug-echo` | — | 本仓库自带 fixture，排错第一步 |
+
+两条实用提醒：
+
+1. **每个 server 的工具都会进系统提示词**，装太多会分散模型注意力；建议每个工作区常驻 2–4 个
+   （用得上再开，工作区私有的写 `.pi/mcp.json`）。
+2. **Plan 模式默认拦截 MCP 工具**（无法证明只读），所以「规划期查文档」这类需求要么放到执行期，
+   要么在 `PlanPolicy` 里显式放行（见 [`node-plan-mode-m4.md`](node-plan-mode-m4.md)）。
 
 ### 前端界面
 
 侧栏底部「**MCP**」按钮打开配置弹窗，支持：
 - 查看每个 server 的状态徽标（已连接/连接中/连接失败/已禁用）、工具数量、工具清单；
 - 新增 / 编辑 / 删除、启用停用开关、测试连接；
+- **模板库**（推荐清单，一键添加 / 填入表单，见上一节）；
 - 新增时可直接"测试连接"验证未保存的配置。
 
 配置保存后后端会自动让所有活跃会话重载，MCP 工具立即出现在该会话的工具列表里（`getActiveTools`，

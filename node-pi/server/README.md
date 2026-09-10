@@ -65,6 +65,12 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 契约见 [`docs/node-web-plan-mode.md`](../../docs/node-web-plan-mode.md)，
 实现说明见 [`docs/node-plan-mode-m4.md`](../../docs/node-plan-mode-m4.md)。
 
+**MCP 模板库（M4.2）**：`GET /api/mcp/templates` 返回推荐清单（`services/mcp/mcp-templates.ts`，
+18 个模板 / 7 组，附 `requiresCredentials` 与 `canAddDirectly`），前端配置页据此一键添加或填入表单。
+模板自检 `assertTemplateTable()` 保证：凭据只能是 `$ENV` 引用（env / headers / args 三处都做
+spawn 时插值，配置文件里永不落明文）、stdio 必有 command、http 必有 url。
+说明见 [`docs/node-mcp-guide.md`](../../docs/node-mcp-guide.md) §3。
+
 **向用户提问（M4.1）**：`ask_user` 是与危险命令审批并列的交互通道——工具挂起、SSE 推送、
 前端弹窗回答、答案作为工具返回值回到模型。一次可问多题（单选/多选/自由输入），
 超时/取消/会话关闭都有确定结算。契约见 [`docs/node-question-channel.md`](../../docs/node-question-channel.md)。

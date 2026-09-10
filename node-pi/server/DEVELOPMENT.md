@@ -63,6 +63,10 @@ node-pi/server/
   危险命令 → `ToolApprovalBroker`；向用户提问 → `QuestionBroker`（都能挂起工具、
   推 SSE、由命令结算，且超时/中止/关闭都有确定结果）。**「谁在等用户」只存一份**：
   不要在任务/计划里镜像（M4.1 因此移除了 `PlanView.question*`）。
+- MCP 相关改动：配置写入必须遵守「凭据只写 `$ENV` 引用」——env / headers / `args` 三处都会在
+  spawn 时插值，因此 `--token=$VAR` 是合法写法，而把令牌明文写进 `mcp.json` 是红线
+  （该文件与原版 CLI 共享）。新增推荐模板要过 `assertTemplateTable()`（重复 id、
+  stdio 缺 command、明文密钥、外部写未建议审批都会失败）。
 - 可观测的验收方式：能写成 spike 的写 spike（真实 SDK + fauxProvider），能写成 golden set 的
   进 eval（确定性用例 + 阈值门禁）。只靠单测会漏掉 SDK 交互边界与真实时序问题（M4 抓到 5 个）。
 

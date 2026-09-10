@@ -154,6 +154,15 @@ Agent 需要你拍板时（需求歧义、方案取舍、风险偏好）会**弹
 
 契约见 [`docs/node-question-channel.md`](docs/node-question-channel.md)。
 
+## MCP 接入
+
+支持任意 MCP server（stdio 子进程 / streamable-http 静态头），配置落在
+`~/.pi/agent/mcp.json`（用户级）与 `{cwd}/.pi/mcp.json`（工作区级，同名覆盖）。
+配置页有**模板库**：18 个推荐 server 按组展示（记忆、结构化思考、库文档、搜索、浏览器、
+文件、GitHub/Git/Serena、数据库、Sentry/Slack/Figma…），带「只读 / 本地写 / 外部副作用、
+需要凭据、建议审批、工具数量级」徽标；无凭据的可一键添加，其余填入表单后补 `$ENV` 即可
+（配置文件里永不落明文密钥）。详见 [`docs/node-mcp-guide.md`](docs/node-mcp-guide.md)。
+
 ## 测试
 
 ```powershell

@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `343b27b feat(node): M4 评测 golden set 与版本号语义修正`         |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **306** / Web **112**，全绿；spike 30 项断言 + eval 8 个用例全过 |
+| 测试基线   | Node 后端 **318** / Web **118**，全绿；spike 30 项断言 + eval 8 个用例全过 |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -350,6 +350,45 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
+### 3.11 MCP 模板库（已完成，`docs/node-mcp-guide.md` §3「推荐模板库」）
+
+用户反馈「支持的 MCP 比较少」。排查后确认：**协议层本来就能加任意 server**（stdio + http 静态头、
+两层配置、预设白名单、每 server 审批都已就绪），缺的是**目录**——用户得自己知道包名/参数/环境变量。
+因此这一节交付的是「模板库」，不是新协议能力。
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 后端 | `services/mcp/mcp-templates.ts`：18 个模板 / 7 组 + `assertTemplateTable()` 自检 + `@fixture:` 动态路径解析 |
+| 契约 | `GET /api/mcp/templates` → `{ templates }`，每条附 `requiresCredentials` / `canAddDirectly` |
+| 安全 | `mcp-client-manager` 的 **args 也做 `$ENV` 插值**：很多 server 只能用 `--access-token=...` 传凭据，不插值就意味着密钥明文写进与 CLI 共享的 mcp.json |
+| 前端 | `McpConfig.vue` 模板库面板：分组卡片 + 风险徽标 + 一键添加 / 填入表单 / 文档链接 |
+
+#### 已冻结的决策
+
+1. **凭据只能是 `$ENV` 引用**（env、headers、args 三处都是），由 `assertTemplateTable()` 守住；
+   配置文件里永远没有明文密钥——该文件与原版 CLI 共享。
+2. **`needsInput` 的模板不允许一键添加**（filesystem 缺根目录、uvx 系缺项目路径）：
+   否则会加出一个起不来的 server，比「多一步填表」更糟。
+3. **如实标注能力**：`access`（只读 / 本地写 / 外部副作用）+ `suggestApproval`（外部写一律建议审批）
+   + `toolCountHint`（工具都会进系统提示词，装太多会分散注意力）。
+4. **只收录静态凭据可用的 server**：仓库只支持静态请求头鉴权，因此 GitHub 用 PAT 版、
+   Sentry 用 `--access-token`，OAuth-only 的托管 server 不收录。
+5. **自带 `debug-echo` 模板**指向仓库 fixture（服务端动态解析路径）：排错第一步先确认它能连上。
+
+#### 验证
+
+- 单测：模板形状自检 11 例（重复 id、缺 command/url、明文密钥、组别、Python 依赖标注、
+  外部写必建议审批）+ 列表派生字段 + `@fixture:` 路径解析 + 路由 1 例。
+- 前端：模板库 6 例（分组渲染、徽标、一键添加的 payload、需凭据只填表、needsInput 提示、
+  拉取失败降级）。
+- **真机**（临时实例 + 真实 npx）：`GET /api/mcp/templates` 返回 18 模板 / 7 组 / 5 个可一键添加；
+  用模板原样添加 `debug-echo` → 连上并列出 3 个工具；添加 `memory` → 9 个工具；
+  落盘 `mcp.json` 中无任何明文密钥。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -425,11 +464,11 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 306 passed / 构建成功 / spike 全过 / eval 门禁全过
+#   → 期望：format OK / 无类型错误 / 318 passed / 构建成功 / spike 全过 / eval 门禁全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 112 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 118 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -617,6 +656,24 @@ web/src/{types/index.ts,composables/useAgentSession.ts} · 类型 + answerQuesti
 web/src/components/ChatWindow.vue               · 挂载弹窗
 ```
 
+### M4.2 新增（MCP 模板库，2026-08-21）
+
+```
+node-pi/server/src/services/mcp/mcp-templates.ts  18 个模板 / 7 组 + 形状自检 + fixture 路径解析
+node-pi/server/test/services/mcp-templates.test.ts
+web/test/components/McpConfig.test.ts             模板库 6 例（此前没有该组件的测试）
+```
+
+### M4.2 改动（关键位置）
+
+```
+node-pi/server/src/routes/mcp.ts                     GET /api/mcp/templates
+node-pi/server/src/services/mcp/mcp-client-manager.ts · args 也做 $ENV 插值（凭据不进配置文件）
+web/src/components/McpConfig.vue                     模板库面板（分组/徽标/一键添加/填入表单）
+web/src/{types/index.ts,lib/api.ts}                  McpTemplate 类型与 getMcpTemplates()
+docs/node-mcp-guide.md                               §3 新增「推荐模板库」与推荐清单表
+```
+
 ### 与前端共享的契约文件（任何接口改动都必须同步）
 
 ```
@@ -652,4 +709,7 @@ web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.v
 | 提问的答案不支持图片/文件 | 只支持选项与文本；要附件就让用户直接发消息 | 可选 |
 | 同时只有一个挂起提问 | 前端只有一个弹窗；需要并行问多件事时放进同一次调用的 questions 数组（默认上限 8 题） | 可选 |
 | 提问没有独立指标 | 提问与回答会作为普通会话事件进 M1 账本，但没有「提问耗时/回答率」这类统计 | 可选 |
+| MCP 模板库不含 OAuth server | 仓库只支持静态请求头鉴权；要做 OAuth 交互授权是独立工作量 | 可选 |
+| 模板库不支持自定义/分享 | 模板是仓库内常量表；用户自己的 server 仍走手工配置 | 可选 |
+| Plan 模式仍拦 MCP 工具 | 规划期无法用 context7/搜索类 server 查资料；可给 `PlanPolicy` 加只读 MCP 白名单 | 可选 |
 | 租约 TTL 写死 30s/10s | 暂不需要配置项；若将来要调，走 `PI_NODE_*` 并补文档 | 可选 |
