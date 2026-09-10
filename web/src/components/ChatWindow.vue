@@ -29,7 +29,6 @@ import type {
   AgentMessage,
   QuestionAnswer,
   SessionInfo,
-  SessionTreeNode,
   TaskStep,
   TaskStepStatus,
 } from '@/types';
@@ -120,7 +119,8 @@ const title = computed(() => {
   return detail.value?.info.name || detail.value?.info.firstMessage || 'pi 会话';
 });
 const workspace = computed(() => detail.value?.info.cwd ?? props.newSessionCwd ?? '');
-const branchNodeCount = computed(() => countTreeNodes(detail.value?.tree ?? []));
+// 分支树节点数：树已是扁平数组，直接取长度（不再递归统计）
+const branchNodeCount = computed(() => detail.value?.tree.length ?? 0);
 // 上下文占用徽标：percent 可能是 null（刚压缩完、占用未知），此时不显示。
 const contextPercentLabel = computed(() =>
   contextUsage.value?.percent === null || contextUsage.value?.percent === undefined
@@ -168,10 +168,6 @@ function onScroll(): void {
   const el = messageScroller.value;
   if (!el) return;
   followBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-}
-
-function countTreeNodes(nodes: SessionTreeNode[]): number {
-  return nodes.reduce((total, node) => total + 1 + countTreeNodes(node.children), 0);
 }
 
 async function navigateBranch(entryId: string): Promise<void> {

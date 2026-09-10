@@ -5,25 +5,24 @@ import BranchNavigator from '@/components/BranchNavigator.vue';
 
 const tree: SessionTreeNode[] = [
   {
-    entry: {
-      type: 'message',
-      id: 'user-1',
-      parentId: null,
-      timestamp: '2026-01-01T00:00:00Z',
-      message: { role: 'user', content: '先检查实现' },
-    },
-    children: [
-      {
-        entry: {
-          type: 'message',
-          id: 'assistant-1',
-          parentId: 'user-1',
-          timestamp: '2026-01-01T00:00:01Z',
-          message: { role: 'assistant', content: [{ type: 'text', text: '检查完成' }] },
-        },
-        children: [],
-      },
-    ],
+    id: 'user-1',
+    parentId: null,
+    depth: 0,
+    type: 'message',
+    role: 'user',
+    text: '先检查实现',
+    label: null,
+    labelTimestamp: null,
+  },
+  {
+    id: 'assistant-1',
+    parentId: 'user-1',
+    depth: 1,
+    type: 'message',
+    role: 'assistant',
+    text: '检查完成',
+    label: null,
+    labelTimestamp: null,
   },
 ];
 

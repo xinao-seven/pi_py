@@ -28,6 +28,7 @@ import {
   createMergeSummary,
   type MergeableSessionManager,
 } from '../services/session-merge.js';
+import { flattenSessionTree } from '../services/session-tree.js';
 
 /** 插件选项：会话注册表。 */
 export interface SessionRouteOptions {
@@ -311,7 +312,9 @@ export const sessionRoutes: FastifyPluginAsync<SessionRouteOptions> = async (app
       sessionId: entry.session.sessionId,
       filePath: manager?.getSessionFile() ?? persisted.path ?? null,
       info: serializeInfo(persisted, index.parentIds),
-      tree: manager?.getTree() ?? [], // 消息分支树
+      // 消息分支树：扁平节点 + depth。不能直接回嵌套 children——长会话的树深度等于
+      // 条目数，JSON.stringify 会爆栈（见 services/session-tree.ts）。
+      tree: manager === undefined ? [] : flattenSessionTree(manager.getTree()),
       leafId: manager?.getLeafId() ?? null, // 当前叶子消息 id
       context: {
         messages: context?.messages ?? entry.session.messages,

@@ -72,17 +72,35 @@ export interface SessionEntry {
 }
 
 export interface SessionTreeNode {
+  // 分支树节点（Node 后端契约，已扁平化）：depth 由服务端算好，前端不再递归推导。
+  // 为什么不回嵌套结构：树深度 = 会话条目数，长会话会撑爆 JSON 序列化（见 docs/node-session-tree-flat.md）。
+  id: string;
+  parentId: string | null;
+  depth: number;
+  type: string;
+  role: string | null;
+  text: string;
+  label: string | null;
+  labelTimestamp: string | null;
+}
+
+export interface LegacySessionTreeNode {
+  // 嵌套树节点：Python 后端（只读对照实现，已冻结）仍返回这种形状，由 api 层归一化。
   entry: SessionEntry;
-  children: SessionTreeNode[];
+  children: LegacySessionTreeNode[];
   label?: string;
   labelTimestamp?: string;
 }
+
+/** 后端返回的原始树形状：Node 扁平 / Python 嵌套。 */
+export type SessionTreeInput = SessionTreeNode | LegacySessionTreeNode;
 
 export interface SessionDetail {
   // 会话详情：元数据 + 树 + 当前叶节点 + 上下文
   sessionId: string;
   filePath: string | null;
   info: SessionInfo;
+  /** 已归一化的扁平分支树（api.ts 的 getSession 负责归一化）。 */
   tree: SessionTreeNode[];
   leafId: string | null;
   context: SessionContext;

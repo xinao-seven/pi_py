@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-import type { AgentMessage, SessionInfo, SessionTreeNode } from '@/types';
+import type { SessionInfo, SessionTreeNode } from '@/types';
 
 interface TreeOption {
   id: string;
@@ -28,8 +28,8 @@ const emit = defineEmits<{
 const selectedEntryId = ref(props.leafId ?? '');
 const mergeSourceId = ref('');
 
-const options = computed(() => flattenTree(props.tree));
-// 拍平的树选项（带深度缩进）
+const options = computed(() => props.tree.map(toOption));
+// 分支选项：服务端已给出扁平节点 + depth，这里只做标签/缩进映射（不递归）
 const selectedOption = computed(() =>
   options.value.find((option) => option.id === selectedEntryId.value),
 );
@@ -62,35 +62,21 @@ function merge(): void {
   mergeSourceId.value = '';
 }
 
-function flattenTree(nodes: SessionTreeNode[], depth = 0): TreeOption[] {
-  // 递归把会话树拍平成下拉选项；assistant 消息节点才允许 Fork
-  return nodes.flatMap((node) => {
-    const message = node.entry.message;
-    const option: TreeOption = {
-      id: node.entry.id,
-      depth,
-      label: node.label || describeEntry(node.entry.type, message),
-      canFork: node.entry.type === 'message' && message?.role === 'assistant',
-    };
-    return [option, ...flattenTree(node.children, depth + 1)];
-  });
+function toOption(node: SessionTreeNode): TreeOption {
+  // assistant 消息节点才允许 Fork
+  return {
+    id: node.id,
+    depth: node.depth,
+    label: node.label ?? describeNode(node),
+    canFork: node.type === 'message' && node.role === 'assistant',
+  };
 }
 
-function describeEntry(type: string, message?: AgentMessage): string {
+function describeNode(node: SessionTreeNode): string {
   // 节点标签：消息显示“你/pi: 摘要”，其他类型显示类型名
-  if (type !== 'message' || !message) return type.replaceAll('_', ' ');
-  const text = messageText(message).replace(/\s+/g, ' ').trim();
-  const prefix =
-    message.role === 'user' ? '你' : message.role === 'assistant' ? 'pi' : message.role;
-  return `${prefix}: ${text || '（空消息）'}`.slice(0, 72);
-}
-
-function messageText(message: AgentMessage): string {
-  if (typeof message.content === 'string') return message.content;
-  return (message.content ?? [])
-    .map((block) => block.text ?? block.thinking ?? '')
-    .filter(Boolean)
-    .join(' ');
+  if (node.type !== 'message' || node.role === null) return node.type.replaceAll('_', ' ');
+  const prefix = node.role === 'user' ? '你' : node.role === 'assistant' ? 'pi' : node.role;
+  return `${prefix}: ${node.text || '（空消息）'}`.slice(0, 72);
 }
 </script>
 

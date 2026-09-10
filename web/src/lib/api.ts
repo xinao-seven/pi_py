@@ -1,5 +1,6 @@
 // REST 客户端：封装全部后端 API，统一错误解析（ApiError）。
 import { BASE_URL } from './config';
+import { toSessionTreeNodes } from './session-tree';
 import { appendToken, clearToken, fireUnauthorized, getToken, setToken } from './session';
 import type {
   AgentStateResponse,
@@ -23,6 +24,7 @@ import type {
   SessionInfo,
   SessionPreset,
   SessionPresetInput,
+  SessionTreeInput,
   SkillsResponse,
   PlanView,
   PromptMode,
@@ -120,9 +122,14 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return result.sessions;
 }
 
-export function getSession(sessionId: string): Promise<SessionDetail> {
-  // 会话详情（含树与上下文）
-  return request(`/api/sessions/${encodeURIComponent(sessionId)}`);
+export async function getSession(sessionId: string): Promise<SessionDetail> {
+  // 会话详情（含树与上下文）。
+  // 中文说明：树的形状两种后端不同（Node 扁平 / Python 嵌套），在 API 层统一归一化，
+  // 组件只面对扁平节点（长会话的嵌套树会撑爆序列化，见 lib/session-tree.ts）。
+  const raw = await request<Omit<SessionDetail, 'tree'> & { tree: SessionTreeInput[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+  );
+  return { ...raw, tree: toSessionTreeNodes(raw.tree) };
 }
 
 export function forkSession(sessionId: string, leafId: string): Promise<ForkSessionResponse> {
