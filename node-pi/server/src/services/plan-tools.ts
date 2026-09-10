@@ -9,8 +9,13 @@
  * 完成（必须带证据，且按 `verification` 声明校验），卡住用 `block_step` 明确上报。
  * 模型不需要记住任何标记语法，只需要调用工具。
  *
- * 这些工具**始终注册**（会话加载即注册），但只有在计划会话里才加入 activeTools——
- * 普通会话里它们对模型不可见，也就不存在「模型误调 submit_plan 造出一个计划」的情况。
+ * 这些工具**始终注册、也始终在 activeTools 里**（会话创建时由预设白名单并入，见
+ * `agent-registry.ts` 的 `withInlineTools`）。原因有两个：
+ * 1. 缓存：`tools` 数组与 system prompt 一起构成请求前缀，计划开始/结束时增删工具会让
+ *    整个前缀缓存失效（见 docs/node-plan-cache-stability.md）；
+ * 2. 语义：模型该不该走规划流程，由它自己用 `propose_plan` 征求用户同意来定，
+ *    而不是靠「用户先按下按钮，工具才出现」。
+ * 没计划时误调 `submit_plan` 不会造出计划：`PlanToolbox.requirePlan()` 会直接报错。
  *
  * 工具实现只依赖 `TaskService` + 一个可注入的 `exists`（产物校验），因此可以脱离
  * Pi 会话单测（见 test/services/plan-tools.test.ts）。
@@ -33,8 +38,17 @@ function normalizeTitle(title: string): string {
   return title.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/** 计划工具名（状态机按它管理 activeTools）。 */
+/** `propose_plan`：模型主动提议进入规划模式（用户同意后才开启）。 */
+export const PROPOSE_PLAN_TOOL_NAME = 'propose_plan';
+
+/**
+ * 计划工具名。
+ * 中文说明：`agent-registry.ts` 把它们并入 SDK 的 tools 白名单（白名单＝activeTools），
+ * 所以这个数组的内容会直接影响请求里的工具数组——**增删任何一个都会让前缀缓存失效**，
+ * 因此顺序与内容都保持稳定，不要在会话生命周期里动态增删。
+ */
 export const PLAN_TOOL_NAMES = [
+  PROPOSE_PLAN_TOOL_NAME,
   'submit_plan',
   'update_plan',
   'complete_step',
@@ -61,6 +75,18 @@ const STEP_SCHEMA = Type.Object({
 const SUBMIT_PLAN_SCHEMA = Type.Object({
   title: Type.String({ minLength: 1 }),
   steps: Type.Array(STEP_SCHEMA, { minItems: 1 }),
+});
+
+const PROPOSE_PLAN_SCHEMA = Type.Object({
+  goal: Type.Optional(
+    Type.String({
+      maxLength: 200,
+      description: '这次要解决的目标（一句话）；缺省时用你刚收到的那条用户消息。',
+    }),
+  ),
+  reason: Type.Optional(
+    Type.String({ maxLength: 500, description: '为什么值得先出计划再动手（给用户看的理由）。' }),
+  ),
 });
 
 const UPDATE_PLAN_SCHEMA = Type.Object({
@@ -91,6 +117,8 @@ const BLOCK_STEP_SCHEMA = Type.Object({
 });
 
 type SubmitPlanParams = Static<typeof SUBMIT_PLAN_SCHEMA>;
+/** `propose_plan` 的参数（由会话层实现，见 `ProposePlanHandler`）。 */
+export type ProposePlanParams = Static<typeof PROPOSE_PLAN_SCHEMA>;
 type UpdatePlanParams = Static<typeof UPDATE_PLAN_SCHEMA>;
 type CompleteStepParams = Static<typeof COMPLETE_STEP_SCHEMA>;
 type BlockStepParams = Static<typeof BLOCK_STEP_SCHEMA>;
@@ -445,4 +473,45 @@ export function buildPlanTools(toolbox: PlanToolbox): ToolDefinition[] {
       },
     }),
   ];
+}
+
+/**
+ * `propose_plan` 的落地实现：由 Plan 会话注入。
+ * 中文说明：这一个工具需要「向用户提问」+「开启规划」两件事，都不属于纯任务写入的
+ * `PlanToolbox`，因此留在 model-facing 文案同文件、实现放在 `plan-mode-service.ts`。
+ * 返回的是已经面向模型的文本 + 结构化 details，服务层不需要再包一层。
+ */
+export type ProposePlanHandler = (
+  params: ProposePlanParams,
+  context: { toolCallId: string; signal?: AbortSignal },
+) => Promise<AgentToolResult<unknown>>;
+
+/**
+ * 构造 `propose_plan`：模型主动提议「先规划」，但**只有用户同意才真的开启**。
+ * 中文说明：这是「模型自己决定要不要规划」与「只有用户能确认执行」之间的桥——
+ * 提议权给模型，决定权仍在用户手里；用户同意后才进入只读规划期。
+ */
+export function buildProposePlanTool(propose: ProposePlanHandler): ToolDefinition {
+  return defineTool({
+    name: PROPOSE_PLAN_TOOL_NAME,
+    label: '提议进入规划模式',
+    description:
+      '向用户提议进入规划模式（只读调研 → 产出结构化计划 → 用户确认后再执行）。' +
+      '用户在弹窗里选「先规划」后，服务端会开启规划，并把本轮变成只读：下一步请调研，' +
+      '然后调用 submit_plan；若用户选「直接做」或超时未答，就当没有这回事，继续直接完成任务。' +
+      '适合任务较大、方向不明、改错代价高的情况；小改动或指令已经明确时不要用，直接做。',
+    promptSnippet: '向用户提议进入规划模式（用户点头才开启）',
+    promptGuidelines: [
+      '拿不准要不要规划时用 propose_plan 问用户，不要自己对着一句话的任务开工，也不要先调 submit_plan。',
+      '一次只提议一件事；用户拒绝或没答就继续直接做，不要反复提议。',
+      '已经在规划/执行中时不要调用它（直接 submit_plan / update_plan / complete_step）。',
+    ],
+    parameters: PROPOSE_PLAN_SCHEMA,
+    async execute(toolCallId, params, signal) {
+      return propose(params, {
+        toolCallId,
+        ...(signal === undefined ? {} : { signal }),
+      });
+    },
+  });
 }

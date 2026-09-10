@@ -58,7 +58,9 @@ describe('OriginalPiSessionFactory', () => {
     expect(loaderOptions?.systemPrompt).toBe('custom prompt');
     // M4：预设白名单会并入内联扩展注册的工具（SDK 的 tools 是可用工具白名单，
     // 不在名单里的工具连调用都失败 —— 计划工具必须并进去）。
+    // 顺序即请求里的工具数组顺序：跟随 PLAN_TOOL_NAMES，会话生命周期内不变（缓存前缀稳定）。
     expect(options.tools).toEqual([
+      'propose_plan',
       'submit_plan',
       'update_plan',
       'complete_step',

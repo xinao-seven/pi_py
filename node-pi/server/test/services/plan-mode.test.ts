@@ -15,7 +15,20 @@ import { derivePlanStatus, type PlanView } from '../../src/services/platform/pla
 
 const ALL_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
-function makeFakePi(active: string[] = [...ALL_TOOLS]) {
+/**
+ * 生产环境会话创建时的 activeTools：预设白名单并入内联扩展工具（`withInlineTools`）。
+ * 中文说明：计划工具从第一轮就在列表里，且整个会话生命周期不变——这是缓存前缀稳定的前提。
+ */
+const BASE_TOOLS = [
+  ...ALL_TOOLS,
+  'propose_plan',
+  'submit_plan',
+  'update_plan',
+  'complete_step',
+  'block_step',
+];
+
+function makeFakePi(active: string[] = [...BASE_TOOLS]) {
   const handlers = new Map<string, (event?: unknown, ctx?: unknown) => unknown>();
   const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
   let activeTools = [...active];
@@ -26,9 +39,10 @@ function makeFakePi(active: string[] = [...ALL_TOOLS]) {
     sendMessage: vi.fn(),
     sendUserMessage: vi.fn(),
     getActiveTools: () => [...activeTools],
-    setActiveTools: (names: string[]) => {
+    // 用 spy 包一层：下面有用例断言「整个计划生命周期里从未动过 activeTools」。
+    setActiveTools: vi.fn((names: string[]) => {
       activeTools = [...names];
-    },
+    }),
     registerTool: (tool: { name: string } & Record<string, unknown>) => {
       tools.set(tool.name, tool as never);
     },
@@ -140,29 +154,28 @@ describe('规划期只读（能力集，而不是白名单快照）', () => {
     ).toMatchObject({ block: true });
   });
 
-  it('registers the plan tools and activates them only while planning', async () => {
+  it('registers every plan tool but never touches the active set', async () => {
     const { service, pi } = makeHarness();
-    expect([...pi.tools.keys()]).toEqual([
-      'submit_plan',
-      'update_plan',
-      'complete_step',
-      'block_step',
-    ]);
-    // 普通会话里计划工具不激活（模型看不到，也就不会误造计划）。
-    expect(pi.getActiveTools()).not.toContain('submit_plan');
+    expect([...pi.tools.keys()].sort()).toEqual(
+      ['block_step', 'complete_step', 'propose_plan', 'submit_plan', 'update_plan'].sort(),
+    );
+    // 普通会话里写工具与计划工具都在（生产里由预设白名单并入）：
+    // 控制器不在「模型看不看得到工具」，而在 tool_call 拦截（缓存前缀稳定）。
+    expect(pi.getActiveTools()).toEqual(
+      expect.arrayContaining(['propose_plan', 'submit_plan', 'edit', 'write']),
+    );
 
     service.startPlanning('session-1', '重构 Plan 模式');
     expect(pi.getActiveTools()).toEqual(
       expect.arrayContaining(['submit_plan', 'update_plan', 'complete_step', 'block_step']),
     );
-    expect(pi.getActiveTools()).not.toContain('edit');
-    expect(pi.getActiveTools()).not.toContain('write');
+    // 写工具仍在列表里，但规划期调用会被拦（「规划期只读」用例覆盖）。
+    expect(pi.setActiveTools).not.toHaveBeenCalled();
 
-    // 执行期：写工具回来，计划工具仍在。
-    await service.command('session-1', 'execute').catch(() => undefined); // 还没有步骤 → 409
     await pi.callTool('submit_plan', { title: 'T', steps: [{ title: 'a' }] });
     await service.command('session-1', 'execute');
     expect(pi.getActiveTools()).toEqual(expect.arrayContaining(['edit', 'write', 'complete_step']));
+    expect(pi.setActiveTools).not.toHaveBeenCalled();
   });
 });
 
@@ -226,6 +239,134 @@ describe('计划上下文注入', () => {
       }),
     ).toBeUndefined();
   });
+
+  it('does not re-inject an identical context (prefix cache stays valid)', async () => {
+    const { service, pi } = makeHarness();
+    service.startPlanning('session-1', 'P');
+    const beforeAgentStart = pi.handlers.get('before_agent_start')! as (
+      event?: unknown,
+      ctx?: unknown,
+    ) => { message: { content: string } } | undefined;
+
+    const first = beforeAgentStart({ prompt: '调研一下' }, sessionContext());
+    expect(first?.message.content).toContain('[PLAN MODE ACTIVE]');
+    const injected = first!.message.content;
+
+    // 历史里已经有同内容的注入 → 本轮不再写一条（否则旧的要删、历史每轮被改写＝缓存全 miss）。
+    const replay = sessionContext([
+      { type: 'message', message: { role: 'user', content: '调研一下' } },
+      { type: 'custom_message', customType: 'web-plan-context', content: injected },
+    ]);
+    expect(beforeAgentStart({ prompt: '继续' }, replay)).toBeUndefined();
+
+    // 内容真的变了（提交计划后 revision/状态都变了）→ 重新注入一条。
+    await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
+    const second = beforeAgentStart({ prompt: '再看看' }, replay);
+    expect(second?.message.content).not.toBe(injected);
+  });
+});
+
+describe('propose_plan（模型提议、用户拍板）', () => {
+  /** 假提问通道：只关心「用户怎么答」和「有没有被问到」。 */
+  function makeBroker(reply: 'accept' | 'decline' | 'silent' | 'throw') {
+    const calls: Array<{ sessionId: string; questions: Array<{ id: string }> }> = [];
+    return {
+      calls,
+      async ask(input: { sessionId: string; questions: unknown[] }) {
+        calls.push(input as never);
+        if (reply === 'throw') throw new Error('已经有一个待回答的问题');
+        const answered = reply === 'accept' || reply === 'decline';
+        return {
+          outcome: {
+            answered,
+            reason: answered ? ('user' as const) : ('timeout' as const),
+            answers: answered
+              ? [
+                  {
+                    id: 'plan-mode',
+                    selected: [reply === 'accept' ? '先规划' : '直接做'],
+                  },
+                ]
+              : [],
+          },
+        };
+      },
+    };
+  }
+
+  function callPropose(
+    pi: ReturnType<typeof makeFakePi>,
+    params: Record<string, unknown> = {},
+  ): Promise<{ content: Array<{ text: string }>; details: Record<string, unknown> }> {
+    return pi.callTool('propose_plan', params) as never;
+  }
+
+  it('opens planning only after the user agrees', async () => {
+    const { service, pi } = makeHarness();
+    const broker = makeBroker('accept');
+    service.setQuestionBroker(broker);
+
+    const result = await callPropose(pi, { goal: '把 Plan 的缓存问题修好', reason: '改动面大' });
+    expect(broker.calls).toHaveLength(1);
+    expect(broker.calls[0].questions[0].id).toBe('plan-mode');
+    expect(result.details).toMatchObject({ status: 'accepted' });
+    // 工具结果里直接带上规划期说明，模型本轮就知道下一步该干什么。
+    expect(result.content[0].text).toContain('[PLAN MODE ACTIVE]');
+    expect(result.content[0].text).toContain('submit_plan');
+    // 计划真的建起来了，且处在只读规划期。
+    expect(service.view('session-1')).toMatchObject({ status: 'drafting' });
+    await expect(pi.callTool('submit_plan', {})).rejects.toThrow();
+    expect(
+      pi.handlers.get('tool_call')!({ toolName: 'edit', toolCallId: 'c1', input: {} }),
+    ).toMatchObject({ block: true });
+  });
+
+  it('falls back to the last user message as the plan goal', async () => {
+    const { service, pi } = makeHarness();
+    service.setQuestionBroker(makeBroker('accept'));
+    pi.handlers.get('before_agent_start')!({ prompt: '把 MCP 配置改成两层合并' });
+    await callPropose(pi);
+    expect(service.view('session-1').title).toContain('MCP 配置');
+  });
+
+  it('treats decline and no-answer as “do not plan”', async () => {
+    for (const [reply, expected] of [
+      ['decline', '直接做'],
+      ['silent', '没有回答'],
+    ] as const) {
+      const { service, pi } = makeHarness();
+      service.setQuestionBroker(makeBroker(reply));
+      const result = await callPropose(pi, { goal: 'G' });
+      expect(result.details).toMatchObject({ status: 'declined' });
+      expect(result.content[0].text).toContain(expected);
+      // 关键：没有建计划，也就没有偷偷进入只读态。
+      expect(service.view('session-1').planId).toBe('');
+      expect(
+        pi.handlers.get('tool_call')!({ toolName: 'edit', toolCallId: 'c1', input: {} }),
+      ).toBeUndefined();
+    }
+  });
+
+  it('refuses to propose while a plan is already running', async () => {
+    const { service, pi } = makeHarness();
+    service.setQuestionBroker(makeBroker('accept'));
+    service.startPlanning('session-1', 'P');
+    await expect(callPropose(pi)).rejects.toThrow(/已经有计划/);
+  });
+
+  it('degrades gracefully without the question channel', async () => {
+    const { service, pi } = makeHarness();
+    const result = await callPropose(pi, { goal: 'G' });
+    expect(result.details).toMatchObject({ status: 'unavailable' });
+    expect(result.content[0].text).toContain('提问通道不可用');
+
+    // 通道报错（比如已有挂起提问）也不能把工具变成错误。
+    const { service: second, pi: pi2 } = makeHarness();
+    second.setQuestionBroker(makeBroker('throw'));
+    const failed = await callPropose(pi2, { goal: 'G' });
+    expect(failed.details).toMatchObject({ status: 'unavailable' });
+    expect(failed.content[0].text).toContain('提议失败');
+  });
 });
 
 describe('计划生命周期（命令驱动，零文本解析）', () => {
@@ -276,7 +417,7 @@ describe('计划生命周期（命令驱动，零文本解析）', () => {
     expect(started).toHaveLength(2);
   });
 
-  it('abandon cancels the task but keeps the record and restores tools', async () => {
+  it('abandon cancels the task but keeps the record', async () => {
     const { service, tasks, pi } = makeHarness();
     service.startPlanning('session-1', 'P');
     await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
@@ -284,9 +425,8 @@ describe('计划生命周期（命令驱动，零文本解析）', () => {
     const view = service.view('session-1');
     expect(view.status).toBe('abandoned');
     expect(tasks.get(view.taskId).status).toBe('cancelled');
-    // 放弃后计划工具收回、写工具恢复（只撤销自己的差集）。
-    expect(pi.getActiveTools()).not.toContain('submit_plan');
-    expect(pi.getActiveTools()).toEqual(expect.arrayContaining(['edit', 'write']));
+    // 放弃后计划工具不收回（工具集恒定），写工具本来就在。
+    expect(pi.getActiveTools()).toEqual(expect.arrayContaining(['submit_plan', 'edit', 'write']));
   });
 
   it('rejects execute/refine when there is nothing to work with', async () => {
@@ -326,41 +466,43 @@ describe('计划生命周期（命令驱动，零文本解析）', () => {
   });
 });
 
-describe('工具差集恢复（P6）', () => {
-  it('restores only its own delta, keeping user changes during the plan', async () => {
+describe('工具集恒定（缓存前缀稳定）', () => {
+  it('never touches activeTools during the whole plan lifecycle', async () => {
     const { service, pi } = makeHarness();
+    const before = pi.getActiveTools();
+    // 计划工具与写工具从第一轮就都在（生产里由预设白名单并入）。
+    expect(before).toEqual(expect.arrayContaining(['propose_plan', 'submit_plan', 'edit', 'write']));
+
     service.startPlanning('session-1', 'P');
-    // 规划期间用户手动关掉 grep（模拟 set_tools），并打开了一个计划期没碰过的工具。
-    pi.setActiveTools([...pi.getActiveTools().filter((name) => name !== 'grep'), 'find']);
-    await service.command('session-1', 'abandon');
-    const active = pi.getActiveTools();
-    expect(active).not.toContain('grep'); // 用户的改动被保留
-    expect(active).toEqual(expect.arrayContaining(['edit', 'write', 'find']));
-    expect(active).not.toContain('submit_plan');
+    expect(pi.getActiveTools()).toEqual(before);
+    await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
+    await service.command('session-1', 'execute');
+    expect(pi.getActiveTools()).toEqual(before);
+    await pi.callTool('complete_step', { stepId: 's1', evidence: { summary: '做完了' } });
+    expect(pi.getActiveTools()).toEqual(before);
+
+    // 新一个计划周期同样不动列表。
+    service.startPlanning('session-1', 'P2');
+    expect(pi.getActiveTools()).toEqual(before);
+    // 关键断言：一次 setActiveTools 都没调过（工具数组变了＝前缀缓存当场失效）。
+    expect(pi.setActiveTools).not.toHaveBeenCalled();
   });
 
-  it('keeps the exact tool set (plan tools on, write tools off) while planning', () => {
+  it('leaves user tool changes alone (set_tools during a plan is not swallowed)', async () => {
     const { service, pi } = makeHarness();
-    expect(pi.getActiveTools()).toEqual(ALL_TOOLS);
     service.startPlanning('session-1', 'P');
-    expect([...pi.getActiveTools()].sort()).toEqual(
-      [
-        'read',
-        'bash',
-        'grep',
-        'find',
-        'ls',
-        'submit_plan',
-        'update_plan',
-        'complete_step',
-        'block_step',
-      ].sort(),
-    );
+    // 规划期间用户手动关掉 grep（模拟 set_tools）。
+    pi.setActiveTools(pi.getActiveTools().filter((name) => name !== 'grep'));
+    const userChoice = pi.getActiveTools();
+    await service.command('session-1', 'abandon');
+    // 服务端从不插手：用户的改动一字未动。
+    expect(pi.getActiveTools()).toEqual(userChoice);
+    expect(pi.getActiveTools()).not.toContain('grep');
   });
 });
 
-describe('计划结束时收回计划工具', () => {
-  it('withdraws the plan tools once the plan completes (no lingering submit_plan)', async () => {
+describe('计划结束不收回计划工具（缓存前缀稳定）', () => {
+  it('keeps the plan tools registered and active once the plan completes', async () => {
     const { service, pi } = makeHarness();
     service.startPlanning('session-1', 'P');
     await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
@@ -368,10 +510,10 @@ describe('计划结束时收回计划工具', () => {
     expect(pi.getActiveTools()).toContain('complete_step');
 
     await pi.callTool('complete_step', { stepId: 's1', evidence: { summary: '做完了' } });
-    // 全部步骤完成后计划终态：计划工具收回，写工具保留。
-    expect(pi.getActiveTools()).not.toContain('complete_step');
-    expect(pi.getActiveTools()).not.toContain('submit_plan');
-    expect(pi.getActiveTools()).toEqual(expect.arrayContaining(['edit', 'write', 'read']));
+    // 全部步骤完成后计划终态：工具集**不变**（以前的实现会把计划工具收回）。
+    expect(pi.getActiveTools()).toEqual(
+      expect.arrayContaining(['complete_step', 'submit_plan', 'edit', 'write', 'read']),
+    );
   });
 });
 
@@ -411,7 +553,8 @@ describe('重启后接管（P8）', () => {
     second.buildExtension()(pi2 as never);
     pi2.handlers.get('session_start')!({}, sessionContext());
     expect(second.view('session-1').status).toBe('proposed');
-    expect(pi2.getActiveTools()).not.toContain('edit');
+    // 接管一个待确认的计划也不会动工具集（以前这里会关掉 edit）。
+    expect(pi2.getActiveTools()).toEqual(expect.arrayContaining(['edit', 'submit_plan']));
   });
 
   it('returns an empty view for sessions without plans (even without an active machine)', () => {

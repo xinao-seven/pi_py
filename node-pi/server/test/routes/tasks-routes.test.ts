@@ -603,6 +603,8 @@ describe('plan routes（M4）', () => {
       setTraceSink: () => undefined,
       setTaskService: () => undefined,
       setExecutor: () => undefined,
+      // propose_plan（模型提议）需要提问通道：这里只需满足装配，行为在 plan-mode.test.ts 覆盖。
+      setQuestionBroker: () => undefined,
       refresh: () => undefined,
       remove: () => undefined,
       dispose: () => undefined,

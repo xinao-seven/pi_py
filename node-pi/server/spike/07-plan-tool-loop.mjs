@@ -17,6 +17,8 @@ function check(label, condition, detail = '') {
 // 预设白名单（SDK 的 tools 是可用工具白名单，harness 会并入内联扩展的工具名）。
 const h = await startHarness({ toolNames: ['read', 'write', 'edit', 'bash'] });
 const { session, sessionId, plans, tasks, faux, seen, waitForSettle } = h;
+// 会话创建时的工具列表：后面要断言「整个计划生命周期一字未变」（缓存前缀稳定）。
+const activeBeforePlan = session.getActiveToolNames?.() ?? [];
 
 // ── ① 规划：模型只调用 submit_plan，不写任何标记 ────────────────────────────
 console.log('=== ① 规划期：submit_plan（模型零标记）===');
@@ -54,6 +56,12 @@ check('计划就是 origin=plan 的任务', task.origin === 'plan' && task.sessi
 check(
   '规划期写操作被拦住（模型这轮没有写文件）',
   !seen.toolResults.some((result) => result.toolName === 'write' || result.toolName === 'edit'),
+);
+check(
+  '规划期工具列表没变（不因开关计划而失效缓存）',
+  JSON.stringify([...session.getActiveToolNames?.() ?? []].sort()) ===
+    JSON.stringify([...activeBeforePlan].sort()),
+  session.getActiveToolNames?.().join(','),
 );
 
 // ── ② 确认执行：服务端校验状态并取租约 ─────────────────────────────────────
@@ -100,8 +108,7 @@ check(
   '执行期写工具已放行',
   activeDuringExecution.includes('edit') && activeDuringExecution.includes('write'),
   activeDuringExecution.join(','),
-);
-check(
+);check(
   '执行器取得租约（防双跑）',
   tasks.get(plan.taskId).execution.lease !== undefined,
   `owner=${tasks.get(plan.taskId).execution.lease?.owner}`,
@@ -155,12 +162,14 @@ check(
     !seen.assistantText.some((text) => /\[DONE:\d+\]/i.test(text)),
 );
 
-// ── ④ 计划结束后收回计划工具 ───────────────────────────────────────────────
-console.log('\n=== ④ 计划结束后收回计划工具 ===');
+// ── ④ 计划结束后：工具集一字不变（缓存前缀稳定）────────────────────────────
+// 旧实现在这里「收回计划工具」，代价是请求最前面的 tools 数组＋system prompt 变化，
+// 整段前缀缓存当场失效。现在工具集在会话生命周期内恒定，规划期只读靠 tool_call 拦截。
+console.log('\n=== ④ 计划结束后工具集不变（缓存前缀稳定）===');
 const activeAfter = session.getActiveToolNames?.() ?? [];
 check(
-  '计划完成后不再挂计划工具（不留「随时新建计划」的入口）',
-  !activeAfter.includes('submit_plan') && !activeAfter.includes('complete_step'),
+  '计划完成后计划工具仍在列表（不再增删工具，避免前缀缓存失效）',
+  activeAfter.includes('submit_plan') && activeAfter.includes('complete_step'),
   activeAfter.join(','),
 );
 check(
@@ -175,23 +184,73 @@ check(
   activeAfter.join(','),
 );
 
-// ── ⑤ 放弃计划：记录保留、工具差集撤销 ─────────────────────────────────────
+// ── ⑤ 放弃计划：记录保留、工具集不变 ─────────────────────────────────────
 console.log('\n=== ⑤ 放弃计划：记录保留（可查）===');
 const second = plans.startPlanning(sessionId, '再规划一个后续计划');
 const activeDuring = session.getActiveToolNames?.() ?? [];
-check('新计划进入规划期：写工具被关掉', !activeDuring.includes('edit'), activeDuring.join(','));
+check(
+  '新计划进入规划期：工具集不变（写工具仍在列表，调用时被拦）',
+  activeDuring.includes('edit') && activeDuring.includes('submit_plan'),
+  activeDuring.join(','),
+);
+// 规划期真的写不了：tool_call 拦截（这才是只读的兑现点）。
+check(
+  '规划期写操作被拦截（edit 的 tool_call 被 block）',
+  plans.session(sessionId)?.onToolCall({ toolName: 'edit', toolCallId: 'spike-1', input: {} })
+    ?.block === true,
+);
 await plans.command(sessionId, 'abandon');
 check('放弃后任务仍是可查的记录（cancelled）', tasks.get(second.taskId).status === 'cancelled');
 const activeAfterAbandon = session.getActiveToolNames?.() ?? [];
 check(
-  '放弃后写工具恢复、计划工具收回',
-  activeAfterAbandon.includes('edit') && !activeAfterAbandon.includes('submit_plan'),
-  activeAfterAbandon.join(','),
+  '放弃后工具集与规划前完全一致（没有任何增删）',
+  JSON.stringify([...activeAfterAbandon].sort()) === JSON.stringify([...activeBeforePlan].sort()),
+  `before=${activeBeforePlan.join(',')} after=${activeAfterAbandon.join(',')}`,
 );
 check(
   '放弃后 ask_user 仍在（它不属于计划）',
   activeAfterAbandon.includes('ask_user'),
   activeAfterAbandon.join(','),
+);
+
+// ── ⑥ propose_plan：模型提议、用户拍板 ───────────────────────────────────
+// 真实运行时里的关键风险点：工具要能挂起等用户回答（走提问通道），回答后真开启规划，
+// 而且即使工具列表不变，规划期的写操作依然写不进去（拦在 tool_call）。
+console.log('\n=== ⑥ propose_plan：模型提议 → 用户同意 → 只读规划期 ===');
+faux.setResponses([
+  fauxAssistantMessage(
+    [fauxToolCall('propose_plan', { goal: '把缓存前缀失效的问题修掉', reason: '改动面大' })],
+    { stopReason: 'toolUse' },
+  ),
+  fauxAssistantMessage('好，我先把方案理清楚。'),
+]);
+const prompted = session.prompt('这个改动挺大，要不要先规划？');
+// 工具挂起等回答：轮询到挂起项后，模拟用户在弹窗里选「先规划」。
+const pendingQuestion = await (async () => {
+  const started = Date.now();
+  while (Date.now() - started < 10_000) {
+    const found = h.questions.pendingForSession(sessionId);
+    if (found !== undefined) return found;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('propose_plan 没有挂起提问（提问通道未接到）');
+})();
+check('propose_plan 挂起并推出一条待回答提问', pendingQuestion.questions[0]?.id === 'plan-mode');
+h.questions.answer(sessionId, pendingQuestion.questionId, {
+  answers: [{ id: 'plan-mode', selected: ['先规划'] }],
+});
+await prompted;
+const proposed = plans.state(sessionId);
+check('用户同意后真的开了计划（drafting）', proposed.status === 'drafting', `status=${proposed.status}`);
+check(
+  '计划目标来自工具参数',
+  proposed.goal === '把缓存前缀失效的问题修掉',
+  `goal=${proposed.goal}`,
+);
+check(
+  '提议后进入只读：edit 依然被拦（工具没从列表里拿掉也写不进去）',
+  plans.session(sessionId)?.onToolCall({ toolName: 'edit', toolCallId: 'spike-2', input: {} })
+    ?.block === true,
 );
 
 await h.cleanup();

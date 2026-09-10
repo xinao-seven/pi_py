@@ -158,6 +158,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const plans = options.planService ?? new PlanModeService({ logger: app.log });
   // 向用户提问的通道（M4.1）：与审批并列的第二条人机交互通道，默认启用。
   const questions = options.questionBroker ?? new QuestionBroker();
+  // propose_plan（模型主动提议进入规划）复用它向用户征求意见：用户点头才开启规划。
+  plans.setQuestionBroker(questions);
 
   const agentDir =
     options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? '.'}/.pi/agent`;

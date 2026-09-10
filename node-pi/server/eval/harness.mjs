@@ -58,6 +58,8 @@ export async function startHarness(options = {}) {
   const tasks = new TaskService(new MemoryTaskRepository());
   const plans = new PlanModeService();
   plans.setTaskService(tasks);
+  // propose_plan（模型提议进入规划）走提问通道征求用户同意：与 app.ts 同构地注入。
+  plans.setQuestionBroker(questions);
   plans.setListener(() => undefined);
   const owner = options.owner ?? 'eval-owner';
   const recovery = new TaskRecoveryService(tasks, { owner });

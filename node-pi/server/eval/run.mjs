@@ -463,6 +463,50 @@ const CASES = [
       };
     },
   },
+  {
+    id: 'propose-plan-accepted',
+    title: '模型提议规划：用户点头 → 服务端开启只读规划期 → 模型提交计划',
+    // 不走「评测器预先 startPlanning」：本例要验证的就是**模型自己提议**这条路。
+    mode: 'direct',
+    script: () => [
+      fauxAssistantMessage(
+        [fauxToolCall('propose_plan', { goal: '重构 Plan 的缓存策略', reason: '改动面大' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall('submit_plan', { title: '重构 Plan 的缓存策略', steps: [{ title: '一步就够' }] })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('计划已提交，等你确认。'),
+    ],
+    /** propose_plan 在首轮就挂起：像前端那样轮询到挂起问题并选「先规划」。 */
+    async whilePrompt(context) {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        const pending = context.harness.questions.pendingForSession(context.sessionId);
+        if (pending !== undefined) {
+          context.harness.questions.answer(context.sessionId, pending.questionId, {
+            answers: [{ id: pending.questions[0].id, selected: ['先规划'] }],
+          });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error('propose_plan 没有按预期挂起');
+    },
+    async expect(context) {
+      const plan = context.plans.state(context.sessionId);
+      const writeBlocked =
+        context.plans.session(context.sessionId)?.onToolCall({
+          toolName: 'edit',
+          toolCallId: 'eval-probe',
+          input: {},
+        })?.block === true;
+      return {
+        pass: plan.status === 'proposed' && plan.goal === '重构 Plan 的缓存策略' && writeBlocked,
+        detail: `plan=${plan.status} goal=${plan.goal} readOnly=${writeBlocked}`,
+      };
+    },
+  },
 ];
 
 async function runCase(definition) {
@@ -480,7 +524,11 @@ async function runCase(definition) {
     if (!direct) harness.plans.startPlanning(harness.sessionId, `${definition.title}`);
     if (definition.setup !== undefined) definition.setup(harness);
     harness.faux.setResponses(direct ? definition.script() : definition.script(definition.steps));
-    await harness.session.prompt(definition.title);
+    // whilePrompt：与**首轮 prompt** 并发的动作（例如模型自己提议规划时，首轮就会挂起等用户回答）。
+    const prompting = harness.session.prompt(definition.title);
+    const promptHook = definition.whilePrompt?.(context);
+    await prompting;
+    await promptHook;
     await harness.waitForSettle();
 
     // 提交计划后统一走「用户确认执行」——这正是 golden set 要覆盖的主路径。

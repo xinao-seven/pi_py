@@ -8,14 +8,25 @@
  * 2. **不再自己存状态**：计划的真相源是任务（`execution.plan` + 步骤），本模块只在内存里
  *    记住「哪个任务 id、加/删过哪些工具」。会话重新打开时从库里**采纳**未结束的计划
  *    （`activePlanForSession`），因此服务重启后计划依然在（P8），JSONL 里只留一条引用指针（P5）。
- * 3. **权限用能力集而非快照**：规划期按 `PlanPolicy` 分类放行（只读 + 验证类命令），
- *    退出时只**撤销自己造成的差集**，不写回旧快照——用户规划期间的改动不会被吞掉（P6）。
+ * 3. **权限用能力集而非快照**：规划期按 `PlanPolicy` 分类放行（只读 + 验证类命令）。
+ *    拦截点是 `tool_call`（`evaluateToolCall`）——**不再动 activeTools**。
  *
- * 状态机的迁移条件全部来自用户动作（确认/暂停/放弃）或服务端校验（工具参数与证据），
- * 没有一条依赖模型「写了什么标记」。这是 M4 的核心承诺。
+ * 关于「不再动 activeTools」（缓存稳定性，见 `docs/node-plan-cache-stability.md`）：
+ * `tools` 数组与 system prompt 一起位于请求最前面，计划开始/结束时增删工具（以前的
+ * 「加计划工具 / 关写工具 / 退出时收回」）会让整个前缀缓存当场失效。现在工具集在整个
+ * 会话生命周期内恒定（由创建时的预设白名单决定），规划期只读完全由 `tool_call` 拦截兑现。
+ * 代价是模型在规划期可能试一次写工具被拦，这是刻意选的：缓存失效比一次被拦的调用贵得多。
+ *
+ * 状态机的迁移条件全部来自用户动作（确认/暂停/放弃）、模型提议（`propose_plan` 的
+ * 用户答复）或服务端校验（工具参数与证据），没有一条依赖模型「写了什么标记」。
  */
 
-import type { ContextEvent, ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
+import type {
+  AgentToolResult,
+  ContextEvent,
+  ExtensionAPI,
+  InlineExtension,
+} from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../errors.js';
 import type { ServiceLogger } from './service-logger.js';
@@ -26,7 +37,13 @@ import {
   toPlanView,
   type PlanView,
 } from './platform/plan-model.js';
-import { buildPlanTools, PLAN_TOOL_NAMES, PlanToolbox } from './plan-tools.js';
+import {
+  buildPlanTools,
+  buildProposePlanTool,
+  PlanToolbox,
+  type ProposePlanParams,
+} from './plan-tools.js';
+import type { QuestionOutcome, QuestionSpec } from './user-question.js';
 import { DEFAULT_PLAN_POLICY, evaluatePlanBash, type PlanPolicy } from './plan-policy.js';
 import { SUBAGENT_TOOL_NAME } from './subagent-tools.js';
 import type { TaskRecord } from './platform/task-model.js';
@@ -79,6 +96,16 @@ function customTypeOf(message: unknown): string | undefined {
   return typeof customType === 'string' ? customType : undefined;
 }
 
+/** 错误消息归一化：不把堆栈/原始对象塞给模型。 */
+function messageOf(error: Error | unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** `propose_plan` 的结果封装（与 plan-tools 的 textResult 同形，避免跨文件依赖实现细节）。 */
+function planToolResult(text: string, details: Record<string, unknown>): AgentToolResult<unknown> {
+  return { content: [{ type: 'text' as const, text }], details };
+}
+
 interface SessionContext {
   cwd?: string;
   sessionManager: {
@@ -87,14 +114,31 @@ interface SessionContext {
   };
 }
 
-/** 一个会话的计划状态机：持有工具差集，状态从任务派生。 */
+/**
+ * 提问通道的最小接口（由 `QuestionBroker` 实现）。
+ * 中文说明：只依赖 `ask()`，不把整个 broker 拉进依赖图，测试里给个假实现就能覆盖
+ * 「用户同意 / 拒绝 / 不回答」三条分支。
+ */
+export interface PlanQuestionBroker {
+  ask(input: {
+    sessionId: string;
+    toolCallId: string;
+    questions: QuestionSpec[];
+    signal?: AbortSignal;
+  }): Promise<{ outcome: QuestionOutcome }>;
+}
+
+/** `propose_plan` 问题里「同意先规划」的选项文案（与工具实现共用）。 */
+export const PROPOSE_PLAN_OPTION = '先规划';
+const PROPOSE_PLAN_DECLINE_OPTION = '直接做';
+
+/** 一个会话的计划状态机：持有当前计划，权限完全由 `tool_call` 拦截实现。 */
 class PlanSession {
   private sessionIdValue = '';
   private cwd: string | undefined;
   private planTaskId: string | undefined;
-  /** 我们打开的工具（退出时关掉）与关掉的工具（退出时打开）——只撤销自己的差集。 */
-  private toolsAdded: string[] = [];
-  private toolsDisabled: string[] = [];
+  /** 最近一条用户消息（`propose_plan` 没用 goal 时的计划目标）。 */
+  private lastPrompt = '';
 
   constructor(
     private readonly pi: ExtensionAPI,
@@ -103,9 +147,14 @@ class PlanSession {
     private readonly tasks: TaskService,
   ) {}
 
-  /** 计划工具（工厂期注册；只有计划会话才把它们放进 activeTools）。 */
+  /**
+   * 计划工具（工厂期注册）。
+   * 中文说明：只在工厂期注册一次；**不在会话生命周期里动 activeTools**（缓存稳定性）。
+   * `propose_plan` 需要提问通道与状态机，所以它的实现留在本类，文案在 `plan-tools.ts`。
+   */
   registerTools(): void {
     for (const tool of buildPlanTools(this.toolbox)) this.pi.registerTool(tool);
+    this.pi.registerTool(buildProposePlanTool((params, context) => this.proposePlan(params, context)));
   }
 
   /** session_start：绑定会话、采纳未结束的计划、按状态恢复权限并广播视图。 */
@@ -152,7 +201,7 @@ class PlanSession {
   }
 
   /**
-   * 开始规划（`mode: 'plan'` 的首条消息，或 `plan_start`）。
+   * 开始规划（`mode: 'plan'` 的首条消息、`plan_start` 或 `propose_plan` 被用户接受）。
    * 已有未结束的计划时**采纳而不是新建**——用户多半想改计划，而不是丢掉它。
    */
   startPlanning(message: string): PlanView {
@@ -162,7 +211,6 @@ class PlanSession {
       if (status === 'paused' || status === 'proposed' || status === 'drafting') {
         // 回到草稿：允许 submit_plan 整体替换；已提出的澄清问题保留给模型参考。
         this.tasks.setPlanState(existing.id, { status: 'drafting' });
-        this.applyPlanTools('planning');
         this.publish();
         return this.view();
       }
@@ -174,41 +222,32 @@ class PlanSession {
       ...(this.cwd === undefined ? {} : { cwd: this.cwd }),
     });
     this.bindPlan(task);
-    this.applyPlanTools('planning');
     this.appendRef(task);
     this.publish();
     return this.view();
   }
 
-  /** 采纳/切换当前计划：绑定工具箱与权限。 */
+  /** 采纳/切换当前计划：绑定工具箱。 */
   bindPlan(task: TaskRecord | undefined): void {
     this.planTaskId = task?.id;
     this.toolbox.bind(task?.id);
-    if (task === undefined) {
-      this.restorePlanTools();
-      return;
-    }
-    const status = derivePlanStatus(task);
-    this.applyPlanTools(status === 'executing' ? 'executing' : 'planning');
-    if (status === 'completed' || status === 'abandoned') this.restorePlanTools();
   }
 
-  /** 进入执行态：恢复被拦的工具，保留计划工具。 */
+  /** 进入执行态：广播新状态（工具集不变，规划期的拦截自动失效）。 */
   enterExecution(): void {
-    this.applyPlanTools('executing');
     this.publish();
   }
 
-  /** 计划结束（完成/放弃）：撤销工具差集。 */
+  /** 计划结束（完成/放弃）：广播新状态。 */
   exitPlan(): void {
-    this.restorePlanTools();
     this.publish();
   }
 
   /**
    * tool_call：规划期按能力集拦截。
-   * 中文说明：这是「权限」的最终约束点——即使某个工具还在 activeTools 里
-   * （例如用户手动打开过），规划期的写操作依然会被这里拦下。
+   * 中文说明：这是规划期只读的**唯一约束点**。工具不再从 activeTools 里移除（缓存稳定性），
+   * 所以「模型看得到 write/edit」是常态——能不能真的执行完全由这里决定，
+   * 理由文本会作为工具错误回到模型，让它改用只读方式或等用户确认。
    */
   onToolCall(event: {
     toolName: string;
@@ -292,41 +331,138 @@ class PlanSession {
     return filtered.length === event.messages.length ? undefined : { messages: filtered };
   }
 
-  /** before_agent_start：注入当前计划上下文（隐藏消息，模型可见、界面不显示）。 */
-  beforeAgentStart():
-    { message: { customType: string; content: string; display: boolean } } | undefined {
+  /**
+   * before_agent_start：把当前计划上下文注入为一条隐藏消息。
+   * 中文说明（缓存）：内容与历史里最后一条同类型注入完全相同时**不重复注入**。
+   * 旧实现每轮都注入一条新的、再由 `onContext` 把旧的全删掉，等价于从「第一次注入的位置」
+   * 往后每轮都改写历史——前缀缓存从那里开始就全部失效（plan 越久越贵）。
+   * 现在只在内容真的变了（状态跃迁、rev 变化）时才写，其余轮次历史一字不动。
+   */
+  beforeAgentStart(
+    event?: { prompt?: string },
+    ctx?: SessionContext,
+  ): { message: { customType: string; content: string; display: boolean } } | undefined {
+    if (typeof event?.prompt === 'string' && event.prompt.trim()) this.lastPrompt = event.prompt;
     const task = this.current();
     if (task === undefined) return undefined;
-    if (this.isPlanning())
-      return {
-        message: {
-          customType: PLANNING_CONTEXT_TYPE,
-          display: false,
-          content: buildPlanningContext(task, this.service.policy),
-        },
-      };
-    if (this.isExecuting())
-      return {
-        message: {
-          customType: EXECUTING_CONTEXT_TYPE,
-          display: false,
-          content: buildExecutingContext(task),
-        },
-      };
+    const customType = this.isPlanning()
+      ? PLANNING_CONTEXT_TYPE
+      : this.isExecuting()
+        ? EXECUTING_CONTEXT_TYPE
+        : undefined;
+    if (customType === undefined) return undefined;
+    const content =
+      customType === PLANNING_CONTEXT_TYPE
+        ? buildPlanningContext(task, this.service.policy)
+        : buildExecutingContext(task);
+    if (this.lastInjectedContent(ctx, customType) === content) return undefined;
+    return { message: { customType, content, display: false } };
+  }
+
+  /** 历史里最后一条同类注入的正文（用于去抖；拿不到历史时返回 undefined＝照旧注入）。 */
+  private lastInjectedContent(ctx: SessionContext | undefined, customType: string): string | undefined {
+    let entries: unknown[];
+    try {
+      entries = ctx?.sessionManager.getEntries() ?? [];
+    } catch {
+      return undefined;
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index] as { type?: unknown; customType?: unknown; content?: unknown };
+      if (entry?.type !== 'custom_message' || entry.customType !== customType) continue;
+      return typeof entry.content === 'string' ? entry.content : undefined;
+    }
     return undefined;
   }
 
   /**
+   * `propose_plan`：问用户「要不要先进规划」，用户同意后才真的开启。
+   * 中文说明：提议权交给模型、决定权留在用户——这是「模型自己判断要不要规划」与
+   * 「只有用户能确认执行」之间的最小交叉点，不需要任何新的 SSE / 前端契约。
+   */
+  private async proposePlan(
+    params: ProposePlanParams,
+    context: { toolCallId: string; signal?: AbortSignal },
+  ): Promise<AgentToolResult<unknown>> {
+    const task = this.current();
+    const status = this.status();
+    if (task !== undefined && status !== 'completed' && status !== 'abandoned') {
+      throw new Error(
+        `当前会话已经有计划（状态 ${status}），不需要再提议：` +
+          '直接用 submit_plan / update_plan / complete_step 推进它。',
+      );
+    }
+    const goal = params.goal?.trim() || this.lastPrompt.trim() || '用户同意进入规划模式';
+    const questions: QuestionSpec[] = [
+      {
+        id: 'plan-mode',
+        question: `要不要先进入规划模式？（只读调研 → 出计划 → 你确认后再动手）：${goal}`,
+        options: [PROPOSE_PLAN_OPTION, PROPOSE_PLAN_DECLINE_OPTION],
+        ...(params.reason === undefined || !params.reason.trim()
+          ? {}
+          : { details: `理由：${params.reason.trim()}` }),
+      },
+    ];
+    let outcome: QuestionOutcome;
+    try {
+      // 提问是通用通道：未接入（未注入 broker）时降级为「提议不了」，而不是把工具弄成错误。
+      const broker = this.service.questionBroker;
+      if (broker === undefined) {
+        return planToolResult(
+          '提问通道不可用，无法征求用户意见：请让用户手动开启规划模式（发送消息时选「先规划」），' +
+            '在此之前直接按当前要求推进任务。',
+          { status: 'unavailable', goal },
+        );
+      }
+      outcome = (
+        await broker.ask({
+          sessionId: this.sessionId,
+          toolCallId: context.toolCallId,
+          questions,
+          ...(context.signal === undefined ? {} : { signal: context.signal }),
+        })
+      ).outcome;
+    } catch (error) {
+      return planToolResult(`提议失败：${messageOf(error as Error)}。请直接完成任务或等用户手动开启。`, {
+        status: 'unavailable',
+        goal,
+      });
+    }
+
+    const agreed =
+      outcome.answered &&
+      (outcome.answers[0]?.selected ?? []).some((item) => item === PROPOSE_PLAN_OPTION);
+    if (!agreed) {
+      const why =
+        outcome.answered
+          ? '用户选择先直接做'
+          : `用户没有回答（${outcome.reason}），按「不规划」处理`;
+      return planToolResult(
+        `${why}：继续直接完成任务，不要再调用计划工具，也不要反复提议。`,
+        { status: 'declined', reason: outcome.reason, goal },
+      );
+    }
+
+    const started = this.startPlanning(goal);
+    const planTask = this.current();
+    return planToolResult(
+      '用户同意先规划：本轮已进入**只读规划期**。调研清楚后用 submit_plan 提交结构化计划。\n\n' +
+        (planTask === undefined ? '' : buildPlanningContext(planTask, this.service.policy)),
+      {
+        status: 'accepted',
+        planId: started.planId,
+        taskId: started.taskId,
+        goal,
+      },
+    );
+  }
+
+  /**
    * 状态变化后广播视图（服务层转成 SSE `plan_updated`）。
-   * 中文说明：计划自然跑完（步骤全完成）时不会有「退出计划」的显式动作，
-   * 因此在这里顺手收回计划工具——否则 `submit_plan` 会永远留在 activeTools 里，
-   * 变成「已经在做的计划旁边还挂着一个可随时新建计划的入口」。
+   * 中文说明：计划自然跑完（步骤全完成）、放弃、重启接管都走这里。工具集不再随状态变动，
+   * 所以这里只做一件事：把最新视图推给前端。
    */
   publish(): void {
-    const status = this.status();
-    if ((status === 'completed' || status === 'abandoned') && this.toolsAdded.length > 0) {
-      this.restorePlanTools();
-    }
     this.service.publishState(this.view());
   }
 
@@ -342,57 +478,13 @@ class PlanSession {
     }
   }
 
-  /** 记录并应用工具差集。 */
-  private applyPlanTools(mode: 'planning' | 'executing'): void {
-    const policy = this.service.policy;
-    const blocked = new Set([
-      ...DEFAULT_BLOCKED_TOOLS,
-      ...(policy.allowMcp ? [] : this.mcpToolNames()),
-    ]);
-    const active = new Set(this.pi.getActiveTools());
-    if (mode === 'planning') {
-      for (const name of [...active]) {
-        if (!blocked.has(name)) continue;
-        active.delete(name);
-        if (!this.toolsDisabled.includes(name)) this.toolsDisabled.push(name);
-      }
-    } else {
-      // 执行态：把规划期关掉的工具打开（仅限我们自己关的那些）。
-      for (const name of this.toolsDisabled) active.add(name);
-      this.toolsDisabled = [];
-    }
-    for (const name of PLAN_TOOL_NAMES) {
-      if (!active.has(name)) active.add(name);
-      // 即使已经在 activeTools 里也要登记（可能是上一个计划周期留下的，
-      // 或者用户自己开过）：计划结束后必须由我们收回，不能只撤销「这次新加的」。
-      if (!this.toolsAdded.includes(name)) this.toolsAdded.push(name);
-    }
-    this.pi.setActiveTools([...active]);
-  }
-
   /**
-   * 撤销工具差集（P6：只撤销自己造成的改动）。
-   * 中文说明：不写回旧快照——规划期间用户通过 `set_tools` 关掉的工具必须保持关闭。
-   * 已不在 activeTools 里的名字不做处理（用户可能已经手动改回来了）。
+   * ——已删除：工具差集（缓存稳定性）——
+   * 规划期「关掉写工具 + 加计划工具」、退出时「收回计划工具」曾用 `setActiveTools` 在这里实现。
+   * 它确实让模型在规划期看不到写工具，但代价是**整段请求前缀（tools + system prompt）的
+   * 缓存当场失效**——一次计划 2~4 次，远比「模型偶尔试一次被拦」贵。现在工具集恒定，
+   * 规划期只读由 `evaluateToolCall` 兑现（见本类头部注释与 docs/node-plan-cache-stability.md）。
    */
-  private restorePlanTools(): void {
-    if (this.toolsAdded.length === 0 && this.toolsDisabled.length === 0) return;
-    const active = new Set(this.pi.getActiveTools());
-    for (const name of this.toolsAdded) active.delete(name);
-    for (const name of this.toolsDisabled) active.add(name);
-    this.toolsAdded = [];
-    this.toolsDisabled = [];
-    this.pi.setActiveTools([...active]);
-  }
-
-  /** 当前会话里名字像 MCP 的工具（规划期默认拦下，无法证明只读）。 */
-  private mcpToolNames(): string[] {
-    try {
-      return this.pi.getActiveTools().filter((name) => name.startsWith(MCP_TOOL_PREFIX));
-    } catch {
-      return [];
-    }
-  }
 }
 
 /** 规划期隐藏上下文：说清「现在只读、产出方式是调用工具」。 */
@@ -472,6 +564,7 @@ export class PlanModeService {
   private trace: PlanTraceSink | undefined;
   private tasks: TaskService | undefined;
   private executor: PlanExecutor | undefined;
+  private questionBrokerValue: PlanQuestionBroker | undefined;
   /** 只读预设判定（M5，由子任务服务注入；未注入时规划期不放行委派）。 */
   private readOnlyAgent: ((cwd: string, preset: string) => boolean) | undefined;
   readonly policy: PlanPolicy;
@@ -491,6 +584,21 @@ export class PlanModeService {
   }
 
   /**
+   * 注入提问通道（`propose_plan` 用它征求用户是否进入规划模式）。
+   * 中文说明：与 setTaskService / setExecutor 同一手法——只依赖 `PlanQuestionBroker`
+   * 这个小接口，不把整个 broker 拉进依赖图；未注入时 `propose_plan` 会如实告知
+   * 「提议不了，请用户手动开启」，不会把工具弄成错误。
+   */
+  setQuestionBroker(broker: PlanQuestionBroker): void {
+    this.questionBrokerValue = broker;
+  }
+
+  /** 提问通道（未注入时为 undefined）。 */
+  get questionBroker(): PlanQuestionBroker | undefined {
+    return this.questionBrokerValue;
+  }
+
+  /**
    * 注入「只读预设」判定（M5）。
    * 中文说明：PlanModeService 只关心「这个预设能不能在规划期用」，而预设发现属于
    * SubagentService，所以用注入打破依赖（与 setTaskService / setExecutor 同一手法）。
@@ -505,7 +613,7 @@ export class PlanModeService {
     return this.readOnlyAgent?.(cwd, preset) === true;
   }
 
-  /** 生成「Web Plan 模式」内联扩展：每个会话一套钩子 + 五个计划工具。 */
+  /** 生成「Web Plan 模式」内联扩展：每个会话一套钩子 + 5 个计划工具（含 propose_plan）。 */
   buildExtension(): InlineExtension {
     return (pi: ExtensionAPI) => {
       const toolbox = new PlanToolbox({ tasks: this.requireTasks(), sessionId: '' });
@@ -516,7 +624,10 @@ export class PlanModeService {
       pi.on('session_start', (_event, ctx) => session.attach(ctx as SessionContext));
       pi.on('tool_call', (event) => session.onToolCall(event));
       pi.on('context', (event) => session.onContext(event));
-      pi.on('before_agent_start', () => session.beforeAgentStart());
+      // 把 event（要拿 prompt 当计划目标）与 ctx（要读历史做注入去抖）都传进去。
+      pi.on('before_agent_start', (event, ctx) =>
+        session.beforeAgentStart(event, ctx as SessionContext),
+      );
     };
   }
 
