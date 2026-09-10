@@ -5,10 +5,10 @@
 
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
-| 当前里程碑 | **M0 已完成** → 下一步 **M1 可观测底座**                        |
-| 上一提交   | `40063e2 docs: 记录 M0 验证结论、Plan 扩展归属决策与平台化规划` |
-| 运行时     | Node **v24.18.0**（`node:sqlite` 可用，带 experimental 警告）   |
-| 测试基线   | Node 后端 **84** / Web **55**，全绿                             |
+| 当前里程碑 | **M1 已完成** → 下一步 **M2 任务领域**                           |
+| 上一提交   | `e11d1ef test(node): 补 M1 端到端验证（真实 SDK + 离线 fauxProvider）` |
+| 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
+| 测试基线   | Node 后端 **135** / Web **62**，全绿                             |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -28,8 +28,8 @@
 | ----------------------- | ----------- | ------------------------------------- |
 | **M0** 验证性 spike     | ✅ **完成** | 4 项验证 + 2 个阻塞性修复 + CI        |
 | **M0.5** 持久化边界整改 | ✅ **取消** | 重新审计后无阻塞项，详见 3.2          |
-| **M1** 可观测底座       | ⬜ 下一步   | 见第 5 节                             |
-| M2 任务领域             | ⬜          | 依赖 M1                               |
+| **M1** 可观测底座       | ✅ **完成** | SessionLedger + 存储 + 4 个 REST + 用量面板，详见 3.6 |
+| **M2** 任务领域         | ⬜ 下一步   | 见第 5 节；直接落 SQLite（不再用 JSON 方案） |
 | M3 断点续跑             | ⬜          | 依赖 M2                               |
 | M4 Plan 重构            | ⬜          | 依赖 M3；**前置项已完成**（见 3.3）   |
 | M5 Subagent             | ⬜          | 需先决策与官方扩展的关系（见第 6 节） |
@@ -116,7 +116,7 @@ eval:         npm ci → npm run eval --if-present   (needs: node-backend)
 - `eval` 用 `--if-present` 让 job 现在为 no-op；**M4 加入 `npm run eval` 后自动生效，不用改 CI**。
 - 尚未在 GitHub 上跑过一次（本地验证通过）。`npm ci` 在 Windows 上偶发文件占用失败，Ubuntu 不受影响。
 
-### 3.5 M1 的存储选型（已冻结，`docs/node-platform-m0-spike.md` §2）
+### 3.5 存储选型（M0 冻结，M1 已按此落地，见 3.6）
 
 ```
 trace（runs / steps / 预聚合表）  →  SQLite
@@ -133,6 +133,46 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 
 ---
 
+### 3.6 M1 可观测底座（已完成，`docs/node-observability-m1.md`）
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 存储 | `services/platform/`：`migrations` / `trace-model` / `trace-repository`（写入队列）/ `sqlite-trace-storage` / `memory-trace-storage` / `store` |
+| 采集 | `services/observability/`：`session-ledger`（事件 → runs/steps）/ `redact` / `metrics` / `observability-extension`（provider HTTP 观测） |
+| 接口 | `routes/observability.ts`：summary / runs / runs/:id / DELETE runs |
+| 前端 | `web/src/components/ObservabilityPanel.vue`（设置 → 用量）+ types + api |
+| 插桩 | `AgentRegistry.publish()` 尾部一行；审批/Plan 各自上报拦截；prompt() 失败也记 error run |
+
+#### 已冻结的新决策（都是实施中发现的，比规划更具体）
+
+1. **run 的边界取 `agent_settled`**：SDK 的 `_runAgentPrompt()` 在自动重试/压缩/续跑时会多次发
+   `agent_start`，只有 `agent_settled` 在所有自动行为收敛后发一次。取错边界会把一次请求拆成多个 run。
+2. **聚合表用 `run_rollups(day, cwd, provider, model)`**，取代规划里的 `day_rollups`：
+   原设计下 `totals` 只能从 `runs` 明细算，一旦 `prune` 清理明细，`totals` 与 `byTool` 口径立刻矛盾
+   （已被测试暴露）。改后 `totals`/`byModel`/`daily` 同源，**清理明细后聚合历史完整保留**。
+3. **聚合的时间分辨率是「天 + cwd」**，未结算的 running run 不计入聚合；分位数是唯一走明细的部分，
+   口径为「范围内最近 2000 条样本」（不足即精确值）。理由：SQLite 无 percentile 函数，而全表排序
+   就是 M0 实测的 96ms 风险点。
+4. **策略拦截与工具失败分离**：`steps.blocked_by`（approval / plan_mode / policy）+ 三处归因，
+   `byTool.errorRate` 只统计真实失败；被正确拦下的调用单独计 `blocked`。
+5. **`prune` 只删明细、不动预聚合**：明细用于下钻，聚合用于长期趋势。
+6. **`createApp()` 不传 trace 配置就不写盘**：这是测试安全的默认值；生产由 `server.ts` 传
+   `config.trace`（默认开启 SQLite，库文件 `~/.pi/agent-node-server/platform.db`）。
+7. **队列溢出与失败都不抛**：超限丢最旧并计数；连续 flush 失败 3 次进入 degraded 并丢弃后续写入，
+   面板显示告警——trace 永远不会把 agent loop 拖垮。
+
+#### 实测数据（写进 doc 与测试门禁）
+
+- `record()` 同步开销（SQLite 后端、200 条攒批）：**p50 0.004ms / p95 0.011ms / max 5.5ms**，
+  max 来自每 200 条一次的批量 flush（`lastFlushMs ≈ 3.4ms`），由 `session-ledger.test.ts` 守门。
+- 真实 SDK + `fauxProvider` 跑完整 agent loop（`ledger-e2e.test.ts`）：1 run / 2 turns / 2 个
+  llm_call（`meta.httpStatus=200`）/ 1 个 tool_call，summary 有数——provider 观测扩展在真实扩展
+  加载器下确实被触发。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -144,7 +184,7 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 └── sessions/*.jsonl   读 + 新增 + 追加；禁止删除、禁止改写既有 header
 
 项目私有态（pi 不认识）
-├── trace / tasks      →  ~/.pi/agent-node-server/platform.db   【M1 新建】
+├── trace / tasks      →  ~/.pi/agent-node-server/platform.db   【trace 已建（M1，WAL）；tasks 待 M2】
 ├── mcp.json           →  pi 不支持 MCP，纯本项目
 ├── node-server-presets.json / node-server-workspaces.json
 └── 内联扩展            →  内存注入，不落盘
@@ -159,50 +199,37 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 
 ---
 
-## 5. 下一步：M1 可观测底座
+## 5. 下一步：M2 任务领域
+
+> M1 的任务清单已全部完成，DoD 逐项对照见 `docs/node-observability-m1.md` §11。
+> 本节改写为 M2 的开工清单（细节以 `docs/node-platform-plan.md` §4.2 为准）。
 
 ### 5.1 任务清单
 
-| 任务                                                                                            | 落点（新增）                                                                        |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| SQLite/内存双实现 + 写入队列（250ms / 200 条 batch）                                            | `services/platform/store.ts`                                                        |
-| 建表与版本迁移（`runs` / `steps` + 索引）                                                       | `services/platform/migrations.ts`                                                   |
-| 事件 → runs/steps（**fire-and-forget，异常吞掉**）                                              | `services/observability/session-ledger.ts`                                          |
-| 聚合查询 + 预聚合表                                                                             | `services/observability/metrics.ts`                                                 |
-| 脱敏 + digest（`sha256(content).slice(0,12)`）                                                  | `services/observability/redact.ts`                                                  |
-| provider 层钩子（TTFT / HTTP status）                                                           | `services/observability/observability-extension.ts`                                 |
-| 4 个 REST                                                                                       | `routes/observability.ts`                                                           |
-| `PI_NODE_TRACE_*` / `PI_NODE_STORE` 配置                                                        | 改 `config.ts`                                                                      |
-| **零成本修复**：`agent-registry.ts` `state()` 里硬编码的 `contextUsage: null, sessionStats: {}` | 改 `agent-registry.ts`                                                              |
-| 前端 Dashboard                                                                                  | 新增 `web/src/components/ObservabilityPanel.vue`，改 `types/index.ts`、`lib/api.ts` |
+| 任务 | 落点（新增/改动） |
+| --- | --- |
+| `tasks` / `task_steps` 建表与迁移（**直接落 SQLite**，规划已结论不并存 JSON 方案） | `services/platform/migrations.ts` 新增迁移版本 2 |
+| 任务领域模型与仓储（`TaskRecord` / `TaskStep` / `TASK_STATUSES` / `revision` 乐观并发） | `services/platform/task-repository.ts` + `services/task-service.ts` |
+| 步骤状态聚合出任务状态（`refreshTaskStatus`） | `services/task-service.ts` |
+| REST（list / create / detail / patch / steps 增删改 / cancel） | `routes/tasks.ts` + `app.ts` 注册 |
+| SSE `task_updated`（复用 `AgentRegistry.publish`，**必须同步** `web/src/lib/agent-events.ts` 的 `reduceAgentEvent`） | `agent-registry.ts` + 前端规约 |
+| 前端任务面板 | `web/src/components/TaskPanel.vue` + `types/index.ts` + `lib/api.ts` |
+| run 与任务关联（`runs.task_id` 已预留） | `session-ledger.ts`（会话上下文带 taskId 时写入） |
 
-### 5.2 必须遵守的实现要点
+### 5.2 必须遵守的实现要点（继承 M1 已冻结的决策）
 
-1. **唯一插桩点**：`AgentRegistry.publish()` 尾部调用 `ledger.record(entry, payload)`。
-2. **`steps` 表必须区分「策略阻断」与「工具失败」**（新增 `blocked_by` 字段）。见 3.1 的修正 ④。
-3. **零成本修复**：`PiSession` 门面补 `getSessionStats?()` / `getContextUsage?()`，`state()` 有则透传、
-   无则保持 `null` / `{}`（与 Python 后端字段兼容）。M0 已实测这两个 API 存在且返回
-   `{ tokens, contextWindow, percent }`，前端 `AgentControls.vue` 的上下文仪表盘会立即有数据。
-4. **性能**：写入不是瓶颈（0.65ms），**聚合才是**（无索引 96ms）。读路径必须走预聚合表。
-5. **降级**：`PI_NODE_STORE=memory` 时整体降级为内存实现，保证测试与无盘环境可用。
-6. **REST 契约**（必须同步 `web/src/lib/api.ts`、`web/src/lib/agent-events.ts`、Pinia store）：
-   - `GET /api/observability/summary?from&to&cwd`
-   - `GET /api/observability/runs?sessionId&taskId&limit&cursor`
-   - `GET /api/observability/runs/:runId`
-   - `DELETE /api/observability/runs?before=<iso>`
-   - `summary` 返回 `{ totals, byModel[], byTool[], byApproval[], daily[] }`（字段清单见规划 §4.1.4）
+1. **任务与 Plan 合流**：Plan 是 Task 的视图，不要再建第二套模型（P7）。
+2. 写入沿用共享态红线的做法：校验前置 + spread 保留未知字段 + 原子写；任务落在
+   `platform.db` 的 `tasks` / `task_steps`，与 `runs.task_id` 关联。
+3. 乐观并发：`PATCH` 必须带 `ifRevision`，不匹配返回 `409 task_conflict`。
+4. 边界：删除唯一未完成步骤后任务状态要回落；损坏数据要能降级为空列表且不影响 Agent 启动。
+5. 先做 M2 的模型与仓储，再做 Plan 映射（M4）：**M4 的 `submit_plan` 工具最终写的就是 Task**。
 
-### 5.3 M1 的 DoD
+### 5.3 M2 的 DoD（来自规划 §4.2.3）
 
-- 跑一个真实会话后，Dashboard 能显示成本、p95 延迟、工具成功率、审批命中率。
-- 前端上下文仪表盘显示真实占用。
-- 关掉 trace 配置后行为与今天完全一致（回归测试证明）。
-- `1000 次 record()` 同步耗时 p95 < 5ms；写入 mock 故意抛错后 agent loop 仍能正常跑完。
-
-### 5.4 开工前的建议检查
-
-`parentSessionPath` 在 M0 已确认可用，但 M1 的 `runs` 表要预留 `parent_run_id`（M5 用），
-建表时就加上，避免 M5 再迁移。
+- 任务可增删改查，重启后不丢。
+- SSE 变更实时推送到前端任务面板。
+- 并发 `PATCH` 携带过期 `ifRevision` → 409；删掉唯一未完成步骤后任务状态回落为 `pending`。
 
 ---
 
@@ -221,11 +248,11 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 84 passed / 构建成功 / 8 个 spike 全过
+#   → 期望：format OK / 无类型错误 / 135 passed / 构建成功 / 8 个 spike 全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error（有 3 个既有 warning）/ 55 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 62 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -253,7 +280,53 @@ docs/node-plan-extension-ownership.md         Plan 扩展归属决策 + session_
 PROGRESS.md                                   本文件
 ```
 
-### 本次改动（关键位置）
+### M1 新增（可观测底座，2026-08-21）
+
+```
+node-pi/server/src/services/platform/
+  migrations.ts                 建表 + PRAGMA user_version 迁移（runs/steps/三张预聚合表）
+  trace-model.ts                领域模型与共享纯函数（isRealError / dayOf / 游标）
+  trace-repository.ts           接口契约 + QueuedTraceRepository（250ms/200 条）+ NullTraceRepository
+  sqlite-trace-storage.ts       SQLite 后端：批量事务写、预聚合增量维护、有界样本查询
+  memory-trace-storage.ts       内存后端（与 SQLite 语义等价，有等价性测试）
+  store.ts                      装配入口：选后端、建库、套队列、失败回落内存
+node-pi/server/src/services/observability/
+  session-ledger.ts             事件 → runs/steps（唯一埋点逻辑，异常一律降级）
+  redact.ts                     三层脱敏 + digest/字节数/预览
+  metrics.ts                    分位数与 REST 整形（纯函数）
+  observability-extension.ts    provider 层钩子（HTTP status / 首字节耗时）
+node-pi/server/src/routes/observability.ts
+node-pi/server/test/services/platform/trace-store.test.ts
+node-pi/server/test/services/observability/{session-ledger,registry-ledger,ledger-e2e,metrics}.test.ts
+node-pi/server/test/services/agent-registry-state.test.ts
+node-pi/server/test/routes/observability-routes.test.ts
+web/src/components/ObservabilityPanel.vue
+web/test/components/ObservabilityPanel.test.ts
+docs/node-observability-m1.md                  M1 实现说明（口径/取舍/契约/DoD 对照）
+```
+
+### M1 改动（关键位置）
+
+```
+node-pi/server/src/services/agent-registry.ts
+  · publish() 尾部调用 ledger.record()        ← 唯一插桩点
+  · close()/remove() 收尾未结算 run            · start() 上报 prompt() 失败
+  · state() 透传 getContextUsage/getSessionStats（零成本修复）
+node-pi/server/src/services/tool-approval.ts
+  · ApprovalTraceSink（挂起/结算上报）          · settle 区分 user/timeout/abort/session/disposed
+node-pi/server/src/services/plan-mode-service.ts
+  · PlanTraceSink（规划期拦截上报 blocked_by）
+node-pi/server/src/app.ts
+  · PlatformStore + SessionLedger 装配          · /api/observability 注册      · onClose 关存储
+node-pi/server/src/config.ts / src/server.ts
+  · PI_NODE_DATA_DIR + PI_NODE_TRACE_* 配置     · server.ts 传入 config.trace
+web/src/components/{SettingsDialog,AgentControls,ChatWindow}.vue
+  · 设置新增「用量」分类                         · ContextUsage 可空处理（不再显示 NaN%）
+web/src/types/index.ts / src/lib/api.ts
+  · 可观测性类型与 4 个接口封装
+```
+
+### 本次改动（M0，关键位置）
 
 ```
 node-pi/server/src/services/agent-registry.ts
@@ -292,3 +365,7 @@ web/src/components/{PlanProgress,ChatWindow,ChatInput,AgentControls}.vue   ← M
 | 前端死代码                                    | `agent-events.ts` 的 `case 'tool_execution_blocked'` 对 Node 后端永不触发（该事件只存在于 Python 后端）                      | M4     |
 | JSONL 里的 plan 审计痕迹                      | `web-plan-context` 会留多条（模型侧已清理）；若要压缩 JSONL 可改为不持久化                                                   | 可选   |
 | CLAUDE.md 曾提到 `node-pi/server/extensions/` | 该目录已不存在（改为内联扩展），已修正 CLAUDE.md                                                                             | 已处理 |
+| 聚合时间分辨率只有「天 + cwd」 | 自定义小时级窗口会按整天计入（分位数仍按精确窗口取样本）；需要小时级时给预聚合表加 `hour` 分桶 | M3 可选 |
+| 进程被强杀会留下 `running` run | 正常关闭会收尾为 `aborted`；异常退出的残留记录需要清理或恢复扫描 | M3 |
+| 用量面板无实时刷新 | 目前手动刷新 + 切条件自动加载；未新增 SSE 事件（避免提前改前端契约） | M2/M3 可选 |
+| 规划期拦截未做端到端验证 | 归因逻辑有单测；e2e 只跑了普通工具调用，未在真实 SDK 下开启 Plan 模式 | M4 |

@@ -326,6 +326,22 @@ config.ts                                  # 新增 PI_NODE_TRACE_* 配置
 
 **DoD**：跑一个真实会话后，Dashboard 能显示成本、p95 延迟、工具成功率、审批命中率；关掉 trace 开关后行为与今天完全一致。
 
+#### 4.1.8 实施修订（2026-08-21，M1 落地后回填）
+
+本节是最初的规划口径；以下三处在实施中被修正，**以 [`node-observability-m1.md`](node-observability-m1.md) 为准**：
+
+1. **`day_rollups` → `run_rollups(day, cwd, provider, model)`**：原设计下 `totals` 只能从 `runs`
+   明细聚合，`prune` 清理明细后 `totals` 与 `byTool` 口径会互相矛盾（测试暴露）。改为单一 run
+   聚合表后 `totals` / `byModel` / `daily` 同源，**清理明细不影响聚合历史**。
+2. **聚合时间分辨率为「天 + cwd」**：预聚合表按 UTC 日期分桶，未结算的 `running` run 不计入聚合；
+   只有 p50/p95 分位数按精确窗口取「最近 2000 条样本」（不足即精确值）。REST 契约里的
+   `from`/`to` 因此对聚合是「天级」语义，对分位数是精确语义。
+3. **`summary` 增加追加字段 `store`**：`{mode, degraded, pending, dropped}`，让前端能区分
+   「没有数据」与「trace 未开启 / 已降级」。原契约字段一个未少。
+
+另外两点实施细节：`steps.blocked_by` 的归因来源有三处（审批结算、Plan 拦截上报、结果文案兜底）；
+run 的边界取 `agent_settled` 而非 `agent_start`（SDK 在重试/压缩续跑时会多次发 `agent_start`）。
+
 ---
 
 ### M2 任务领域（TaskService 复活）

@@ -83,6 +83,22 @@ Node 版后端把工具审批、Plan 模式与 MCP 工具以**内联扩展**注�
   仓库不再随服务发布 jiti 文件扩展。
 - 机制说明见 [`docs/node-extension-system.md`](docs/node-extension-system.md)。
 
+## 用量与可观测性（M1）
+
+Node 版把每次运行的**成本、延迟、工具成功率、审批命中率**沉淀成本地 trace：事件在
+`AgentRegistry.publish()` 处记账（fire-and-forget，不侵入 Agent 主链路），写入
+`~/.pi/agent-node-server/platform.db`（SQLite，WAL）。前端入口：**设置 → 用量**。
+
+```powershell
+# 默认即开启；关闭或换存储方式：
+$env:PI_NODE_TRACE = '0'        # 关闭（行为与引入前一致，接口返回空集）
+$env:PI_NODE_STORE = 'memory'   # 内存实现（无盘环境）
+$env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 digest + 120 字符预览）
+```
+
+默认不落对话正文、不落密钥；库文件与 trace 均不碰 `~/.pi/agent`。
+实现说明与全部配置见 [`docs/node-observability-m1.md`](docs/node-observability-m1.md)。
+
 ## 测试
 
 ```powershell
@@ -118,5 +134,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-mcp-implementation.md`](docs/node-mcp-implementation.md) | MCP 实现详解（代码走读） |
 | [`docs/node-platform-plan.md`](docs/node-platform-plan.md) | Node 平台化规划（可观测/任务持久化/断点续跑/Plan 重构/Subagent） |
 | [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md) | M0 验证报告：存储选型与 `~/.pi/agent` 只读边界审计 |
+| [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

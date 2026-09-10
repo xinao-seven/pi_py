@@ -27,3 +27,17 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 **访问密码锁**：设置 `PI_NODE_ACCESS_PASSWORD=<密码>` 后，`/api` 除登录/状态/健康检查外
 都需要先登录。前端会弹出密码输入框；登录令牌持久化到 localStorage（刷新保持登录），
 可直接构造 URL 访问 API 会被服务端 401 拒绝。未设置该变量则不启用，本地开发不受影响。
+
+**用量与可观测性（M1）**：默认开启，把每次运行的成本、延迟、工具成功率与审批命中率写入
+`~/.pi/agent-node-server/platform.db`（不碰 `~/.pi/agent`），由前端「设置 → 用量」展示，
+查询接口在 `/api/observability/*`。默认不落对话正文、不落密钥。相关变量：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PI_NODE_TRACE` | `1` | `0` 关闭（写操作变空实现，接口返回空集） |
+| `PI_NODE_STORE` | `sqlite` | `memory` 时整体走内存实现 |
+| `PI_NODE_TRACE_DB` | `<PI_NODE_DATA_DIR>/platform.db` | 库文件路径 |
+| `PI_NODE_TRACE_CONTENT` | `0` | `1` 时额外保留已脱敏正文 |
+| `PI_NODE_TRACE_FLUSH_MS` / `_BATCH` / `_MAX_PENDING` | `250` / `200` / `5000` | 写入队列参数 |
+
+完整口径与取舍见 [`docs/node-observability-m1.md`](../../docs/node-observability-m1.md)。

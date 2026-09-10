@@ -16,6 +16,8 @@ node-pi/server/
 │   ├── config.ts / errors.ts   # 基础设施配置、统一 API 错误
 │   ├── routes/                 # HTTP/SSE 适配层；按资源拆分，保持薄
 │   └── services/               # 业务逻辑、Pi SDK 适配、状态与文件操作、内联扩展
+│       ├── platform/           # 平台存储（M1）：迁移、trace 领域模型、写入队列、SQLite/内存后端
+│       └── observability/      # trace 采集与查询（M1）：session-ledger、redact、metrics、provider 钩子
 ├── test/                       # Vitest；目录结构尽量映射 src/
 ├── package.json
 └── README.md                   # 启动与对外使用说明
@@ -34,6 +36,11 @@ node-pi/server/
 - 新工具或事件钩子：以"内联扩展"实现——在 `services/` 写一个类，提供 `buildExtension()` 返回
   `InlineExtension`，并在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 中注册。
   仓库内不再使用 jiti 文件扩展；用户级/工作区级扩展仍由 SDK 自动发现。
+- 新可观测指标（M1 之后）：**一律加在既有的唯一插桩点上**，不要在路由、工具或会话方法里新增
+  trace 写入。简单指标改 `services/observability/session-ledger.ts`；需要新字段就先改
+  `services/platform/migrations.ts` 的建表（新增迁移版本，不要改已发布的 DDL）；聚合口径与取整
+  只在 `services/observability/metrics.ts` 定义。任何记帐代码都必须 try/catch 降级，绝不抛给
+  agent loop，也不要写入对话正文（默认只存 digest 与预览）。详见 `docs/node-observability-m1.md`。
 
 ## 2. HTTP、SSE 与错误契约
 
@@ -118,7 +125,8 @@ npm run build
 ## 6. 文档与提交
 
 - 对外启动、配置或目录变化同步更新本目录 `README.md`；内联扩展变化同步更新
-  `docs/node-extension-system.md`；跨后端行为变化同步更新 `docs/node-pi-backend.md` 与仓库说明。
+  `docs/node-extension-system.md`；跨后端行为变化同步更新 `docs/node-pi-backend.md` 与仓库说明；
+  可观测性（trace/指标/聚合口径）变化同步更新 `docs/node-observability-m1.md`。
 - 提交采用 Conventional Commits：`feat`、`fix`、`docs`、`refactor`、`test`、`chore`；每个提交
   聚焦一个可验证的变更。
 - 提交前确认 `git status` 仅包含本次改动；不要提交 `node_modules/`、`dist/`、会话、凭据或本地

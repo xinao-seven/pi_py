@@ -35,8 +35,10 @@ pi_py/
 │   │   │   ├── server.ts   # 进程入口（仅读取配置 + 监听）
 │   │   │   ├── config.ts   # 环境变量基础设施配置（PI_NODE_*）
 │   │   │   ├── errors.ts   # 统一 API 错误
-│   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/presets/sessions/skills/workspaces
+│   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/workspaces
 │   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/mcp/...
+│   │   │       ├── platform/       # SQLite/内存存储（M1）：migrations/trace-model/trace-repository/store
+│   │   │       └── observability/  # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
 │   │   ├── spike/          # M0 验证脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
 │   │   └── test/           # Vitest（映射 src/ 结构）
 │   └── utools/             # uTools 桌面插件（拉起 node-pi/server + 加载 web 构建）
@@ -84,6 +86,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - `AgentRegistry`（`services/agent-registry.ts`）是核心：每个会话一个活跃 `AgentSession`，内存缓存 SSE 事件（每会话最多 256 条）支持 `Last-Event-ID` 回放，命令走统一的 `command()` 分发。
 - 会话命令类型（`POST /api/agent/:sessionId` body.type）：`prompt` / `steer` / `follow_up` / `abort` / `set_model` / `set_thinking_level` / `set_tools` / `compact` / `navigate_tree` / `reload_resources` / `approve_tool` / `plan_enable|disable|execute|refine`。
 - 新能力落点：新 API → 新增 `routes/<resource>.ts` + 对应 service，在 `app.ts` 显式注册；新会话能力 → `AgentRegistry`；新工具/事件钩子 → `extensions/`（不要为加载单个扩展改 `app.ts`）。
+- 可观测性（M1）：采集只在 `AgentRegistry.publish()` 一处插桩（→ `SessionLedger`）；存储与聚合在 `services/platform/`（SQLite/内存双实现 + 写入队列）；查询走 `routes/observability.ts` → `services/observability/metrics.ts`。不要在其他地方新增 trace 写入点。
 
 ### Python 三层内核（pi-python/src）
 
@@ -113,6 +116,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
   - 边界核实与逐文件判定见 `docs/node-platform-m0-spike.md` 第 3 节。
 - **密钥绝不外泄**：任何 API 响应不得包含真实密钥；自身配置只保存 `$ENV_VAR` 引用，按 `auth.json` 的 key 名映射解析（`$DEEPSEEK_API_KEY → auth.json["deepseek"].key`）。
 - Node 后端的本项目自有可写状态（trace / task / mcp / presets / workspaces）建议落在 `~/.pi/agent-node-server/`；Python 后端落在 `~/.pi/agent-python/`。共享态（`models.json`、`sessions/`）按上一条的红线写入。测试必须隔离 `agentDir` 到临时目录，禁止触碰真实 `~/.pi` 或网络。
+- **trace 对 agent loop 零影响（M1 已实施）**：`services/observability/session-ledger.ts` 是唯一埋点逻辑，由 `AgentRegistry.publish()` 尾部调用；所有入口 try/catch + warn，写入先入队（250ms/200 条批量落 `~/.pi/agent-node-server/platform.db`），队列超限丢最旧、连续失败进入 degraded，**任何情况都不得冒泡到 agent loop**。默认只存 digest + 120 字符预览（正文需 `PI_NODE_TRACE_CONTENT=1`），并对 `sk-`/`Bearer`/`apiKey` 等形态统一脱敏。`createApp()` 不传 trace 配置时不写盘（测试环境安全的默认值）。细节见 `docs/node-observability-m1.md`。
 - **危险命令人工确认**：`bash` 命中危险规则（递归删除、格式化、关机、强制 Git 推送等）时挂起执行，向 SSE 推 `tool_call_pending`，前端弹窗，由 `approve_tool` 命令允许/拒绝。拒绝或超时（Node 30 秒 / Python 60 秒）按拒绝处理。`ToolApprovalBroker`（Node）/ `ToolApprovalGate`（Python）是唯一真相源。
 - 文件访问必须确认工作区已登记，保持路径边界与敏感文件拦截（`.env`、凭据、密钥后缀）。
 
@@ -134,7 +138,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
-- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`。
+- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`ObservabilityPanel.vue`（设置 → 用量）。
 - 主题/声音偏好存 localStorage（`pi.theme` / `pi.sound`），写入 `<html data-theme>`。
 
 ## 关键文档
@@ -148,6 +152,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-pi-backend.md` | Node 后端功能清单 |
 | `docs/node-platform-plan.md` | Node 平台化规划（M0–M5 里程碑、契约变更、验收标准） |
 | `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
+| `docs/node-observability-m1.md` | **M1 可观测底座**：采集口径（run 边界/TTFT/策略拦截归因）、存储与聚合取舍、REST 契约、配置与降级 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |

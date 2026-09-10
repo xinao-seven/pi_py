@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   SessionLedger,
@@ -498,5 +501,56 @@ describe('SessionLedger', () => {
     expect(() => ledger.finalizeSession('session-1')).not.toThrow();
     expect(warnings.every((line) => line === 'trace record skipped')).toBe(true);
     expect(warnings.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * DoD 门禁：`record()` 在事件回调里同步执行，单次开销必须足够小。
+ * 中文说明：这条用例守住「写入不能阻塞事件循环」——入队是 O(1)，每 200 条触发一次
+ * 批量 flush（SQLite 单事务），所以只有极少数调用的开销包含落库时间。
+ */
+describe('record() synchronous cost', () => {
+  it('keeps p95 of 1000 record() calls under 5ms with the sqlite backend', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-trace-perf-'));
+    const store: PlatformStore = openPlatformStore({
+      mode: 'sqlite',
+      dbPath: join(dir, 'platform.db'),
+    });
+    const ledger = new SessionLedger(store.traces, undefined, { runIdFactory: () => 'perf-run' });
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      const samples: number[] = [];
+      for (let index = 0; index < 1_000; index += 1) {
+        const toolCallId = `call-${index}`;
+        ledger.record(
+          context,
+          event({ type: 'tool_execution_start', toolCallId, toolName: 'bash' }),
+        );
+        const started = performance.now();
+        ledger.record(
+          context,
+          event({
+            type: 'tool_execution_end',
+            toolCallId,
+            toolName: 'bash',
+            result: { content: [{ type: 'text', text: 'ok' }] },
+            isError: false,
+          }),
+        );
+        samples.push(performance.now() - started);
+      }
+      samples.sort((left, right) => left - right);
+      const p95 = samples[Math.floor(samples.length * 0.95)];
+      const max = samples.at(-1) ?? 0;
+      expect(p95).toBeLessThan(5);
+      // 单次最坏开销也应有界（p95 会掩盖个别含 flush 的调用）。
+      expect(max).toBeLessThan(50);
+      // 断言真的落库了（不是只入队就完事）。
+      expect(store.stats().flushed).toBe(1_000);
+      expect(store.traces.getRun('perf-run')?.steps).toHaveLength(1_000);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
