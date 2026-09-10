@@ -283,3 +283,42 @@ describe('Fastify application', () => {
     expect(ok.json()).toEqual({ success: true, sessionId: 'node-test-session' });
   });
 });
+
+describe('client error contract', () => {
+  const apps: ReturnType<typeof createApp>[] = [];
+
+  afterEach(async () => {
+    await Promise.all(apps.splice(0).map((app) => app.close()));
+  });
+
+  it('maps malformed JSON bodies to 400 invalid_request instead of 500', async () => {
+    const app = createApp();
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"title": ',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { code: 'invalid_request' } });
+    // 不泄露请求体片段。
+    expect(response.body).not.toContain('title');
+  });
+
+  it('keeps business errors untouched', async () => {
+    const app = createApp();
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: '', goal: 'g' },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({ error: { code: 'validation_error' } });
+  });
+});

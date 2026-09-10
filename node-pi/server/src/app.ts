@@ -77,6 +77,25 @@ export interface AppOptions {
   taskService?: TaskService;
 }
 
+/**
+ * 把 Fastify 的客户端错误归成稳定、不泄露请求内容的描述。
+ * 中文说明：原始 message（如 JSON 解析失败）会带上请求体片段，而请求体里可能有凭据，
+ * 所以这里只保留几个已知类别的固定文案，其余一律泛化。
+ */
+function clientErrorMessage(error: { code?: string }): string {
+  switch (error.code) {
+    case 'FST_ERR_CTP_EMPTY_JSON_BODY':
+    case 'FST_ERR_CTP_INVALID_JSON_BODY':
+      return 'Request body is not valid JSON';
+    case 'FST_ERR_CTP_INVALID_MEDIA_TYPE':
+      return 'Unsupported media type';
+    case 'FST_ERR_CTP_INVALID_SIZE':
+      return 'Request body size did not match Content-Length';
+    default:
+      return 'Invalid request';
+  }
+}
+
 export function createApp(options: AppOptions = {}): FastifyInstance {
   // Fastify 内置 Pino 日志器：生产入口（server.ts）传入 logger 配置启用请求/错误日志；
   // 默认 false 保持测试（app.inject()）静默。app 同时也是一个"根插件封装"，
@@ -195,12 +214,24 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 全局错误处理器：任何路由处理函数 throw 的错误（包括 async 函数里
   // reject 的 Promise）最终都会到这里，由 Fastify 自动派发。
   // - 业务错误（ApiError）→ 返回它携带的状态码和错误体；
+  // - Fastify 自己的 4xx（请求体不合法、Content-Length 不匹配、媒体类型不支持等）
+  //   → 保留 4xx 语义，机器码归一为 snake_case 的 invalid_request；
   // - 其他未知错误 → 记录日志并统一返回 500，避免向客户端泄露内部信息。
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) {
       return reply
         .code(error.statusCode)
         .send(errorPayload(error.code, error.message, error.details));
+    }
+    // Fastify 的客户端错误都带 statusCode（类型上是 unknown，这里收窄一次）。
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    const status = typeof statusCode === 'number' ? statusCode : 500;
+    if (status >= 400 && status < 500) {
+      request.log.warn({ err: error }, 'client request rejected');
+      // 不把 Fastify 的原始 message 回给客户端：JSON 解析错误的消息里会带上请求体片段。
+      return reply
+        .code(status)
+        .send(errorPayload('invalid_request', clientErrorMessage(error as { code?: string })));
     }
     request.log.error(error);
     return reply.code(500).send(errorPayload('internal_error', 'Internal server error'));
