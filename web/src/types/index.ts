@@ -285,6 +285,8 @@ export interface AgentEvent {
   reason?: string;
   aborted?: boolean;
   contextUsage?: ContextUsage | null;
+  /** 任务变更（M2 SSE：task_updated）。 */
+  task?: TaskRecord;
   [key: string]: unknown;
 }
 
@@ -492,4 +494,71 @@ export interface ObservabilityRunDetail {
 export interface ObservabilityRunList {
   runs: ObservabilityRun[];
   nextCursor: string | null;
+}
+
+// ---- 任务领域（M2）---------------------------------------------------------
+
+export type TaskStatus = 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled';
+export type TaskStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped';
+
+/** 步骤完成的验证声明（M2 只存不校验，校验属于 M4）。 */
+export interface TaskVerification {
+  kind: 'command' | 'file' | 'manual';
+  command?: string;
+  expectExitCode?: number;
+  path?: string;
+}
+
+/** 步骤完成证据。 */
+export interface TaskEvidence {
+  summary?: string;
+  toolCallIds: string[];
+  filesTouched: string[];
+  commands?: Array<{ command: string; exitCode: number | null }>;
+  lastError?: string;
+}
+
+export interface TaskStep {
+  id: string;
+  title: string;
+  details?: string;
+  status: TaskStepStatus;
+  position: number;
+  verification?: TaskVerification;
+  evidence?: TaskEvidence;
+  blockedReason?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+/** 执行态（M3 断点续跑用；M2 只保证字段存在）。 */
+export interface TaskExecution {
+  attempt: number;
+  lastHeartbeatAt?: string;
+  lease?: { owner: string; expiresAt: string };
+  inFlight?: {
+    stepId?: string;
+    kind: 'turn' | 'tool';
+    toolCallId?: string;
+    startedAt: string;
+    sideEffect: 'none' | 'write' | 'unknown';
+  };
+}
+
+export interface TaskRecord {
+  id: string;
+  title: string;
+  goal: string;
+  status: TaskStatus;
+  steps: TaskStep[];
+  origin: 'user' | 'plan';
+  sessionId?: string;
+  cwd?: string;
+  /** 乐观并发版本号：每次写入必须带上当前的 revision。 */
+  revision: number;
+  blockedReason?: string;
+  conclusion?: string;
+  execution: TaskExecution;
+  createdAt: string;
+  updatedAt: string;
 }

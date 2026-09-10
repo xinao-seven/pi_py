@@ -90,3 +90,17 @@ describe('reduceAgentEvent', () => {
     expect(ended).toEqual(INITIAL_STREAM_STATE);
   });
 });
+
+describe('task_updated reduction', () => {
+  it('leaves the streaming state untouched (tasks are tracked separately)', () => {
+    // 任务状态由 useAgentSession 的 task ref 单独维护（REST + SSE 双通道），
+    // 不进流式状态机，避免把「任务变更」误当成「Agent 在跑」。
+    const busy = reduceAgentEvent(INITIAL_STREAM_STATE, { type: 'agent_start' });
+    const afterTask = reduceAgentEvent(busy, {
+      type: 'task_updated',
+      task: { id: 'task-1', title: 't', revision: 1 },
+    });
+
+    expect(afterTask).toEqual(busy);
+  });
+});

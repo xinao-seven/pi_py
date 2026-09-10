@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  addTaskStep,
+  cancelTask,
+  createTask,
+  deleteTaskStep,
   fetchAgentEvents,
   getAuthStatus,
   getObservabilityRun,
   getObservabilitySummary,
   listObservabilityRuns,
   listSessions,
+  listTasks,
   pruneObservabilityRuns,
+  updateTask,
+  updateTaskStep,
 } from '@/lib/api';
 import { clearToken, setToken, setUnauthorizedHandler } from '@/lib/session';
 
@@ -168,5 +175,85 @@ describe('observability endpoints', () => {
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe('/api/observability/runs?before=2026-08-01T00%3A00%3A00.000Z');
     expect(init.method).toBe('DELETE');
+  });
+});
+
+describe('task endpoints', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('lists, creates and updates tasks with the revision guard', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tasks: [] }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await listTasks({ sessionId: 's1', status: 'pending', limit: 20 });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/tasks?status=pending&sessionId=s1&limit=20');
+
+    fetchMock.mockResolvedValue(jsonResponse({ task: { id: 'task-1', revision: 1 } }, 200));
+    await createTask({
+      title: '重构 Plan 模式',
+      goal: '把正则解析换成结构化工具契约',
+      sessionId: 's1',
+      steps: [{ title: '第一步' }],
+    });
+    const [createUrl, createInit] = fetchMock.mock.calls[1];
+    expect(createUrl).toBe('/api/tasks');
+    expect(createInit.method).toBe('POST');
+    expect(JSON.parse(createInit.body as string)).toMatchObject({
+      title: '重构 Plan 模式',
+      steps: [{ title: '第一步' }],
+    });
+
+    await updateTask('task-1', { title: '新标题', ifRevision: 3 });
+    const [patchUrl, patchInit] = fetchMock.mock.calls[2];
+    expect(patchUrl).toBe('/api/tasks/task-1');
+    expect(patchInit.method).toBe('PATCH');
+    expect(JSON.parse(patchInit.body as string)).toEqual({ title: '新标题', ifRevision: 3 });
+  });
+
+  it('manages steps and cancellation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ task: { id: 'task-1' } }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await addTaskStep('task-1', {
+      title: '跑构建',
+      verification: { kind: 'command', command: 'npm run build', expectExitCode: 0 },
+      ifRevision: 2,
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/tasks/task-1/steps');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toMatchObject({
+      title: '跑构建',
+      ifRevision: 2,
+    });
+
+    await updateTaskStep('task-1', 's1', { status: 'completed', ifRevision: 3 });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/tasks/task-1/steps/s1');
+    expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+
+    await deleteTaskStep('task-1', 's1', { ifRevision: 4, force: true });
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/tasks/task-1/steps/s1');
+    expect(fetchMock.mock.calls[2][1].method).toBe('DELETE');
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({
+      ifRevision: 4,
+      force: true,
+    });
+
+    await cancelTask('task-1', { ifRevision: 5, reason: '需求取消' });
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/tasks/task-1/cancel');
+    expect(fetchMock.mock.calls[3][1].method).toBe('POST');
+
+    // 409 task_conflict 会被统一解析成 ApiError（面板据此提示“被其它窗口改过”）。
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: 'task_conflict', message: 'Task was modified by someone else' } },
+        409,
+      ),
+    );
+    await expect(updateTask('task-1', { title: 'x', ifRevision: 1 })).rejects.toMatchObject({
+      status: 409,
+      code: 'task_conflict',
+    });
   });
 });

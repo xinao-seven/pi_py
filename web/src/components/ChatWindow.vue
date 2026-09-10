@@ -8,11 +8,21 @@ import BranchNavigator from '@/components/BranchNavigator.vue';
 import ChatInput from '@/components/ChatInput.vue';
 import MessageView from '@/components/MessageView.vue';
 import PlanProgress from '@/components/PlanProgress.vue';
+import TaskPanel from '@/components/TaskPanel.vue';
 import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
-import { forkSession, mergeSession, sendPlanCommand } from '@/lib/api';
+import {
+  addTaskStep,
+  cancelTask,
+  createTask,
+  deleteTaskStep,
+  forkSession,
+  mergeSession,
+  sendPlanCommand,
+  updateTaskStep,
+} from '@/lib/api';
 import { useAppStore } from '@/stores/app';
-import type { AgentMessage, SessionInfo, SessionTreeNode } from '@/types';
+import type { AgentMessage, SessionInfo, SessionTreeNode, TaskStep, TaskStepStatus } from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;
@@ -47,6 +57,8 @@ const {
   plan,
   stream,
   contextUsage,
+  task,
+  refreshTask,
   catalog,
   thinkingLevel,
   activeTools,
@@ -193,6 +205,75 @@ async function mergeFrom(sourceSessionId: string): Promise<void> {
   } finally {
     store.setBranchBusy(false);
   }
+}
+
+/** 任务面板正在写入（串行化，避免 ifRevision 竞争）。 */
+const taskBusy = ref(false);
+const taskError = ref<string | null>(null);
+
+/** 统一的任务写入包装：成功后用服务端返回的权威记录刷新面板。 */
+async function actTask(action: () => Promise<void>): Promise<void> {
+  taskBusy.value = true;
+  taskError.value = null;
+  try {
+    await action();
+    await refreshTask();
+  } catch (cause) {
+    taskError.value = cause instanceof Error ? cause.message : '任务操作失败';
+  } finally {
+    taskBusy.value = false;
+  }
+}
+
+function createSessionTask(payload: { title: string; goal: string }): void {
+  if (!props.sessionId) return;
+  const cwd = workspace.value || undefined;
+  void actTask(async () => {
+    await createTask({ ...payload, sessionId: props.sessionId!, ...(cwd ? { cwd } : {}) });
+  });
+}
+
+function addSessionStep(payload: { title: string }): void {
+  const current = task.value;
+  if (!current) return;
+  void actTask(async () => {
+    await addTaskStep(current.id, { title: payload.title, ifRevision: current.revision });
+  });
+}
+
+function setSessionStepStatus(payload: {
+  step: TaskStep;
+  status: TaskStepStatus;
+  reason?: string;
+}): void {
+  const current = task.value;
+  if (!current) return;
+  void actTask(async () => {
+    await updateTaskStep(current.id, payload.step.id, {
+      status: payload.status,
+      ...(payload.reason ? { blockedReason: payload.reason } : {}),
+      ifRevision: current.revision,
+    });
+  });
+}
+
+function removeSessionStep(payload: { step: TaskStep; force: boolean }): void {
+  const current = task.value;
+  if (!current) return;
+  void actTask(async () => {
+    await deleteTaskStep(current.id, payload.step.id, {
+      ifRevision: current.revision,
+      ...(payload.force ? { force: true } : {}),
+    });
+  });
+}
+
+function cancelSessionTask(): void {
+  const current = task.value;
+  if (!current) return;
+  void actTask(async () => {
+    await cancelTask(current.id, { ifRevision: current.revision });
+  });
 }
 
 async function actPlan(
@@ -437,6 +518,19 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           @disable="actPlan('disable')"
           @execute="actPlan('execute')"
           @refine="(message) => actPlan('refine', message)"
+        />
+        <TaskPanel
+          v-if="sessionId || task"
+          :task="task"
+          :session-id="sessionId"
+          :busy="taskBusy"
+          :error="taskError"
+          @create="createSessionTask"
+          @add-step="addSessionStep"
+          @set-step-status="setSessionStepStatus"
+          @remove-step="removeSessionStep"
+          @cancel="cancelSessionTask"
+          @refresh="refreshTask"
         />
         <AgentControls
           :catalog="catalog"

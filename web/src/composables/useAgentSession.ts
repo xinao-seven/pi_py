@@ -11,6 +11,7 @@ import {
   getPlan,
   getPresets,
   getSession,
+  listTasks,
   sendAgentCommand,
 } from '@/lib/api';
 import { INITIAL_STREAM_STATE, reduceAgentEvent } from '@/lib/agent-events';
@@ -28,6 +29,7 @@ import type {
   RetryInfo,
   SessionDetail,
   SessionPreset,
+  TaskRecord,
 } from '@/types';
 
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
@@ -57,6 +59,8 @@ export function useAgentSession(options: AgentSessionOptions) {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const plan = ref<PlanSnapshot | null>(null);
+  // 当前会话的任务（M2）：由 REST 首次加载 + SSE task_updated 增量更新。
+  const task = ref<TaskRecord | null>(null);
   const stream = reactive<AgentStreamState>({ ...INITIAL_STREAM_STATE });
   const contextUsage = ref<ContextUsage | null>(null);
   const catalog = ref<ModelCatalog | null>(null);
@@ -119,16 +123,21 @@ export function useAgentSession(options: AgentSessionOptions) {
     const sequence = ++loadSequence;
     if (showLoading) loading.value = true;
     try {
-      const [nextDetail, state, planSnapshot] = await Promise.all([
+      const [nextDetail, state, planSnapshot, taskRecord] = await Promise.all([
         getSession(sessionId),
         getAgentState(sessionId),
         getPlan(sessionId)
           .then((response) => response.plan)
           .catch(() => null),
+        // 任务面板展示「该会话最新的未取消任务」；没有也照常打开会话。
+        listTasks({ sessionId, limit: 20 })
+          .then((tasks) => tasks.find((item) => item.status !== 'cancelled') ?? tasks[0] ?? null)
+          .catch(() => null),
       ]);
       if (sequence !== loadSequence || activeSessionId.value !== sessionId) return;
       detail.value = nextDetail;
       plan.value = planSnapshot;
+      task.value = taskRecord;
       messages.value = nextDetail.context.messages;
       entryIds.value = nextDetail.context.entryIds;
       contextUsage.value = state.state?.contextUsage ?? null;
@@ -317,6 +326,9 @@ export function useAgentSession(options: AgentSessionOptions) {
 
     if (event.type === 'plan_updated' && event.plan) {
       plan.value = event.plan as PlanSnapshot;
+    } else if (event.type === 'task_updated' && event.task) {
+      // 任务变更实时刷新面板（本会话的任务；其它会话的任务不会推到这里）。
+      task.value = event.task as TaskRecord;
     } else if (event.type === 'auto_retry_start') {
       retryInfo.value = {
         attempt: event.attempt ?? 0,
@@ -573,6 +585,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       assignStream({ ...INITIAL_STREAM_STATE });
       detail.value = null;
       plan.value = null;
+      task.value = null;
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = 'off';
@@ -599,6 +612,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       reconnectAttempt = 0;
       detail.value = null;
       plan.value = null;
+      task.value = null;
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = 'off';
@@ -640,6 +654,21 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
+  /** 重新加载当前会话的任务（面板写入成功后调用；SSE 也会推，用于兜底）。 */
+  async function refreshTask(): Promise<void> {
+    const sessionId = activeSessionId.value;
+    if (!sessionId) {
+      task.value = null;
+      return;
+    }
+    try {
+      const tasks = await listTasks({ sessionId, limit: 20 });
+      task.value = tasks.find((item) => item.status !== 'cancelled') ?? tasks[0] ?? null;
+    } catch {
+      // 任务面板是增量能力：拉取失败不影响会话本身。
+    }
+  }
+
   function startCatalogRecovery(): void {
     if (catalogRetryTimer !== undefined) return;
     catalogRetryTimer = setInterval(() => void loadCatalog(), 2_000);
@@ -667,6 +696,8 @@ export function useAgentSession(options: AgentSessionOptions) {
     loading,
     error,
     plan,
+    task,
+    refreshTask,
     stream,
     contextUsage,
     catalog,

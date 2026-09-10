@@ -23,6 +23,11 @@ import type {
   SessionPresetInput,
   SkillsResponse,
   PlanSnapshot,
+  TaskEvidence,
+  TaskRecord,
+  TaskStatus,
+  TaskStepStatus,
+  TaskVerification,
 } from '@/types';
 
 interface ErrorEnvelope {
@@ -403,4 +408,125 @@ export async function pruneObservabilityRuns(before: string): Promise<{ deletedR
   return request(`/api/observability/runs?before=${encodeURIComponent(before)}`, {
     method: 'DELETE',
   });
+}
+
+// ---- 任务（M2） -------------------------------------------------------------
+
+/** 任务列表（按 updatedAt 倒序）。 */
+export async function listTasks(
+  params: { status?: TaskStatus; sessionId?: string; cwd?: string; limit?: number } = {},
+): Promise<TaskRecord[]> {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.sessionId) query.set('sessionId', params.sessionId);
+  if (params.cwd) query.set('cwd', params.cwd);
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  const text = query.toString();
+  const result = await request<{ tasks: TaskRecord[] }>(`/api/tasks${text ? `?${text}` : ''}`);
+  return result.tasks;
+}
+
+/** 任务详情。 */
+export async function getTask(taskId: string): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(`/api/tasks/${encodeURIComponent(taskId)}`);
+  return result.task;
+}
+
+export interface CreateTaskInput {
+  title: string;
+  goal: string;
+  sessionId?: string;
+  cwd?: string;
+  steps?: Array<{
+    title: string;
+    details?: string;
+    verification?: TaskVerification;
+    position?: number;
+  }>;
+}
+
+/** 新建任务。 */
+export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>('/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return result.task;
+}
+
+/** 修改任务（必须带 ifRevision；版本不匹配后端返回 409 task_conflict）。 */
+export async function updateTask(
+  taskId: string,
+  patch: {
+    title?: string;
+    goal?: string;
+    status?: TaskStatus;
+    blockedReason?: string;
+    conclusion?: string;
+    ifRevision: number;
+  },
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return result.task;
+}
+
+/** 取消任务（终态；不带 ifRevision 时是幂等 no-op）。 */
+export async function cancelTask(
+  taskId: string,
+  input: { ifRevision?: number; reason?: string } = {},
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/cancel`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return result.task;
+}
+
+/** 追加步骤。 */
+export async function addTaskStep(
+  taskId: string,
+  input: { title: string; details?: string; verification?: TaskVerification; ifRevision: number },
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/steps`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return result.task;
+}
+
+/** 修改步骤（状态 / 文案 / 顺序 / 证据）。 */
+export async function updateTaskStep(
+  taskId: string,
+  stepId: string,
+  patch: {
+    title?: string;
+    details?: string;
+    status?: TaskStepStatus;
+    position?: number;
+    evidence?: TaskEvidence;
+    blockedReason?: string;
+    ifRevision: number;
+  },
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(stepId)}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  );
+  return result.task;
+}
+
+/** 删除步骤（已完成的需 force=true）。 */
+export async function deleteTaskStep(
+  taskId: string,
+  stepId: string,
+  input: { ifRevision: number; force?: boolean },
+): Promise<TaskRecord> {
+  const result = await request<{ task: TaskRecord }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(stepId)}`,
+    { method: 'DELETE', body: JSON.stringify(input) },
+  );
+  return result.task;
 }
