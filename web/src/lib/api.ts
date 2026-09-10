@@ -8,6 +8,8 @@ import type {
   ForkSessionResponse,
   McpScope,
   McpServerInput,
+  McpTemplate,
+  McpTemplatesResponse,
   McpServersResponse,
   McpTestResult,
   MergeSessionResponse,
@@ -294,6 +296,12 @@ export async function getMcpServers(cwd?: string): Promise<McpServersResponse> {
   // 没有工作区上下文的界面选择 MCP 白名单。
   const query = cwd ? new URLSearchParams({ cwd }) : '';
   return request(`/api/mcp/servers${query ? `?${query}` : ''}`);
+}
+
+export async function getMcpTemplates(): Promise<McpTemplate[]> {
+  // 推荐模板库（静态目录，不需要工作区上下文）。
+  const result = await request<McpTemplatesResponse>('/api/mcp/templates');
+  return result.templates;
 }
 
 export async function upsertMcpServer(input: McpServerInput): Promise<void> {

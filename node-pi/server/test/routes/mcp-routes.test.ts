@@ -220,3 +220,30 @@ describe('/api/mcp routes', () => {
     }
   });
 });
+
+describe('GET /api/mcp/templates（M4.2 模板库）', () => {
+  it('returns the template catalog with derived flags', async () => {
+    const app = createApp({ agentDir: makeTemp('pi-agent-') });
+    const response = await app.inject({ method: 'GET', url: '/api/mcp/templates' });
+    expect(response.statusCode).toBe(200);
+    const templates = response.json().templates as Array<Record<string, unknown>>;
+    expect(templates.length).toBeGreaterThan(10);
+
+    const memory = templates.find((item) => item.id === 'memory');
+    expect(memory).toMatchObject({
+      name: 'memory',
+      transport: 'stdio',
+      canAddDirectly: true,
+      requiresCredentials: false,
+    });
+
+    const tavily = templates.find((item) => item.id === 'tavily');
+    expect(tavily).toMatchObject({ requiresCredentials: true, canAddDirectly: false });
+    expect((tavily?.env as Record<string, string>).TAVILY_API_KEY).toBe('$TAVILY_API_KEY');
+
+    // 组别齐全（前端按组渲染）
+    expect(new Set(templates.map((item) => item.group))).toEqual(
+      new Set(['core', 'research', 'browser', 'code', 'data', 'team', 'debug']),
+    );
+  });
+});

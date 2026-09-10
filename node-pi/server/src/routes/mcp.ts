@@ -10,6 +10,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { stat } from 'node:fs/promises';
 
 import { ApiError } from '../errors.js';
+import { listTemplates } from '../services/mcp/mcp-templates.js';
 import { AgentRegistry } from '../services/agent-registry.js';
 import { McpService } from '../services/mcp/mcp-service.js';
 import { parseServerConfig, type McpScope } from '../services/mcp/mcp-config.js';
@@ -32,6 +33,10 @@ export const mcpRoutes: FastifyPluginAsync<McpRouteOptions> = async (app, option
   // GET /api/mcp/servers?cwd=<工作区> —— 合并配置 + 实时连接状态 + 工具清单。
   // cwd 可选：缺省时只列用户级配置（不连接，状态 idle）——供预设编辑等
   // 没有工作区上下文的界面选择 MCP 白名单。
+  // GET /api/mcp/templates —— 推荐模板库（静态目录，不需要 cwd）。
+  // 中文说明：前端「模板库」面板据此渲染；无凭据且不缺必填输入的模板可以一键添加。
+  app.get('/templates', async () => ({ templates: listTemplates() }));
+
   app.get<{ Querystring: { cwd?: string } }>('/servers', async (request) => {
     const cwd = request.query.cwd ? await requiredCwd(request.query.cwd) : undefined;
     return {

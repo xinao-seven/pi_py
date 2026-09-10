@@ -17,7 +17,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ApiError } from '../../errors.js';
 import type { ServiceLogger } from '../service-logger.js';
 import type { McpServerConfig } from './mcp-config.js';
-import { fingerprintOf, interpolateEnvMap } from './mcp-tools.js';
+import { fingerprintOf, interpolateEnv, interpolateEnvMap } from './mcp-tools.js';
 
 /** 连接状态（前端徽标用）。idle = 仅配置、未建立连接（无 cwd 上下文的列表）。 */
 export type ServerStatus = 'connected' | 'connecting' | 'error' | 'disabled' | 'idle';
@@ -264,7 +264,9 @@ export class McpClientManager {
     if (config.transport === 'stdio') {
       return new StdioClientTransport({
         command: config.command ?? '',
-        args: config.args ?? [],
+        // 参数同样做 $ENV 插值：很多 server 只能用 `--token=...` 传凭据，
+        // 不插值就意味着密钥要明文写进 mcp.json——而该文件是与 CLI 共享的配置。
+        args: (config.args ?? []).map(interpolateEnv),
         // 合并 process.env，保证 npx 等依赖 PATH 的命令可用；用户 env 覆盖同名项。
         env: {
           ...(process.env as Record<string, string>),

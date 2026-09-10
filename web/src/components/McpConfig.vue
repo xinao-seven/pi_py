@@ -1,15 +1,22 @@
 <!-- MCP Server 配置弹窗：列出已配置的 MCP server（含连接状态/工具数），支持增删改、启停、试连。 -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import {
   deleteMcpServer,
   getMcpServers,
+  getMcpTemplates,
   testMcpServer,
   updateMcpServer,
   upsertMcpServer,
 } from '@/lib/api';
-import type { McpScope, McpServerConfigInput, McpServerView, McpTransport } from '@/types';
+import type {
+  McpScope,
+  McpServerConfigInput,
+  McpServerView,
+  McpTemplate,
+  McpTransport,
+} from '@/types';
 
 const props = withDefaults(defineProps<{ cwd: string; embedded?: boolean }>(), { embedded: false });
 const emit = defineEmits<{ close: [] }>();
@@ -36,8 +43,29 @@ const testResult = ref<string | null>(null);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
 const draft = ref<McpDraft | null>(null);
+const templates = ref<McpTemplate[]>([]);
+const templatesOpen = ref(false);
+const addingTemplate = ref<string | null>(null);
 
-onMounted(load);
+/** 模板分组标题（与后端 MCP_TEMPLATE_GROUPS 对应）。 */
+const GROUP_LABEL: Record<McpTemplate['group'], string> = {
+  core: '通用能力',
+  research: '联网检索与文档',
+  browser: '浏览器自动化',
+  code: '代码 / 仓库',
+  data: '数据库',
+  team: '协作与线上排障',
+  debug: '调试',
+};
+const groupedTemplates = computed(() =>
+  (Object.keys(GROUP_LABEL) as Array<McpTemplate['group']>)
+    .map((group) => ({ group, label: GROUP_LABEL[group], items: templates.value.filter((item) => item.group === group) }))
+    .filter((entry) => entry.items.length > 0),
+);
+
+onMounted(async () => {
+  await Promise.all([load(), loadTemplates()]);
+});
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -50,6 +78,71 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadTemplates(): Promise<void> {
+  try {
+    templates.value = await getMcpTemplates();
+  } catch {
+    // 模板库是增量能力：拉不到就只显示手工添加，不影响已有配置。
+    templates.value = [];
+  }
+}
+
+/** 模板 → 表单草稿（供「填入表单」与「一键添加」共用）。 */
+function templateToDraft(template: McpTemplate): McpDraft {
+  return {
+    name: template.name,
+    scope: 'user',
+    transport: template.transport,
+    command: template.command ?? '',
+    args: (template.args ?? []).join(' '),
+    env: mapToLines(template.env),
+    cwd: '',
+    url: template.url ?? '',
+    headers: mapToLines(template.headers),
+    enabled: true,
+    approval: template.suggestApproval,
+  };
+}
+
+/** 填入表单：用户补参数/凭据后再保存（有 needsInput 或需要凭据的模板走这里）。 */
+function fillTemplate(template: McpTemplate): void {
+  draft.value = templateToDraft(template);
+  formOpen.value = true;
+  testResult.value = null;
+  error.value = null;
+}
+
+/** 一键添加：无凭据、也不缺必填输入的模板直接写入配置（写完可以立即试连）。 */
+async function addFromTemplate(template: McpTemplate): Promise<void> {
+  addingTemplate.value = template.id;
+  error.value = null;
+  testResult.value = null;
+  try {
+    const config = draftToConfig(templateToDraft(template));
+    await upsertMcpServer({ name: template.name, cwd: props.cwd, scope: 'user', server: config });
+    await load();
+    testResult.value = `已添加「${template.title}」：建议点「连接测试」确认它能起来（或展开卡片看状态）`;
+  } catch (cause) {
+    error.value = messageOf(cause);
+  } finally {
+    addingTemplate.value = null;
+  }
+}
+
+function accessLabel(access: McpTemplate['access']): string {
+  return { 'read-only': '只读', 'local-write': '本地写', 'external-write': '外部副作用' }[access];
+}
+
+/** 模板卡片上的徽标（是否需要凭据、风险、建议审批、工具数）。 */
+function templateBadges(template: McpTemplate): string[] {
+  const badges = [accessLabel(template.access)];
+  if (template.requiresCredentials) badges.push('需要凭据');
+  if (template.needsInput) badges.push('需填参数');
+  if (template.suggestApproval) badges.push('建议审批');
+  badges.push(`工具 ${template.toolCountHint}`);
+  return badges;
 }
 
 function toDraft(server: McpServerView): McpDraft {
@@ -380,7 +473,68 @@ function messageOf(cause: unknown): string {
       <div v-else class="config-body">
         <div class="config-presets">
           <button type="button" class="config-add" @click="addServer">＋ 添加 Server</button>
+          <button
+            v-if="templates.length"
+            type="button"
+            class="config-add"
+            :aria-expanded="templatesOpen"
+            @click="templatesOpen = !templatesOpen"
+          >
+            {{ templatesOpen ? '收起模板库' : `模板库（${templates.length} 个推荐）` }}
+          </button>
         </div>
+
+        <!--
+          模板库：把「知道包名和参数」这件事接过来。
+          无凭据且不缺必填输入的模板可以一键添加；其余填入表单后由用户补凭据/参数。
+          风险徽标（只读 / 本地写 / 外部副作用、建议审批、工具数）是刻意的：
+          每个 server 的工具都会进系统提示词，装太多会分散模型注意力。
+        -->
+        <section v-if="templatesOpen" class="mcp-templates" aria-label="MCP server 模板库">
+          <p class="config-help mcp-help">
+            从推荐模板一键添加；需要凭据的模板会先填进表单，你把
+            <code>$ENV</code> 变量准备好即可。建议每个工作区常驻 2–4 个（工具都会进提示词）。
+          </p>
+          <div v-for="entry in groupedTemplates" :key="entry.group" class="mcp-template-group">
+            <h3>{{ entry.label }}</h3>
+            <article v-for="template in entry.items" :key="template.id" class="mcp-template-card">
+              <div class="mcp-template-head">
+                <strong>{{ template.title }}</strong>
+                <span v-for="badge in templateBadges(template)" :key="badge" class="mcp-badge">
+                  {{ badge }}
+                </span>
+              </div>
+              <p class="mcp-template-desc">{{ template.description }}</p>
+              <code class="mcp-template-cmd"
+                >{{ template.transport === 'stdio' ? template.command : template.url }}
+                {{ (template.args ?? []).join(' ') }}</code
+              >
+              <ul v-if="template.notes?.length" class="mcp-template-notes">
+                <li v-for="note in template.notes" :key="note">{{ note }}</li>
+              </ul>
+              <p v-if="template.needsInput" class="mcp-template-needs">
+                需要你补充：{{ template.needsInput }}
+              </p>
+              <div class="mcp-template-actions">
+                <button
+                  v-if="template.canAddDirectly"
+                  type="button"
+                  class="config-add"
+                  :disabled="addingTemplate === template.id"
+                  @click="addFromTemplate(template)"
+                >
+                  {{ addingTemplate === template.id ? '添加中…' : '一键添加' }}
+                </button>
+                <button type="button" class="config-add" @click="fillTemplate(template)">
+                  填入表单
+                </button>
+                <a class="mcp-template-link" :href="template.homepage" target="_blank" rel="noreferrer">
+                  文档 ↗
+                </a>
+              </div>
+            </article>
+          </div>
+        </section>
         <div v-if="servers.length === 0" class="config-empty">
           尚未配置 MCP server，点击上方添加。
         </div>
@@ -475,6 +629,92 @@ function messageOf(cause: unknown): string {
 </template>
 
 <style scoped>
+/* 模板库：推荐清单卡片（分组 + 风险徽标 + 一键添加/填入表单） */
+.mcp-templates {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(231, 255, 111, 0.03), transparent 40%), var(--panel);
+}
+
+.mcp-template-group {
+  margin-top: 10px;
+}
+
+.mcp-template-group h3 {
+  margin: 0 0 6px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mcp-template-card {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  margin-bottom: 6px;
+}
+
+.mcp-template-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcp-template-desc {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-template-cmd {
+  display: block;
+  margin-top: 5px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mcp-template-notes {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.mcp-template-needs {
+  margin: 5px 0 0;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.mcp-template-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 7px;
+}
+
+.mcp-template-link {
+  color: var(--faint);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.mcp-template-link:hover {
+  color: var(--accent);
+}
+
 .mcp-title-row {
   display: flex;
   align-items: center;

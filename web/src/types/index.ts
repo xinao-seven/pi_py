@@ -233,6 +233,39 @@ export interface McpServerConfigInput {
   approval?: 'required';
 }
 
+/** MCP server 模板（GET /api/mcp/templates）：推荐清单，前端据此一键填入/添加。 */
+export type McpTemplateGroup = 'core' | 'research' | 'browser' | 'code' | 'data' | 'team' | 'debug';
+export type McpTemplateAccess = 'read-only' | 'local-write' | 'external-write';
+export interface McpTemplate {
+  id: string;
+  name: string;
+  title: string;
+  group: McpTemplateGroup;
+  description: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  optionalEnv?: Record<string, string>;
+  /** 光有模板还缺什么（缺了就不能一键添加）。 */
+  needsInput?: string;
+  access: McpTemplateAccess;
+  suggestApproval: boolean;
+  toolCountHint: string;
+  notes?: string[];
+  homepage: string;
+  /** 需要用户先准备凭据（环境变量）。 */
+  requiresCredentials: boolean;
+  /** 可以直接一键添加。 */
+  canAddDirectly: boolean;
+}
+
+export interface McpTemplatesResponse {
+  templates: McpTemplate[];
+}
+
 /** POST/PATCH 请求体：cwd 为工作区，server 为嵌套的配置。 */
 export interface McpServerInput {
   name?: string;
