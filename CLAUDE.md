@@ -34,7 +34,7 @@ pi_py/
 │   │   │   ├── errors.ts   # 统一 API 错误
 │   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/presets/sessions/skills/workspaces
 │   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/plan-mode-service/mcp/...
-│   │   ├── extensions/     # ★ 后端专属扩展（每个 .ts 文件一个，自动扫描加载）
+│   │   ├── spike/          # M0 验证脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
 │   │   └── test/           # Vitest（映射 src/ 结构）
 │   └── utools/             # uTools 桌面插件（拉起 node-pi/server + 加载 web 构建）
 ├── pi-python/              # Python 复刻（学习参考）
@@ -99,9 +99,17 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 ## 安全规范（重要）
 
-- **`~/.pi/agent` 只读**：`auth.json`（API Key 唯一来源）、`settings.json`、`models.json`、`models-store.json`、`sessions/` 一律只读，绝不创建/改写，避免污染原版 pi。
+- **与原版 pi CLI 共享 `~/.pi/agent`（最高优先级约束）**：该目录是原版 pi CLI 的数据目录，**CLI 必须能继续以原版行为运行**。Web 与 CLI **共享会话与配置**，扩展与 trace **各自独立**。原则是：
+  - **共享态的增量写入允许，破坏性写入禁止。**
+  - 禁止：**删除** pi 的文件（会话 JSONL）、写入时**剥离未知字段**、写入 pi 无法解析的内容、把明文密钥写进共享配置。
+  - 允许：新增会话、向会话追加条目、向 `models.json` 新增/修改 provider。共享态写入必须满足：校验前置 + spread 保留未知字段 + 临时文件 rename 原子写。参考实现：`services/model-config-service.ts`。
+  - `auth.json` / `settings.json` / `models-store.json` 只读（pi 自己持 `proper-lockfile` 写入）；`models.json` pi **只读**，故 web 写入无锁冲突。
+  - 本项目自有文件（`mcp.json` / `node-server-presets.json` / `node-server-workspaces.json`）与 trace/task 存储**建议**落在 `~/.pi/agent-node-server/`，避免占用 pi 命名空间（无功能风险，仅卫生）。
+  - **trace 必须对 CLI 零影响**：只读 SDK 内存事件、只写自己的库文件；`ledger.record()` 一律 fire-and-forget + 异常降级为 warn，**绝不能冒泡到 agent loop**。
+  - 测试必须隔离 `agentDir` 到临时目录，禁止触碰真实 `~/.pi` 或网络。
+  - 边界核实与逐文件判定见 `docs/node-platform-m0-spike.md` 第 3 节。
 - **密钥绝不外泄**：任何 API 响应不得包含真实密钥；自身配置只保存 `$ENV_VAR` 引用，按 `auth.json` 的 key 名映射解析（`$DEEPSEEK_API_KEY → auth.json["deepseek"].key`）。
-- Node 后端写 `~/.pi/agent/node-server-workspaces.json`（工作区登记）；Python 后端写 `~/.pi/agent-python/`（models.json / workspaces.json）。测试必须隔离 `agentDir` 到临时目录，禁止触碰真实 `~/.pi` 或网络。
+- Node 后端的本项目自有可写状态（trace / task / mcp / presets / workspaces）建议落在 `~/.pi/agent-node-server/`；Python 后端落在 `~/.pi/agent-python/`。共享态（`models.json`、`sessions/`）按上一条的红线写入。测试必须隔离 `agentDir` 到临时目录，禁止触碰真实 `~/.pi` 或网络。
 - **危险命令人工确认**：`bash` 命中危险规则（递归删除、格式化、关机、强制 Git 推送等）时挂起执行，向 SSE 推 `tool_call_pending`，前端弹窗，由 `approve_tool` 命令允许/拒绝。拒绝或超时（Node 30 秒 / Python 60 秒）按拒绝处理。`ToolApprovalBroker`（Node）/ `ToolApprovalGate`（Python）是唯一真相源。
 - 文件访问必须确认工作区已登记，保持路径边界与敏感文件拦截（`.env`、凭据、密钥后缀）。
 
@@ -134,6 +142,9 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/development-standards.md` | Python 项目开发规范 |
 | `node-pi/server/DEVELOPMENT.md` | Node 后端开发规范 |
 | `docs/node-pi-backend.md` | Node 后端功能清单 |
+| `docs/node-platform-plan.md` | Node 平台化规划（M0–M5 里程碑、契约变更、验收标准） |
+| `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
+| `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |

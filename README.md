@@ -93,6 +93,13 @@ cd node-pi/server && npm run typecheck && npm test
 cd pi-python && python -m pytest
 ```
 
+CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`node-backend`（format → typecheck → test → build → spike）、
+`web`（typecheck → lint → test → build）、`eval`（离线 golden set，M4 接线后自动生效）。
+
+`npm run spike` 是 **M0 能力守护**，不是探索脚本：它离线验证依赖布局未破坏关键能力
+（`fauxProvider` 可解析、`node:sqlite` 可用、父子会话识别、`tool_call` 钩子链与阻断语义）。
+详见 [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md)。
+
 ## 文档
 
 | 文档 | 内容 |
@@ -106,4 +113,7 @@ cd pi-python && python -m pytest
 | [`docs/node-mcp-guide.md`](docs/node-mcp-guide.md) | MCP 支持总结（原理、实现、配置方法与示例） |
 | [`docs/node-mcp-support.md`](docs/node-mcp-support.md) | MCP 功能的设计与实现细节 |
 | [`docs/node-mcp-implementation.md`](docs/node-mcp-implementation.md) | MCP 实现详解（代码走读） |
+| [`docs/node-platform-plan.md`](docs/node-platform-plan.md) | Node 平台化规划（可观测/任务持久化/断点续跑/Plan 重构/Subagent） |
+| [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md) | M0 验证报告：存储选型与 `~/.pi/agent` 只读边界审计 |
+| [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
