@@ -38,7 +38,7 @@ async function runTool(
 }
 
 describe('buildPlanTools', () => {
-  it('exposes the five plan tools with schemas', () => {
+  it('exposes the four plan tools with schemas', () => {
     const { toolbox } = makeToolbox();
     const tools = buildPlanTools(toolbox);
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -46,7 +46,6 @@ describe('buildPlanTools', () => {
       'update_plan',
       'complete_step',
       'block_step',
-      'ask_user',
     ]);
     for (const tool of tools) {
       expect(tool.parameters).toBeDefined();
@@ -308,7 +307,7 @@ describe('complete_step', () => {
   });
 });
 
-describe('block_step / ask_user', () => {
+describe('block_step', () => {
   it('blocks a step with a reason and pauses the plan', async () => {
     const { tasks, toolbox } = makeToolbox();
     const plan = withPlan(toolbox, tasks);
@@ -322,26 +321,5 @@ describe('block_step / ask_user', () => {
     const task = tasks.get(plan.id);
     expect(task.status).toBe('blocked');
     expect(task.steps[0]).toMatchObject({ status: 'blocked', blockedReason: '缺少生产环境凭据' });
-  });
-
-  it('records a clarification question and clears it on answer', async () => {
-    const { tasks, toolbox } = makeToolbox();
-    const plan = withPlan(toolbox, tasks);
-    const result = await runTool(toolbox, 'ask_user', {
-      question: '要兼容 CLI 吗？',
-      options: ['要', '不要'],
-    });
-    expect(result.details).toMatchObject({ status: 'drafting' });
-    expect(JSON.stringify(result.content)).toContain('要兼容 CLI 吗？');
-    let task = tasks.get(plan.id);
-    expect(toPlanView(task)).toMatchObject({
-      awaitingUserAction: true,
-      question: '要兼容 CLI 吗？',
-      questionOptions: ['要', '不要'],
-    });
-    // 用户回答后清空问题，等待重新提交计划。
-    tasks.setPlanState(plan.id, { question: null });
-    task = tasks.get(plan.id);
-    expect(toPlanView(task).question).toBeUndefined();
   });
 });

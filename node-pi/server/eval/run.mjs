@@ -254,6 +254,71 @@ const CASES = [
     },
   },
   {
+    id: 'ask-user-roundtrip',
+    title: '提问往返：模型用 ask_user 问一句 → 用户在选择后回答 → 模型带着答案继续',
+    steps: [{ title: '按用户选择实施' }],
+    script: () => [
+      fauxAssistantMessage(
+        [fauxToolCall('submit_plan', { title: '评测计划', steps: [{ title: '按用户选择实施' }] })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('计划已提交。'),
+      // 执行期提问：工具会挂起整个 run，直到用户回答。
+      fauxAssistantMessage(
+        [
+          fauxToolCall('ask_user', {
+            questions: [
+              {
+                id: 'deploy',
+                question: '这次要一并部署到生产吗？',
+                options: ['部署', '先不部署'],
+              },
+            ],
+          }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      // 拿到答案后按答案完成步骤（把答案写进证据里，便于断言答案真的回流了）。
+      fauxAssistantMessage(
+        [
+          fauxToolCall('complete_step', {
+            stepId: 's1',
+            evidence: { summary: '用户选择：先不部署；已按此实施' },
+          }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('完成。'),
+    ],
+    /** run 被提问挂起：像前端那样轮询到挂起问题并回答。 */
+    async whileExecuting(context) {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        const pending = context.harness.questions.pendingForSession(context.sessionId);
+        if (pending !== undefined) {
+          const first = pending.questions[0];
+          await context.harness.plans.state; // 保持与真实前端一致的异步节奏
+          context.harness.questions.answer(context.sessionId, pending.questionId, {
+            answers: [{ id: first.id, selected: ['先不部署'], text: '下周再上' }],
+          });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error('提问没有按预期挂起');
+    },
+    async expect(context) {
+      const plan = context.plans.state(context.sessionId);
+      const step = context.tasks.get(plan.taskId).steps[0];
+      return {
+        pass:
+          plan.status === 'completed' &&
+          step.evidence?.summary?.includes('先不部署') === true &&
+          context.seen.toolResults.some((result) => /先不部署/.test(result.text)),
+        detail: `plan=${plan.status} step=${step.status} evidence=${step.evidence?.summary ?? 'none'}`,
+      };
+    },
+  },
+  {
     id: 'no-legacy-markers',
     title: '零标记：全程不写 Plan: 标题 / [DONE:n]，计划与进度仍完整',
     steps: [{ title: '一步就够' }],
@@ -288,8 +353,12 @@ async function runCase(definition) {
     let plan = harness.plans.state(harness.sessionId);
     let planAccepted = true;
     if (plan.status === 'proposed') {
-      await harness.plans.command(harness.sessionId, 'execute');
+      // whileExecuting：与本次 run 并发的动作（例如模型提问挂起了 run，需要边跑边答）。
+      const starting = harness.plans.command(harness.sessionId, 'execute');
+      const hook = definition.whileExecuting?.(context);
+      await starting;
       await harness.waitForSettle();
+      if (hook !== undefined) await hook;
       plan = harness.plans.state(harness.sessionId);
     } else if (plan.status !== 'drafting') {
       planAccepted = false;

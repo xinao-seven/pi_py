@@ -109,6 +109,8 @@ export interface AgentState {
   contextUsage: ContextUsage | null;
   sessionStats: Record<string, unknown>;
   pendingToolCall?: PendingToolCall | null;
+  /** 刷新页面后仍能恢复提问弹窗（后端挂起队列是唯一真相源）。 */
+  pendingQuestion?: PendingQuestion | null;
 }
 
 export interface AgentStateResponse {
@@ -289,6 +291,10 @@ export interface AgentEvent {
   task?: TaskRecord;
   /** 待恢复任务清单（M3 SSE：task_recovery_required）。 */
   tasks?: TaskRecoveryItem[];
+  /** 待用户回答的提问（M4.1 SSE：question_pending）。 */
+  question?: PendingQuestion;
+  /** 提问已结算（M4.1 SSE：question_resolved）。 */
+  questionId?: string;
   [key: string]: unknown;
 }
 
@@ -311,6 +317,38 @@ export interface PendingToolCall {
  * 计划状态（M4）：Plan 是 Task 的受控视图，不再是会话内的临时数据。
  * completed / abandoned 由任务状态推导，drafting / proposed / executing / paused 是落库的意图。
  */
+/**
+ * 向用户提问（M4.1）：与「危险命令审批」并列的第二条人机交互通道。
+ * 模型一次可以问多个问题，每题可给选项（单选/多选）并允许自由输入；
+ * 回答作为工具返回值给模型，因此模型不需要结束本轮等待。
+ */
+export interface QuestionSpec {
+  id: string;
+  question: string;
+  options?: string[];
+  /** 多选（默认单选）。 */
+  multiSelect?: boolean;
+  /** 允许自由输入（默认 true）。 */
+  allowFreeText?: boolean;
+  details?: string;
+}
+
+export interface QuestionAnswer {
+  id: string;
+  selected: string[];
+  text?: string;
+  skipped?: boolean;
+}
+
+/** SSE `question_pending` 与会话状态快照共用的载荷。 */
+export interface PendingQuestion {
+  sessionId: string;
+  questionId: string;
+  toolCallId: string;
+  questions: QuestionSpec[];
+  createdAt: string;
+}
+
 export type PlanStatus =
   | 'drafting'
   | 'proposed'
@@ -364,12 +402,13 @@ export type PlanCommandType =
 export type PromptMode = 'direct' | 'plan';
 
 export interface AgentStreamState {
-  // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误与待确认工具调用
+  // 前端简化的流式状态机：运行中、阶段、当前流式消息、错误、待确认工具调用与待回答提问
   running: boolean;
   phase: AgentPhase;
   streamingMessage: AgentMessage | null;
   error: string | null;
   pendingToolCall: PendingToolCall | null;
+  pendingQuestion: PendingQuestion | null;
 }
 
 export interface RetryInfo {

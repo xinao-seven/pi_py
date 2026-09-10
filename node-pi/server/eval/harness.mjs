@@ -14,7 +14,11 @@ import {
   DefaultResourceLoader,
 } from '@earendil-works/pi-coding-agent';
 
-import { AgentRegistry, dropInlineOwnedExtensions } from '../dist/services/agent-registry.js';
+import {
+  AgentRegistry,
+  dropInlineOwnedExtensions,
+  withInlineTools,
+} from '../dist/services/agent-registry.js';
 import { PlanModeService } from '../dist/services/plan-mode-service.js';
 import { PLAN_TOOL_NAMES } from '../dist/services/plan-tools.js';
 import { TaskService } from '../dist/services/task-service.js';
@@ -22,6 +26,7 @@ import { MemoryTaskRepository } from '../dist/services/platform/task-repository.
 import { TaskRecoveryService } from '../dist/services/task-recovery.js';
 import { TaskInFlightTracker } from '../dist/services/task-recovery-extension.js';
 import { TaskRunner } from '../dist/services/task-runner.js';
+import { ASK_USER_TOOL_NAME, QuestionBroker } from '../dist/services/user-question.js';
 
 export { fauxAssistantMessage, fauxToolCall };
 
@@ -50,6 +55,9 @@ export async function startHarness(options = {}) {
   runtime.registerNativeProvider(faux.provider);
   const model = runtime.getModel(faux.provider.id, faux.getModel().id);
 
+  // 提问通道（M4.1）：与 app.ts 同构地注入；评测里脚本化模型不会真的提问，
+  // 但工具本身必须在场（否则「模型可见工具集」的断言就不是真实环境了）。
+  const questions = new QuestionBroker({ timeoutMs: 60_000 });
   const tasks = new TaskService(new MemoryTaskRepository());
   const plans = new PlanModeService();
   plans.setTaskService(tasks);
@@ -63,17 +71,19 @@ export async function startHarness(options = {}) {
     onSettled: (sessionId) => runner?.handleSettled(sessionId),
   });
 
-  const toolList =
-    options.toolNames === undefined
-      ? undefined
-      : [...new Set([...options.toolNames, ...PLAN_TOOL_NAMES])];
+  // 与 AgentRegistry.create 走同一个并入逻辑（预设白名单是「可用工具白名单」）。
+  const toolList = withInlineTools(options.toolNames, [...PLAN_TOOL_NAMES, ASK_USER_TOOL_NAME]);
 
   const factory = {
     async create(input) {
       const loader = new DefaultResourceLoader({
         cwd: input.cwd,
         agentDir,
-        extensionFactories: [plans.buildExtension(), tracker.buildExtension()],
+        extensionFactories: [
+          plans.buildExtension(),
+          tracker.buildExtension(),
+          questions.buildExtension(),
+        ],
         extensionsOverride: (base) => dropInlineOwnedExtensions(base).result,
       });
       await loader.reload();
@@ -151,6 +161,7 @@ export async function startHarness(options = {}) {
     registry,
     tasks,
     plans,
+    questions,
     runner,
     recovery,
     session: entry.session,
@@ -171,6 +182,7 @@ export async function startHarness(options = {}) {
         // 关闭失败不影响评测结论。
       }
       plans.dispose();
+      questions.dispose();
       tasks.dispose();
       rmSync(root, { recursive: true, force: true });
     },

@@ -9,6 +9,7 @@ import ChatInput from '@/components/ChatInput.vue';
 import MessageView from '@/components/MessageView.vue';
 import PlanProgress from '@/components/PlanProgress.vue';
 import TaskPanel from '@/components/TaskPanel.vue';
+import QuestionDialog from '@/components/QuestionDialog.vue';
 import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
 import {
@@ -24,7 +25,14 @@ import {
   updateTaskStep,
 } from '@/lib/api';
 import { useAppStore } from '@/stores/app';
-import type { AgentMessage, SessionInfo, SessionTreeNode, TaskStep, TaskStepStatus } from '@/types';
+import type {
+  AgentMessage,
+  QuestionAnswer,
+  SessionInfo,
+  SessionTreeNode,
+  TaskStep,
+  TaskStepStatus,
+} from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;
@@ -79,6 +87,7 @@ const {
   send,
   abort,
   approveToolCall,
+  answerQuestion,
   steer,
   followUp,
   changeModel,
@@ -210,6 +219,32 @@ async function mergeFrom(sourceSessionId: string): Promise<void> {
 }
 
 /** 任务面板正在写入（串行化，避免 ifRevision 竞争）。 */
+const questionBusy = ref(false);
+/** 待回答的提问（来自 SSE question_pending 或刷新后的状态快照）。 */
+const pendingQuestion = computed(() => stream.pendingQuestion);
+
+async function submitQuestionAnswers(answers: QuestionAnswer[]): Promise<void> {
+  const pending = stream.pendingQuestion;
+  if (!pending) return;
+  questionBusy.value = true;
+  try {
+    await answerQuestion({ questionId: pending.questionId, answers });
+  } finally {
+    questionBusy.value = false;
+  }
+}
+
+async function cancelQuestion(): Promise<void> {
+  const pending = stream.pendingQuestion;
+  if (!pending) return;
+  questionBusy.value = true;
+  try {
+    await answerQuestion({ questionId: pending.questionId, cancelled: true });
+  } finally {
+    questionBusy.value = false;
+  }
+}
+
 const taskBusy = ref(false);
 const taskError = ref<string | null>(null);
 
@@ -616,6 +651,13 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
       v-if="stream.pendingToolCall"
       :pending="stream.pendingToolCall"
       @approve="approveToolCall"
+    />
+    <QuestionDialog
+      v-if="pendingQuestion"
+      :pending="pendingQuestion"
+      :busy="questionBusy"
+      @submit="submitQuestionAnswers"
+      @cancel="cancelQuestion"
     />
   </section>
 </template>

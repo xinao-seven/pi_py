@@ -11,6 +11,7 @@ import {
   type PiSessionFactory,
 } from '../../src/services/agent-registry.js';
 import { SessionLedger } from '../../src/services/observability/session-ledger.js';
+import { QuestionBroker } from '../../src/services/user-question.js';
 import { openPlatformStore, type PlatformStore } from '../../src/services/platform/store.js';
 import type { StreamEvent } from '../../src/services/agent-registry.js';
 
@@ -708,5 +709,89 @@ describe('plan routes（M4）', () => {
     ]);
     // pause / abandon / plan_disable 都要真的停手（否则模型会继续跑完）。
     expect(abort).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('answer_question 路由（M4.1）', () => {
+  it('pushes question_pending and settles it with the answer command', async () => {
+    const questions = new QuestionBroker();
+    const registry = new AgentRegistry(
+      factory,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      questions,
+    );
+    const app = createApp({ store: memoryStore(), registry, questionBroker: questions });
+    apps.push(app);
+    const sessionId = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/agent/new',
+        payload: { cwd: tempWorkspace(), message: 'hello' },
+      })
+    ).json().sessionId as string;
+
+    // 等提问挂起（工具在真实链路里由模型调用；这里直接走 broker）。
+    const asked = questions.ask({
+      sessionId,
+      toolCallId: 'call-1',
+      questions: [{ id: 'q1', question: '继续吗？', options: ['继续', '停'] }],
+    });
+    const pending = questions.pendingForSession(sessionId)!;
+    // 会话状态快照里能看到挂起的问题（刷新页面也能恢复弹窗）。
+    expect(registry.state(sessionId)?.pendingQuestion).toMatchObject({
+      questionId: pending.questionId,
+    });
+
+    const answered = await app.inject({
+      method: 'POST',
+      url: `/api/agent/${sessionId}`,
+      payload: {
+        type: 'answer_question',
+        questionId: pending.questionId,
+        answers: [{ id: 'q1', selected: ['继续'] }],
+      },
+    });
+    expect(answered.statusCode).toBe(200);
+    expect((await asked).outcome).toMatchObject({ answered: true, reason: 'user' });
+    expect(registry.state(sessionId)?.pendingQuestion).toBeNull();
+  });
+
+  it('rejects answers for unknown questions and malformed payloads', async () => {
+    const questions = new QuestionBroker();
+    const registry = new AgentRegistry(
+      factory,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      questions,
+    );
+    const app = createApp({ store: memoryStore(), registry, questionBroker: questions });
+    apps.push(app);
+    const sessionId = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/agent/new',
+        payload: { cwd: tempWorkspace(), message: 'hello' },
+      })
+    ).json().sessionId as string;
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: `/api/agent/${sessionId}`,
+      payload: { type: 'answer_question', questionId: 'nope', answers: [] },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ error: { code: 'question_not_found' } });
+
+    const badAnswers = await app.inject({
+      method: 'POST',
+      url: `/api/agent/${sessionId}`,
+      payload: { type: 'answer_question', questionId: 'x', answers: 'nope' },
+    });
+    expect(badAnswers.statusCode).toBe(422);
   });
 });

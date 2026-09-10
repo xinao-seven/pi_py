@@ -39,6 +39,7 @@ import { ModelConfigService } from './services/model-config-service.js';
 import { PresetService } from './services/preset-service.js';
 import { SkillService } from './services/skill-service.js';
 import { ToolApprovalBroker } from './services/tool-approval.js';
+import { QuestionBroker } from './services/user-question.js';
 import { PlanModeService } from './services/plan-mode-service.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { McpService } from './services/mcp/mcp-service.js';
@@ -69,6 +70,8 @@ export interface AppOptions {
   modelConfigService?: ModelConfigService; // models.json 读写
   presetService?: PresetService; // 会话预设读写
   planService?: PlanModeService;
+  /** 提问通道（测试可注入：缩短超时、固定 id）。 */
+  questionBroker?: QuestionBroker;
   mcpService?: McpService; // MCP server 配置与连接池（测试可注入 mock）
   logger?: FastifyServerOptions['logger']; // Fastify 内置 Pino 日志器；默认 false（测试静默）
   webDistDir?: string; // 前端构建产物目录；提供且存在时托管静态页面（SPA 回退），否则仅 API
@@ -150,6 +153,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 闭包直接引用这两个实例（不走事件总线），挂起等待由 broker 的 Promise 结算。
   const approvals = new ToolApprovalBroker();
   const plans = options.planService ?? new PlanModeService({ logger: app.log });
+  // 向用户提问的通道（M4.1）：与审批并列的第二条人机交互通道，默认启用。
+  const questions = options.questionBroker ?? new QuestionBroker();
 
   const agentDir =
     options.agentDir ?? `${process.env.USERPROFILE ?? process.env.HOME ?? '.'}/.pi/agent`;
@@ -222,11 +227,13 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
         app.log,
         ledger,
         inFlight,
+        questions,
       ),
       approvals,
       plans,
       app.log,
       ledger,
+      questions,
     );
   runner = new TaskRunner({
     tasks,

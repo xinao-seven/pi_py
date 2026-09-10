@@ -2,35 +2,11 @@
 //
 // 与 M0 的 spike 一样，用真实 SDK + 真实 AgentRegistry + 真实 PlanModeService / TaskRunner，
 // 只把模型换成 fauxProvider（脚本化响应），全程离线、临时目录，不碰真实 ~/.pi/agent。
+// 装配与 eval 共用 eval/harness.mjs（避免「评测里跑通的路径和这里不是同一条」）。
 //
 // 这个 spike 是 M4 的核心验收：模型**从不输出** `Plan:` 标题、编号列表或 `[DONE:n]`，
 // 计划与推进全部通过工具调用完成，且服务端会校验步骤证据。
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import {
-  ModelRuntime,
-  createAgentSession,
-  SessionManager,
-  DefaultResourceLoader,
-} from '@earendil-works/pi-coding-agent';
-import { AgentRegistry, dropInlineOwnedExtensions } from '../dist/services/agent-registry.js';
-import { PlanModeService } from '../dist/services/plan-mode-service.js';
-import { TaskService } from '../dist/services/task-service.js';
-import { MemoryTaskRepository } from '../dist/services/platform/task-repository.js';
-import { TaskRecoveryService } from '../dist/services/task-recovery.js';
-import { TaskInFlightTracker } from '../dist/services/task-recovery-extension.js';
-import { TaskRunner } from '../dist/services/task-runner.js';
-import { PLAN_TOOL_NAMES } from '../dist/services/plan-tools.js';
-
-const root = mkdtempSync(join(tmpdir(), 'pi-spike-plan-'));
-const agentDir = join(root, 'agent');
-const cwd = join(root, 'ws');
-mkdirSync(agentDir, { recursive: true });
-mkdirSync(cwd, { recursive: true });
-writeFileSync(join(agentDir, 'auth.json'), '{}\n');
-writeFileSync(join(agentDir, 'models.json'), '{ "providers": {} }\n');
+import { startHarness, fauxAssistantMessage, fauxToolCall } from '../eval/harness.mjs';
 
 const failures = [];
 function check(label, condition, detail = '') {
@@ -38,101 +14,9 @@ function check(label, condition, detail = '') {
   if (!condition) failures.push(label);
 }
 
-const faux = fauxProvider();
-const runtime = await ModelRuntime.create({
-  authPath: join(agentDir, 'auth.json'),
-  modelsPath: join(agentDir, 'models.json'),
-  allowModelNetwork: false,
-});
-runtime.registerNativeProvider(faux.provider);
-const model = runtime.getModel(faux.provider.id, faux.getModel().id);
-
-// ── 与 app.ts 同构的装配（计划 = 任务 + 工具 + 执行器）───────────────────────
-const tasks = new TaskService(new MemoryTaskRepository());
-const plans = new PlanModeService();
-plans.setTaskService(tasks);
-plans.setListener(() => undefined);
-const owner = 'spike-owner';
-const recovery = new TaskRecoveryService(tasks, { owner });
-let sessionManager;
-let runner;
-const tracker = new TaskInFlightTracker(tasks, {
-  lookupActiveTask: (sessionId) => registry.get(sessionId)?.activeTaskId,
-  onSettled: (sessionId) => runner?.handleSettled(sessionId),
-});
-
-const factory = {
-  async create(input) {
-    const loader = new DefaultResourceLoader({
-      cwd: input.cwd,
-      agentDir,
-      extensionFactories: [plans.buildExtension(), tracker.buildExtension()],
-      extensionsOverride: (base) => dropInlineOwnedExtensions(base).result,
-    });
-    await loader.reload();
-    sessionManager = SessionManager.create(input.cwd, join(agentDir, 'sessions'));
-    const { session } = await createAgentSession({
-      cwd: input.cwd,
-      agentDir,
-      modelRuntime: runtime,
-      model,
-      sessionManager,
-      resourceLoader: loader,
-      tools: [...PLAN_TOOL_NAMES, 'read', 'write', 'edit', 'bash'],
-      thinkingLevel: 'off',
-    });
-    return session;
-  },
-};
-
-const registry = new AgentRegistry(factory, undefined, plans);
-runner = new TaskRunner({ tasks, recovery, registry, tracker, owner });
-plans.setExecutor(runner);
-
-const entry = await registry.create({ cwd });
-const sessionId = entry.session.sessionId;
-
-/**
- * 等一次 run 结算（registry.command 不 await 模型，与 HTTP 202 语义一致）。
- * 用计数器而不是「订阅后等下一个事件」：subscribe 会同步重放历史事件，
- * 直接在回调里解引用取消函数会撞上 TDZ。
- */
-let settleCount = 0;
-let consumed = 0;
-registry.subscribe(sessionId, 0, (event) => {
-  if (event.payload?.type === 'agent_settled') settleCount += 1;
-});
-function waitForSettle() {
-  return new Promise((resolve) => {
-    const timer = setInterval(() => {
-      if (settleCount > consumed) {
-        consumed += 1;
-        clearInterval(timer);
-        resolve();
-      }
-    }, 5);
-    timer.unref?.();
-    setTimeout(() => clearInterval(timer), 15_000).unref?.();
-  });
-}
-
-const seen = { toolResults: [], assistantText: [] };
-entry.session.subscribe((event) => {
-  if (event.type === 'tool_execution_end') {
-    seen.toolResults.push({
-      toolName: event.toolName,
-      isError: event.isError,
-      text: JSON.stringify(event.result?.content ?? '').slice(0, 200),
-    });
-  }
-  if (event.type === 'message_end' && event.message?.role === 'assistant') {
-    const text = (event.message.content ?? [])
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n');
-    if (text.trim()) seen.assistantText.push(text);
-  }
-});
+// 预设白名单（SDK 的 tools 是可用工具白名单，harness 会并入内联扩展的工具名）。
+const h = await startHarness({ toolNames: ['read', 'write', 'edit', 'bash'] });
+const { session, sessionId, plans, tasks, faux, seen, waitForSettle } = h;
 
 // ── ① 规划：模型只调用 submit_plan，不写任何标记 ────────────────────────────
 console.log('=== ① 规划期：submit_plan（模型零标记）===');
@@ -154,7 +38,7 @@ faux.setResponses([
   ),
   fauxAssistantMessage('计划已提交，等你确认后开始执行。'),
 ]);
-await entry.session.prompt('规划一下这个重构');
+await session.prompt('规划一下这个重构');
 
 let plan = plans.state(sessionId);
 check('计划已进入 proposed（等待确认）', plan.status === 'proposed', `status=${plan.status}`);
@@ -204,10 +88,10 @@ faux.setResponses([
 ]);
 const executing = await plans.command(sessionId, 'execute');
 check('计划进入 executing', executing.status === 'executing', `status=${executing.status}`);
-const activeDuringExecution = entry.session.getActiveToolNames?.() ?? [];
+const activeDuringExecution = session.getActiveToolNames?.() ?? [];
 check(
   '执行期计划工具仍激活（模型要继续 update_plan / complete_step）',
-  ['submit_plan', 'update_plan', 'complete_step', 'block_step', 'ask_user'].every((name) =>
+  ['submit_plan', 'update_plan', 'complete_step', 'block_step'].every((name) =>
     activeDuringExecution.includes(name),
   ),
   activeDuringExecution.join(','),
@@ -219,18 +103,15 @@ check(
 );
 check(
   '执行器取得租约（防双跑）',
-  tasks.get(plan.taskId).execution.lease?.owner === owner,
+  tasks.get(plan.taskId).execution.lease !== undefined,
   `owner=${tasks.get(plan.taskId).execution.lease?.owner}`,
 );
 await waitForSettle();
 
 const afterRun = tasks.get(plan.taskId);
 const step = (id) => afterRun.steps.find((item) => item.id === id);
-check('退出码不符的证据被拒绝（s1 仍未完成）', step('s1').status === 'completed');
-check(
-  '被拒绝过的那次没有写进状态（证据是真的那条）',
-  step('s1').evidence?.commands?.[0]?.exitCode === 0,
-);
+check('退出码不符的证据被拒绝后补齐（s1 完成且证据是真的那条）', step('s1').status === 'completed');
+check('被拒绝过的那次没有写进状态', step('s1').evidence?.commands?.[0]?.exitCode === 0);
 check('产物不存在时 complete_step 报错', step('s2').status !== 'completed');
 const rejected = seen.toolResults.filter((result) => result.isError);
 check(
@@ -246,7 +127,7 @@ check(
 
 // ── ③ 产物补齐后继续：计划跑到完成 ──────────────────────────────────────────
 console.log('\n=== ③ 补齐产物后继续执行到完成 ===');
-writeFileSync(join(cwd, 'migration.sql'), '-- migration\n');
+h.writeArtifact('migration.sql', '-- migration');
 faux.setResponses([
   fauxAssistantMessage(
     [fauxToolCall('complete_step', { stepId: 's2', evidence: { summary: '迁移文件已生成' } })],
@@ -274,9 +155,9 @@ check(
     !seen.assistantText.some((text) => /\[DONE:\d+\]/i.test(text)),
 );
 
-// ── ④ 工具权限：规划期只读、执行期放行 ──────────────────────────────────────
+// ── ④ 计划结束后收回计划工具 ───────────────────────────────────────────────
 console.log('\n=== ④ 计划结束后收回计划工具 ===');
-const activeAfter = entry.session.getActiveToolNames?.() ?? [];
+const activeAfter = session.getActiveToolNames?.() ?? [];
 check(
   '计划完成后不再挂计划工具（不留「随时新建计划」的入口）',
   !activeAfter.includes('submit_plan') && !activeAfter.includes('complete_step'),
@@ -287,25 +168,33 @@ check(
   activeAfter.includes('edit') && activeAfter.includes('write'),
   activeAfter.join(','),
 );
+// 提问通道（M4.1）不属于 Plan：计划结束后依然可用。
+check(
+  'ask_user 仍在（提问通道独立于 Plan）',
+  activeAfter.includes('ask_user'),
+  activeAfter.join(','),
+);
 
 // ── ⑤ 放弃计划：记录保留、工具差集撤销 ─────────────────────────────────────
 console.log('\n=== ⑤ 放弃计划：记录保留（可查）===');
 const second = plans.startPlanning(sessionId, '再规划一个后续计划');
-const activeDuring = entry.session.getActiveToolNames?.() ?? [];
+const activeDuring = session.getActiveToolNames?.() ?? [];
 check('新计划进入规划期：写工具被关掉', !activeDuring.includes('edit'), activeDuring.join(','));
 await plans.command(sessionId, 'abandon');
 check('放弃后任务仍是可查的记录（cancelled）', tasks.get(second.taskId).status === 'cancelled');
-const activeAfterAbandon = entry.session.getActiveToolNames?.() ?? [];
+const activeAfterAbandon = session.getActiveToolNames?.() ?? [];
 check(
   '放弃后写工具恢复、计划工具收回',
   activeAfterAbandon.includes('edit') && !activeAfterAbandon.includes('submit_plan'),
   activeAfterAbandon.join(','),
 );
+check(
+  '放弃后 ask_user 仍在（它不属于计划）',
+  activeAfterAbandon.includes('ask_user'),
+  activeAfterAbandon.join(','),
+);
 
-await registry.close();
-plans.dispose();
-tasks.dispose();
-rmSync(root, { recursive: true, force: true });
+await h.cleanup();
 
 console.log('');
 if (failures.length > 0) {

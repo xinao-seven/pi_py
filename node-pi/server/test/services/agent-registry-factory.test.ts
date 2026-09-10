@@ -16,6 +16,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => mocks);
 
 import { OriginalPiSessionFactory } from '../../src/services/agent-registry.js';
 import { PlanModeService } from '../../src/services/plan-mode-service.js';
+import { QuestionBroker } from '../../src/services/user-question.js';
 import { ToolApprovalBroker } from '../../src/services/tool-approval.js';
 
 describe('OriginalPiSessionFactory', () => {
@@ -64,6 +65,7 @@ describe('OriginalPiSessionFactory', () => {
       'block_step',
       'ask_user',
     ]);
+    // tools 是「可用工具白名单」：ask_user 属于通用交互，必须一并并入。
     expect(options.thinkingLevel).toBe('off');
     expect(options.settingsManager).toBeDefined();
     expect(mocks.SettingsManager.create).toHaveBeenCalledWith('/tmp/workspace', agentDir);
@@ -125,5 +127,23 @@ describe('OriginalPiSessionFactory', () => {
       extensions: { approval: false, planMode: false },
     });
     expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(0);
+  });
+
+  it('injects the question channel by default and can gate it off', async () => {
+    const factory = new OriginalPiSessionFactory(
+      agentDir,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new QuestionBroker(),
+    );
+    await factory.create({ cwd: '/tmp/workspace' });
+    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(1);
+
+    await factory.create({ cwd: '/tmp/workspace', extensions: { questions: false } });
+    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(0);
   });
 });

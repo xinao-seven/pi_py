@@ -1,4 +1,4 @@
-import { INITIAL_STREAM_STATE, messageText, reduceAgentEvent } from '@/lib/agent-events';
+import { INITIAL_STREAM_STATE, messageText, normalizeQuestion, reduceAgentEvent } from '@/lib/agent-events';
 
 describe('reduceAgentEvent', () => {
   it('tracks a streaming assistant response through completion', () => {
@@ -136,5 +136,63 @@ describe('plan_updated（M4：载荷是 PlanView）', () => {
       },
     });
     expect(after).toBe(before);
+  });
+});
+
+describe('question_pending / question_resolved（M4.1 提问通道）', () => {
+  function pendingQuestion() {
+    return {
+      sessionId: 'session-1',
+      questionId: 'question-1',
+      toolCallId: 'call-1',
+      createdAt: '2026-08-21T10:00:00.000Z',
+      questions: [
+        { id: 'q1', question: '继续吗？', options: ['继续', '停'] },
+        { id: 'q2', question: '备注？', multiSelect: true },
+      ],
+    };
+  }
+
+  it('shows the dialog payload while the agent waits for an answer', () => {
+    const started = reduceAgentEvent(INITIAL_STREAM_STATE, { type: 'agent_start' });
+    const next = reduceAgentEvent(started, {
+      type: 'question_pending',
+      question: pendingQuestion(),
+    });
+    expect(next.pendingQuestion).toMatchObject({ questionId: 'question-1' });
+    expect(next.pendingQuestion?.questions).toHaveLength(2);
+    // 与工具审批同类：说明 Agent 正在等外部输入，仍算「运行中」。
+    expect(next).toMatchObject({ running: true, phase: 'tool', pendingToolCall: null });
+  });
+
+  it('clears the dialog once the question is resolved (or the run ends)', () => {
+    const asked = reduceAgentEvent(INITIAL_STREAM_STATE, {
+      type: 'question_pending',
+      question: pendingQuestion(),
+    });
+    expect(reduceAgentEvent(asked, { type: 'question_resolved', questionId: 'question-1' }).pendingQuestion).toBeNull();
+    // 没必要的变化不产生新对象（避免无谓重渲染）。
+    const cleared = reduceAgentEvent(asked, { type: 'question_resolved' });
+    expect(cleared.pendingQuestion).toBeNull();
+    expect(
+      reduceAgentEvent(cleared, { type: 'question_resolved', questionId: 'question-1' }),
+    ).toBe(cleared);
+    expect(reduceAgentEvent(asked, { type: 'agent_end' }).pendingQuestion).toBeNull();
+  });
+
+  it('normalizes malformed payloads instead of rendering a broken dialog', () => {
+    expect(normalizeQuestion(undefined)).toBeNull();
+    expect(normalizeQuestion({ questionId: 'q', questions: [] })).toBeNull();
+    expect(normalizeQuestion({ questions: [{ question: 'x' }] })).toBeNull();
+    expect(
+      normalizeQuestion({
+        questionId: 'q',
+        questions: [{ question: '没有 id', multiSelect: false, allowFreeText: false }],
+      }),
+    ).toMatchObject({
+      sessionId: '',
+      toolCallId: '',
+      questions: [{ id: 'q1', question: '没有 id', allowFreeText: false }],
+    });
   });
 });

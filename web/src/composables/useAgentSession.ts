@@ -15,7 +15,11 @@ import {
   listTasks,
   sendAgentCommand,
 } from '@/lib/api';
-import { INITIAL_STREAM_STATE, reduceAgentEvent } from '@/lib/agent-events';
+import {
+  INITIAL_STREAM_STATE,
+  normalizeQuestion,
+  reduceAgentEvent,
+} from '@/lib/agent-events';
 import { fireUnauthorized } from '@/lib/session';
 import type {
   AgentEvent,
@@ -31,6 +35,7 @@ import type {
   RetryInfo,
   SessionDetail,
   SessionPreset,
+  QuestionAnswer,
   TaskRecord,
   TaskRecoveryItem,
 } from '@/types';
@@ -161,6 +166,9 @@ export function useAgentSession(options: AgentSessionOptions) {
       messages.value = nextDetail.context.messages;
       entryIds.value = nextDetail.context.entryIds;
       contextUsage.value = state.state?.contextUsage ?? null;
+      // 提问是「Agent 正在等外部输入」的阻塞状态：刷新后必须恢复弹窗，
+      // 否则模型会一直等着一个用户看不到的问题（后端挂起队列是唯一真相源）。
+      stream.pendingQuestion = normalizeQuestion(state.state?.pendingQuestion) ?? null;
       thinkingLevel.value = state.state?.thinkingLevel ?? nextDetail.context.thinkingLevel;
       if (state.state?.activeTools) activeTools.value = state.state.activeTools;
       applyPendingToolCall(state.state?.pendingToolCall);
@@ -403,6 +411,7 @@ export function useAgentSession(options: AgentSessionOptions) {
       streamingMessage: null,
       error: null,
       pendingToolCall: null,
+      pendingQuestion: null,
     });
     try {
       if (activeSessionId.value === null) {
@@ -448,6 +457,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         streamingMessage: null,
         error: errorMessage(cause),
         pendingToolCall: null,
+        pendingQuestion: null,
       });
     }
   }
@@ -474,6 +484,26 @@ export function useAgentSession(options: AgentSessionOptions) {
       });
       // 乐观清除弹窗；后续 tool_execution_end/blocked 事件会再次同步状态
       stream.pendingToolCall = null;
+    } catch (cause) {
+      error.value = errorMessage(cause);
+    }
+  }
+
+  /**
+   * 提交对「向用户提问」的回答（M4.1）。
+   * `cancelled` 表示让 AI 自己决定（不是错误）：模型会按最合理的假设继续并写明假设。
+   */
+  async function answerQuestion(
+    payload: { questionId: string; answers?: QuestionAnswer[]; cancelled?: boolean },
+  ): Promise<void> {
+    if (!activeSessionId.value) return;
+    try {
+      await sendAgentCommand(activeSessionId.value, {
+        type: 'answer_question',
+        ...payload,
+      });
+      // 乐观清除弹窗；服务端结算后会再推 question_resolved。
+      stream.pendingQuestion = null;
     } catch (cause) {
       error.value = errorMessage(cause);
     }
@@ -758,6 +788,7 @@ export function useAgentSession(options: AgentSessionOptions) {
     send,
     abort,
     approveToolCall,
+    answerQuestion,
     steer,
     followUp,
     changeModel,

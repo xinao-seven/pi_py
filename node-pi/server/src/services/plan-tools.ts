@@ -39,7 +39,6 @@ export const PLAN_TOOL_NAMES = [
   'update_plan',
   'complete_step',
   'block_step',
-  'ask_user',
 ] as const;
 export type PlanToolName = (typeof PLAN_TOOL_NAMES)[number];
 
@@ -91,16 +90,10 @@ const BLOCK_STEP_SCHEMA = Type.Object({
   reason: Type.String({ minLength: 1 }),
 });
 
-const ASK_USER_SCHEMA = Type.Object({
-  question: Type.String({ minLength: 1 }),
-  options: Type.Optional(Type.Array(Type.String())),
-});
-
 type SubmitPlanParams = Static<typeof SUBMIT_PLAN_SCHEMA>;
 type UpdatePlanParams = Static<typeof UPDATE_PLAN_SCHEMA>;
 type CompleteStepParams = Static<typeof COMPLETE_STEP_SCHEMA>;
 type BlockStepParams = Static<typeof BLOCK_STEP_SCHEMA>;
-type AskUserParams = Static<typeof ASK_USER_SCHEMA>;
 
 export interface PlanToolboxOptions {
   tasks: TaskService;
@@ -272,17 +265,6 @@ export class PlanToolbox {
     );
   }
 
-  /** 向用户提问（规划期澄清）：登记问题，等用户在对话里回答。 */
-  askUser(params: AskUserParams): TaskRecord {
-    const task = this.requirePlan();
-    return this.changed(
-      this.options.tasks.setPlanState(task.id, {
-        question: params.question,
-        ...(params.options === undefined ? {} : { questionOptions: params.options }),
-      }),
-    );
-  }
-
   private requirePlan(): TaskRecord {
     const task = this.current();
     if (task === undefined) {
@@ -380,7 +362,7 @@ export function buildPlanTools(toolbox: PlanToolbox): ToolDefinition[] {
       promptGuidelines: [
         '规划期不要用文字罗列计划就结束：调研完成后必须调用 submit_plan 提交结构化计划。',
         '步骤标题要具体、可验证、一步一件事；需要产物校验的步骤请声明 verification。',
-        '需要用户决策时用 ask_user 提问，不要自己假设。',
+        '需要用户决策时用 ask_user 提问（一次问完，不要连环追问），不要自己假设。',
       ],
       parameters: SUBMIT_PLAN_SCHEMA,
       async execute(_toolCallId, params) {
@@ -461,24 +443,6 @@ export function buildPlanTools(toolbox: PlanToolbox): ToolDefinition[] {
             revision: task.revision,
             stepId: params.stepId,
           },
-        );
-      },
-    }),
-    defineTool({
-      name: 'ask_user',
-      label: '向用户提问',
-      description:
-        '规划期需要用户澄清时提问（可给选项）。提问后请结束本轮回答，等用户在对话里回复；' +
-        '不要一边提问一边猜测执行。',
-      promptSnippet: '规划期向用户澄清问题',
-      parameters: ASK_USER_SCHEMA,
-      async execute(_toolCallId, params) {
-        const task = toolbox.askUser(params);
-        return textResult(
-          `已向用户提问：${params.question}` +
-            (params.options?.length ? `（可选：${params.options.join(' / ')}）` : '') +
-            '\n请结束本轮回答，等用户回复后再继续。',
-          { planId: task.id, taskId: task.id, status: derivePlanStatus(task) },
         );
       },
     }),

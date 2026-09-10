@@ -46,6 +46,9 @@ export type LedgerEvent =
   | { type: 'plan_updated'; plan: unknown }
   | { type: 'task_updated'; task: unknown }
   | { type: 'task_recovery_required'; tasks: unknown[] }
+  /** 向用户提问（M4.1）：M1 账本只把它当普通会话事件处理，不做额外统计。 */
+  | { type: 'question_pending'; question: unknown }
+  | { type: 'question_resolved'; questionId: string }
   | {
       type: 'tool_call_pending';
       toolCallId: string;

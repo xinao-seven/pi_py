@@ -15,6 +15,7 @@ import {
   listTasks,
   pruneObservabilityRuns,
   resumeTask,
+  sendAgentCommand,
   sendPlanCommand,
   updateTask,
   updateTaskStep,
@@ -354,5 +355,25 @@ describe('sendPlanCommand（M4 契约）', () => {
     expect(task).toMatchObject({ id: 'task-1' });
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ mode: 'replan' });
+  });
+});
+
+describe('answer_question（M4.1 提问通道）', () => {
+  it('sends the answers payload through the agent command endpoint', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ success: true, data: {} }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+    await sendAgentCommand('session-1', {
+      type: 'answer_question',
+      questionId: 'question-1',
+      answers: [{ id: 'q1', selected: ['继续'], text: '顺带也要 WSL' }],
+    });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain('/api/agent/session-1');
+    expect(JSON.parse(String(init.body))).toEqual({
+      type: 'answer_question',
+      questionId: 'question-1',
+      answers: [{ id: 'q1', selected: ['继续'], text: '顺带也要 WSL' }],
+    });
+    vi.unstubAllGlobals();
   });
 });

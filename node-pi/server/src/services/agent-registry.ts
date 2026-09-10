@@ -39,6 +39,7 @@ import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
 import { PlanModeService } from './plan-mode-service.js';
 import { PLAN_TOOL_NAMES } from './plan-tools.js';
+import { ASK_USER_TOOL_NAME, type PendingQuestion, type QuestionBroker } from './user-question.js';
 import { emptyPlanView, type PlanView } from './platform/plan-model.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
@@ -140,6 +141,7 @@ export interface CreateSessionInput {
   extensions?: {
     approval?: boolean; // 危险命令人工审批
     planMode?: boolean; // Web Plan 模式
+    questions?: boolean; // 向用户提问（ask_user，默认启用）
   };
   /** MCP 服务白名单；null/缺省 = 全部，[] = 禁用，非空数组 = 服务名白名单（预设的 mcpServers 字段）。 */
   mcpServers?: string[] | null;
@@ -251,6 +253,8 @@ export interface StreamEvent {
     | { type: 'plan_updated'; plan: PlanView }
     | { type: 'task_updated'; task: TaskRecord }
     | { type: 'task_recovery_required'; tasks: TaskRecoveryItem[] }
+    | { type: 'question_pending'; question: PendingQuestion }
+    | { type: 'question_resolved'; questionId: string }
     | {
         type: 'tool_call_pending';
         toolCallId: string;
@@ -305,6 +309,8 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     private readonly observability?: { buildExtension(): InlineExtension },
     /** 任务恢复扩展：把 turn/tool 事件写成任务的在飞动作（M3，可选）。 */
     private readonly taskRecovery?: { buildExtension(): InlineExtension },
+    /** 提问通道扩展：注册 `ask_user` 工具并把挂起问题推给前端（M4.1，可选）。 */
+    private readonly questions?: { buildExtension(): InlineExtension },
   ) {}
 
   /** 创建新会话（POST /api/agent/new 的底层实现）。 */
@@ -339,6 +345,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     // Plan 完全不可用、MCP 工具也调不动（M4 spike 抓到的真实缺陷）。
     const effectiveTools = withInlineTools(input.toolNames, [
       ...PLAN_TOOL_NAMES,
+      ASK_USER_TOOL_NAME,
       ...this.mcpToolNames(input.cwd, input.mcpServers),
     ]);
     // 调用 Pi SDK 创建会话；"off" 透传给 SDK（clampThinkingLevel 对任何模型都接受）。
@@ -458,6 +465,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     if (this.observability) factories.push(this.observability.buildExtension());
     // 任务恢复扩展（M3）：记录在飞动作 + 注入恢复摘要，同样不做决策。
     if (this.taskRecovery) factories.push(this.taskRecovery.buildExtension());
+    // 提问通道（M4.1）：注册 ask_user；它不是 Plan 的一部分，默认始终启用。
+    if (extensions?.questions !== false && this.questions)
+      factories.push(this.questions.buildExtension());
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
     if (this.mcpService)
@@ -537,10 +547,16 @@ export class AgentRegistry {
     private readonly logger?: ServiceLogger,
     /** 可观测性账本：publish() 的唯一下游（可选；不传即零埋点）。 */
     private readonly ledger?: SessionLedger,
+    /** 提问通道（M4.1）：挂起/结算时通过注册表发 SSE 事件。 */
+    private readonly questions?: QuestionBroker,
   ) {
     // 工具审批待处理时，通过注册表发布一条 tool_call_pending 事件（SSE 推给前端）。
     approvals?.setPendingListener((pending) => this.announceApproval(pending));
     plans?.setListener((plan) => this.announcePlan(plan));
+    questions?.setPendingListener((question) => this.announceQuestion(question));
+    questions?.setResolvedListener((sessionId, questionId) =>
+      this.announceQuestionResolved(sessionId, questionId),
+    );
     // 审批与 Plan 的拦截都要让账本知道（否则会被统计成工具失败）。
     if (ledger) {
       approvals?.setTraceSink(ledger);
@@ -785,6 +801,26 @@ export class AgentRegistry {
       case 'reload_resources': // 重新加载工具/技能
         await session.reload();
         return {};
+      case 'answer_question': {
+        // 前端对「向用户提问」的回答（M4.1）
+        const questionId = this.requiredString(command.questionId, 'questionId');
+        if (!this.questions)
+          throw new ApiError(409, 'question_unavailable', 'Question channel is unavailable');
+        const rawAnswers = command.answers;
+        if (rawAnswers !== undefined && !Array.isArray(rawAnswers)) {
+          throw new ApiError(422, 'validation_error', 'answers must be an array');
+        }
+        if (command.cancelled !== undefined && typeof command.cancelled !== 'boolean') {
+          throw new ApiError(422, 'validation_error', 'cancelled must be a boolean');
+        }
+        this.questions.answer(sessionId, questionId, {
+          ...(rawAnswers === undefined
+            ? {}
+            : { answers: rawAnswers as { id: string; selected: string[]; text?: string }[] }),
+          ...(command.cancelled === true ? { cancelled: true } : {}),
+        });
+        return {};
+      }
       case 'approve_tool': {
         // 前端对工具调用的审批结果
         const toolCallId = this.requiredString(command.toolCallId, 'toolCallId');
@@ -859,6 +895,7 @@ export class AgentRegistry {
       // 保持与 Python 后端字段兼容：能力不存在时仍返回 null / {}。
       contextUsage: session.getContextUsage?.() ?? null,
       sessionStats: (session.getSessionStats?.() ?? {}) as Record<string, unknown>,
+      pendingQuestion: this.questions?.pendingForSession(sessionId) ?? null,
       pendingToolCall:
         pending === undefined
           ? null
@@ -882,11 +919,13 @@ export class AgentRegistry {
       entry.subscribers.clear();
       if (entry.session.isStreaming) await entry.session.abort(); // 先停流式输出
       this.approvals?.cancelSession(entry.session.sessionId); // 拒绝所有待审批
+      this.questions?.cancelSession(entry.session.sessionId); // 未回答的提问按「会话结束」结算
       // 未结算的 run 按 aborted 收尾，否则库里会留下永远 running 的记录。
       this.ledger?.finalizeSession(entry.session.sessionId, 'aborted');
       entry.session.dispose(); // 释放 SDK 资源
     }
     this.approvals?.dispose(); // 退订事件总线
+    this.questions?.dispose(); // 不能让提问的 Promise 永远挂着
     this.entries.clear();
   }
 
@@ -1174,6 +1213,16 @@ export class AgentRegistry {
       risk: pending.risk,
       category: pending.category,
     });
+  }
+
+  private announceQuestion(question: PendingQuestion): void {
+    const entry = this.entries.get(question.sessionId);
+    if (entry) this.publish(entry, { type: 'question_pending', question });
+  }
+
+  private announceQuestionResolved(sessionId: string, questionId: string): void {
+    const entry = this.entries.get(sessionId);
+    if (entry) this.publish(entry, { type: 'question_resolved', questionId });
   }
 
   private announcePlan(plan: PlanView): void {

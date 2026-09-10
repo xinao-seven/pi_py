@@ -100,27 +100,20 @@ describe('规划期只读（能力集，而不是白名单快照）', () => {
     expect(blocked('read', { path: 'a.ts' })).toBeUndefined();
   });
 
-  it('registers the five plan tools and activates them only while planning', async () => {
+  it('registers the plan tools and activates them only while planning', async () => {
     const { service, pi } = makeHarness();
     expect([...pi.tools.keys()]).toEqual([
       'submit_plan',
       'update_plan',
       'complete_step',
       'block_step',
-      'ask_user',
     ]);
     // 普通会话里计划工具不激活（模型看不到，也就不会误造计划）。
     expect(pi.getActiveTools()).not.toContain('submit_plan');
 
     service.startPlanning('session-1', '重构 Plan 模式');
     expect(pi.getActiveTools()).toEqual(
-      expect.arrayContaining([
-        'submit_plan',
-        'update_plan',
-        'complete_step',
-        'block_step',
-        'ask_user',
-      ]),
+      expect.arrayContaining(['submit_plan', 'update_plan', 'complete_step', 'block_step']),
     );
     expect(pi.getActiveTools()).not.toContain('edit');
     expect(pi.getActiveTools()).not.toContain('write');
@@ -321,7 +314,6 @@ describe('工具差集恢复（P6）', () => {
         'update_plan',
         'complete_step',
         'block_step',
-        'ask_user',
       ].sort(),
     );
   });

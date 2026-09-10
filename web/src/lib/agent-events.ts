@@ -1,5 +1,11 @@
 // Agent 事件状态机与消息文本工具：把后端 SSE 事件规约成前端流式状态。
-import type { AgentEvent, AgentMessage, AgentStreamState, PendingToolCall } from '@/types';
+import type {
+  AgentEvent,
+  AgentMessage,
+  AgentStreamState,
+  PendingQuestion,
+  PendingToolCall,
+} from '@/types';
 
 export const INITIAL_STREAM_STATE: AgentStreamState = {
   running: false,
@@ -7,6 +13,7 @@ export const INITIAL_STREAM_STATE: AgentStreamState = {
   streamingMessage: null,
   error: null,
   pendingToolCall: null,
+  pendingQuestion: null,
 };
 
 export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): AgentStreamState {
@@ -16,6 +23,8 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): Ag
   // tool_execution_end / tool_execution_blocked 回到等待；agent_end 回到空闲。
   // 注意：task_updated（M2）与 task_recovery_required（M3）刻意不在这里处理——
   // 任务与恢复清单由 useAgentSession 的独立 ref 维护，不能污染「Agent 在不在跑」的判断。
+  // 提问（M4.1）在这里处理：它同样是「Agent 正在等外部输入」的阻塞状态，
+  // 与 pendingToolCall 同类，弹窗需要随流式状态一起出现/消失。
   switch (event.type) {
     case 'agent_start':
       return { ...INITIAL_STREAM_STATE, running: true, phase: 'waiting' };
@@ -68,6 +77,16 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): Ag
           args: (event.args ?? {}) as Record<string, unknown>,
         } satisfies PendingToolCall,
       };
+    case 'question_pending':
+      return {
+        ...state,
+        running: true,
+        phase: 'tool',
+        streamingMessage: null,
+        pendingQuestion: normalizeQuestion(event.question),
+      };
+    case 'question_resolved':
+      return state.pendingQuestion === null ? state : { ...state, pendingQuestion: null };
     case 'tool_execution_end':
       return { ...state, phase: 'waiting', pendingToolCall: null };
     case 'tool_execution_blocked':
@@ -79,10 +98,36 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): Ag
         streamingMessage: null,
         error: typeof event.error === 'string' && event.error ? event.error : null,
         pendingToolCall: null,
+        // 提问与工具审批一样是「外部输入」：run 结束时一并清掉，避免留下过期的弹窗。
+        pendingQuestion: null,
       };
     default:
       return state;
   }
+}
+
+/** 把 SSE 载荷收敛成前端可安全渲染的形状（缺字段时给保守默认值）。 */
+export function normalizeQuestion(value: unknown): PendingQuestion | null {
+  const raw = value as Partial<PendingQuestion> | undefined;
+  if (!raw || typeof raw.questionId !== 'string' || !Array.isArray(raw.questions)) return null;
+  const questions = raw.questions
+    .filter((item) => item && typeof item.question === 'string')
+    .map((item, index) => ({
+      id: typeof item.id === 'string' && item.id ? item.id : `q${index + 1}`,
+      question: item.question,
+      ...(Array.isArray(item.options) ? { options: item.options.map(String) } : {}),
+      ...(item.multiSelect === true ? { multiSelect: true } : {}),
+      ...(item.allowFreeText === false ? { allowFreeText: false } : {}),
+      ...(typeof item.details === 'string' ? { details: item.details } : {}),
+    }));
+  if (questions.length === 0) return null;
+  return {
+    sessionId: typeof raw.sessionId === 'string' ? raw.sessionId : '',
+    questionId: raw.questionId,
+    toolCallId: typeof raw.toolCallId === 'string' ? raw.toolCallId : '',
+    questions,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
+  };
 }
 
 export function messageText(message: AgentMessage): string {
