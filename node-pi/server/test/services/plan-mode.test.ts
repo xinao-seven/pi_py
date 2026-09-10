@@ -192,4 +192,80 @@ describe('PlanModeService + buildExtension', () => {
     });
     expect(() => service.command('session-1', 'enable')).toThrow(/unavailable/);
   });
+
+  describe('context 钩子：清理陈旧 plan 上下文（修复 D2）', () => {
+    const planningMessage = { role: 'custom', customType: 'web-plan-context' };
+    const executionMessage = { role: 'custom', customType: 'web-plan-execution-context' };
+    const executeMessage = { role: 'custom', customType: 'web-plan-execute' };
+    const plainMessage = { role: 'user', content: '你好' };
+
+    function makeMachine() {
+      const service = new PlanModeService();
+      const pi = makeFakePi();
+      service.buildExtension()(pi as never);
+      pi.handlers.get('session_start')!({}, sessionContext());
+      return { service, pi, context: pi.handlers.get('context')! };
+    }
+
+    it('普通模式：两组注入消息都被清掉，普通消息保留', () => {
+      const { context } = makeMachine();
+      const result = context({
+        messages: [planningMessage, executionMessage, executeMessage, plainMessage],
+      }) as { messages: unknown[] };
+      expect(result.messages).toEqual([plainMessage]);
+    });
+
+    it('规划中：保留规划上下文，丢掉执行期上下文', () => {
+      const { service, context } = makeMachine();
+      service.command('session-1', 'enable');
+      const result = context({
+        messages: [planningMessage, executionMessage, executeMessage, plainMessage],
+      }) as { messages: unknown[] };
+      expect(result.messages).toEqual([planningMessage, plainMessage]);
+    });
+
+    it('规划期多轮注入只保留最后一条（防止随轮数线性膨胀）', () => {
+      const { service, context } = makeMachine();
+      service.command('session-1', 'enable');
+      // 模拟 3 轮规划：before_agent_start 每轮都注入一条
+      const first = { role: 'custom', customType: 'web-plan-context', details: { turn: 1 } };
+      const second = { role: 'custom', customType: 'web-plan-context', details: { turn: 2 } };
+      const third = { role: 'custom', customType: 'web-plan-context', details: { turn: 3 } };
+      const result = context({
+        messages: [first, plainMessage, second, third],
+      }) as { messages: unknown[] };
+      expect(result.messages).toEqual([plainMessage, third]);
+    });
+
+    it('执行中：保留执行上下文，丢掉规划期上下文', () => {
+      const { service, pi, context } = makeMachine();
+      service.command('session-1', 'enable');
+      pi.handlers.get('agent_end')!({
+        messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. 做 A' }] }],
+      });
+      service.command('session-1', 'execute');
+      const result = context({
+        messages: [planningMessage, executionMessage, executeMessage, plainMessage],
+      }) as { messages: unknown[] };
+      expect(result.messages).toEqual([executionMessage, executeMessage, plainMessage]);
+    });
+
+    it('无需清理时返回 undefined（不无谓替换消息数组）', () => {
+      const { context } = makeMachine();
+      expect(context({ messages: [plainMessage] })).toBeUndefined();
+    });
+
+    it('退出规划后历史不再残留任何 plan 注入（反复切换不累积）', () => {
+      const { service, pi, context } = makeMachine();
+      // 模拟三轮“开启 → 注入 → 关闭”后累积下来的消息
+      const accumulated = [planningMessage, executionMessage, planningMessage, executeMessage];
+      service.command('session-1', 'enable');
+      service.command('session-1', 'disable');
+      const result = context({ messages: [...accumulated, plainMessage] }) as {
+        messages: unknown[];
+      };
+      expect(result.messages).toEqual([plainMessage]);
+      expect(pi.appendEntry).toHaveBeenCalled();
+    });
+  });
 });

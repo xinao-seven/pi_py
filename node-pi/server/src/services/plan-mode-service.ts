@@ -7,7 +7,7 @@
  * execute/refine 命令，并把状态快照转发给注册表（SSE 推给前端）。
  */
 
-import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
+import type { ContextEvent, ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../errors.js';
 
@@ -30,6 +30,24 @@ const PLAN_DISABLED_TOOLS = new Set(['edit', 'write']);
 // 规划期无法证明 MCP 工具只读，保守全部拦截。
 const MCP_TOOL_PREFIX = 'mcp__';
 const CUSTOM_TYPE = 'web-plan-mode';
+
+/**
+ * 注入到上下文的 plan 自定义消息类型。
+ *
+ * 中文说明：`before_agent_start` 返回的 message 会以 `role: "custom"` 进入本轮消息，
+ * 并在 message_end 时**持久化写入会话 JSONL**。因此每次进入/退出模式都会新增一条，
+ * 若不在 `context` 钩子里清理，历史里会同时残留规划期与执行期的矛盾指令，
+ * 而且随反复切换无上限累积。这里按当前模式只保留其中一组。
+ */
+const PLANNING_CONTEXT_TYPES = new Set(['web-plan-context']);
+const EXECUTION_CONTEXT_TYPES = new Set(['web-plan-execution-context', 'web-plan-execute']);
+const EMPTY_TYPES: ReadonlySet<string> = new Set();
+
+/** 取一条上下文消息的 customType（非自定义消息返回 undefined）。 */
+function customTypeOf(message: unknown): string | undefined {
+  const customType = (message as { customType?: unknown } | null)?.customType;
+  return typeof customType === 'string' ? customType : undefined;
+}
 
 interface Todo {
   step: number;
@@ -187,6 +205,39 @@ class PlanMachine {
     return undefined;
   }
 
+  /**
+   * context：清理与当前模式不符的 plan 上下文，并把当前模式的注入压缩到**仅最后一条**。
+   *
+   * 中文说明：为什么不能只做“按模式过滤”：
+   * `before_agent_start` 在**每一轮**都会重新注入一条 `web-plan-context`，而这些消息会
+   * 随 message_end 持久化进会话 JSONL。所以一次 3 轮的规划会在上下文里留下 3 份完全
+   * 相同的 [PLAN MODE ACTIVE] 指令，随轮数线性膨胀。这里只保留最后一条（内容已包含
+   * 当前待办全集），旧条目仅在 JSONL 里留审计痕迹。
+   *
+   * 无变化时返回 undefined，避免无意义地整体替换消息数组。
+   */
+  onContext(event: ContextEvent): { messages: ContextEvent['messages'] } | undefined {
+    // 当前模式“可以保留”的类型；其余 plan 类型一律丢弃。
+    const keep: ReadonlySet<string> = this.planning
+      ? PLANNING_CONTEXT_TYPES
+      : this.executing
+        ? EXECUTION_CONTEXT_TYPES
+        : EMPTY_TYPES;
+    // 每个保留类型最后一条的下标（同类型只留最新）。
+    const lastIndex = new Map<string, number>();
+    event.messages.forEach((message, index) => {
+      const customType = customTypeOf(message);
+      if (customType !== undefined && keep.has(customType)) lastIndex.set(customType, index);
+    });
+    const filtered = event.messages.filter((message, index) => {
+      const customType = customTypeOf(message);
+      if (customType === undefined) return true; // 非 plan 注入消息原样保留
+      if (!keep.has(customType)) return false; // 不属于当前模式 → 丢
+      return lastIndex.get(customType) === index; // 同类型只留最后一条
+    });
+    return filtered.length === event.messages.length ? undefined : { messages: filtered };
+  }
+
   /** before_agent_start：把当前模式/待办作为隐藏上下文注入。 */
   beforeAgentStart():
     { message: { customType: string; content: string; display: boolean } } | undefined {
@@ -336,6 +387,7 @@ export class PlanModeService {
       const machine = new PlanMachine(pi, this);
       pi.on('session_start', (_event, ctx) => machine.attach(ctx as SessionContext));
       pi.on('tool_call', (event) => machine.onToolCall(event));
+      pi.on('context', (event) => machine.onContext(event));
       pi.on('before_agent_start', () => machine.beforeAgentStart());
       pi.on('turn_end', (event) => machine.onTurnEnd(event));
       pi.on('agent_end', (event) => machine.onAgentEnd(event));
