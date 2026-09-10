@@ -148,6 +148,11 @@ export class SqliteTraceStorage implements TraceStorage {
     return currentSchemaVersion(this.db);
   }
 
+  /** 底层连接（与任务仓储共用同一连接，避免同进程重复打开库文件）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   /** 批量写入：整批一个事务，失败整体回滚（由调用方决定丢弃策略）。 */
   apply(ops: readonly TraceOp[]): void {
     if (this.closed) return;

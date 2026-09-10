@@ -25,7 +25,7 @@ export interface Migration {
 }
 
 /** 当前目标版本（新增迁移时同步递增）。 */
-export const TARGET_SCHEMA_VERSION = 2;
+export const TARGET_SCHEMA_VERSION = 3;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -151,6 +151,48 @@ export const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (day, cwd, provider, model)
       )`,
       `DROP TABLE IF EXISTS day_rollups`,
+    ],
+  },
+  {
+    // M2：任务领域（tasks / task_steps）。
+    // 中文说明：规划 §4.2.1 曾考虑 JSON 文件（原子串行写），但 M1 先把平台库落地了，
+    // 于是按规划结论「直接进 SQLite，不并存」处理：任务与 trace 同库不同表，
+    // 便于 `runs.task_id` 关联与乐观并发（revision 用单条 UPDATE 判定）。
+    version: 3,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        status TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        session_id TEXT,
+        cwd TEXT,
+        revision INTEGER NOT NULL DEFAULT 1,
+        blocked_reason TEXT,
+        conclusion TEXT,
+        execution TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_cwd ON tasks(cwd, updated_at)`,
+      `CREATE TABLE IF NOT EXISTS task_steps (
+        task_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT,
+        status TEXT NOT NULL,
+        verification TEXT,
+        evidence TEXT,
+        blocked_reason TEXT,
+        started_at INTEGER,
+        completed_at INTEGER,
+        PRIMARY KEY (task_id, id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_task_steps_order ON task_steps(task_id, position)`,
     ],
   },
 ];

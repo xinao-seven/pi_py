@@ -219,7 +219,8 @@ describe('platform migrations', () => {
   it('creates the schema once and is idempotent', () => {
     const dbPath = join(tempDir(), 'platform.db');
     const db = new DatabaseSync(dbPath);
-    expect(applyMigrations(db)).toBe(2);
+    // 应用全部待应用迁移（数量随版本增加，断言目标是版本而非固定数字）。
+    expect(applyMigrations(db)).toBe(TARGET_SCHEMA_VERSION);
     expect(currentSchemaVersion(db)).toBe(TARGET_SCHEMA_VERSION);
     // 重复迁移不应报错，也不应重复应用（模拟服务重启）。
     expect(applyMigrations(db)).toBe(0);
@@ -245,7 +246,7 @@ describe('platform migrations', () => {
     );
     db.exec('PRAGMA user_version = 1');
 
-    expect(applyMigrations(db)).toBe(1); // 只应用 v2 修复
+    expect(applyMigrations(db)).toBe(TARGET_SCHEMA_VERSION - 1); // 只应用 v1 之后的修复迁移
     expect(currentSchemaVersion(db)).toBe(TARGET_SCHEMA_VERSION);
     const tables = (
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
