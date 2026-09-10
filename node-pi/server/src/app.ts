@@ -46,8 +46,10 @@ import { McpConfig } from './services/mcp/mcp-config.js';
 import { SessionService } from './services/session-service.js';
 import { openNullStore, openPlatformStore, type PlatformStore } from './services/platform/store.js';
 import { SessionLedger } from './services/observability/session-ledger.js';
+import { TaskService } from './services/task-service.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { observabilityRoutes } from './routes/observability.js';
+import { taskRoutes } from './routes/tasks.js';
 
 /**
  * createApp 的可选依赖注入参数。
@@ -71,6 +73,8 @@ export interface AppOptions {
   store?: PlatformStore;
   /** trace 配置（生产由 server.ts 从 PI_NODE_TRACE_* 传入）。 */
   trace?: TraceConfig;
+  /** 任务服务（测试可注入；默认基于 store.tasks 构建）。 */
+  taskService?: TaskService;
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -136,25 +140,27 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // 平台存储与可观测性账本（M1）。
   // 默认策略：**不传 trace 配置就不写盘**（createApp() 的测试环境绝不触碰真实 ~/.pi），
   // 生产由 server.ts 传 config.trace（默认 enabled=true + sqlite）。
-  // trace 关闭时仍提供一个空存储，让 REST 契约保持可用（返回空集）。
+  // trace 开关与任务存储**解耦**：trace 只控制观测明细，任务（M2）需要持久化，
+  // 所以只要配置了 sqlite 存储，platform.db 就会被建立（trace 关闭时明细表保持为空）。
   const traceEnabled = options.store !== undefined || options.trace?.enabled === true;
   const store =
     options.store ??
-    (traceEnabled
-      ? openPlatformStore({
-          mode: options.trace?.mode ?? 'sqlite',
-          ...(options.trace?.dbPath === undefined ? {} : { dbPath: options.trace.dbPath }),
-          ...(options.trace?.flushMs === undefined ? {} : { flushMs: options.trace.flushMs }),
-          ...(options.trace?.batchSize === undefined ? {} : { batchSize: options.trace.batchSize }),
-          ...(options.trace?.maxPending === undefined
-            ? {}
-            : { maxPending: options.trace.maxPending }),
+    (options.trace === undefined
+      ? openNullStore()
+      : openPlatformStore({
+          mode: options.trace.mode,
+          dbPath: options.trace.dbPath,
+          trace: options.trace.enabled,
+          flushMs: options.trace.flushMs,
+          batchSize: options.trace.batchSize,
+          maxPending: options.trace.maxPending,
           logger: app.log,
-        })
-      : openNullStore());
+        }));
   const ledger = traceEnabled
     ? new SessionLedger(store.traces, app.log, { content: options.trace?.content === true })
     : undefined;
+  // 任务服务（M2）：同步写入、错误会冒泡成 API 错误，与 trace 的「尽力而为」刻意不同。
+  const tasks = options.taskService ?? new TaskService(store.tasks);
 
   // 装配核心依赖（每个都支持外部注入覆盖，见 AppOptions）：
   // - AgentRegistry：会话注册表，管理所有活跃 Pi 会话 + SSE 事件缓存；
@@ -229,6 +235,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     traces: store.traces,
     stats: () => store.stats(),
   });
+  app.register(taskRoutes, { prefix: '/api/tasks', service: tasks });
+  // 任务变更 → SSE `task_updated`；任务绑定到会话 → 之后开始的 run 带上 task_id。
+  tasks.setListener((task) => registry.announceTask(task));
+  tasks.setSessionTaskListener((sessionId, taskId) => registry.setActiveTask(sessionId, taskId));
 
   // 前端静态托管：web 构建产物（默认 ../../web/dist）。显式 /api 路由优先于
   // @fastify/static 的 wildcard 路由，故不影响 API；找不到文件会触发下面的
@@ -257,6 +267,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.addHook('onClose', async () => {
     await registry.close();
     plans.dispose();
+    tasks.dispose();
     await mcpService.dispose();
     // 最后关闭存储：registry.close() 会把未结算的 run 收尾写进队列，close() 再落盘。
     store.close();

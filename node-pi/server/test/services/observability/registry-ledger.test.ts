@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { createApp } from '../../../src/app.js';
 import {
@@ -205,7 +206,7 @@ describe('AgentRegistry → SessionLedger wiring', () => {
 });
 
 describe('trace configuration regression', () => {
-  it('writes nothing when trace is disabled', async () => {
+  it('writes no trace rows when trace is disabled (tasks still persist)', async () => {
     const dbPath = join(tempDir(), 'platform.db');
     const app = createApp({
       trace: traceConfig(dbPath, false),
@@ -217,9 +218,40 @@ describe('trace configuration regression', () => {
       url: '/api/agent/new',
       payload: { cwd: process.cwd(), message: 'hello' },
     });
+    const summary = await app.inject({ method: 'GET', url: '/api/observability/summary' });
+    expect(summary.json().store).toMatchObject({ mode: 'off' });
+    expect(summary.json().totals.runs).toBe(0);
     await app.close();
 
-    // 关闭 trace 后行为与今天完全一致：不建库、不写文件。
+    // 任务（M2）是需要持久化的业务状态，与 trace 开关解耦，因此库仍会被建立；
+    // 但 trace 明细表必须一行都不写——这就是「关掉 trace 行为不变」的回归证据。
+    expect(existsSync(dbPath)).toBe(true);
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM runs').get()).toMatchObject({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM steps').get()).toMatchObject({ n: 0 });
+    db.close();
+  });
+
+  it('touches no disk at all when the store is memory-backed', async () => {
+    const dbPath = join(tempDir(), 'platform.db');
+    const app = createApp({
+      trace: { ...traceConfig(dbPath, false), mode: 'memory' },
+      registry: new AgentRegistry(new ScriptedFactory()),
+    });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: process.cwd(), message: 'hello' },
+    });
+    const tasks = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 't', goal: 'g' },
+    });
+    expect(tasks.statusCode).toBe(200);
+    await app.close();
+
     expect(existsSync(dbPath)).toBe(false);
   });
 });

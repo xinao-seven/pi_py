@@ -30,17 +30,21 @@ export interface LedgerSessionContext {
   provider?: string;
   model?: string;
   thinkingLevel?: string;
+  /** 会话当前执行的任务（M2 关联）：会在 run 开始时写进 runs.task_id。 */
+  taskId?: string;
 }
 
 /**
  * 可被记账的事件。
  * 中文说明：前两类来自 SDK 事件流；后两类是本服务自己发布的合成事件
- * （见 AgentRegistry.announceApproval / announcePlan），这里只需要能识别并忽略。
+ * （见 AgentRegistry.announceApproval / announcePlan / announceTask），
+ * 这里只需要能识别并忽略。
  */
 export type LedgerEvent =
   | AgentSessionEvent
   | { type: 'agent_end'; error: string }
   | { type: 'plan_updated'; plan: unknown }
+  | { type: 'task_updated'; task: unknown }
   | {
       type: 'tool_call_pending';
       toolCallId: string;
@@ -460,6 +464,7 @@ export class SessionLedger implements ProviderObserver {
       id: this.options.runIdFactory?.() ?? randomUUID(),
       sessionId: context.sessionId,
       cwd: context.cwd,
+      ...(context.taskId === undefined ? {} : { taskId: context.taskId }),
       provider: context.provider,
       model: context.model,
       thinkingLevel: context.thinkingLevel,

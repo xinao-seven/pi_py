@@ -41,6 +41,7 @@ import { PlanModeService, type PlanSnapshot } from './plan-mode-service.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
+import type { TaskRecord } from './platform/task-model.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -245,6 +246,7 @@ export interface StreamEvent {
     | AgentSessionEvent
     | { type: 'agent_end'; error: string }
     | { type: 'plan_updated'; plan: PlanSnapshot }
+    | { type: 'task_updated'; task: TaskRecord }
     | {
         type: 'tool_call_pending';
         toolCallId: string;
@@ -277,6 +279,8 @@ export interface RegistryEntry {
   toolStartTimes: Map<string, number>;
   /** 本轮模型请求发出时刻（turn_start 记录），message_end 时算响应耗时。 */
   turnStartedAt?: number;
+  /** 本会话当前执行的任务 id（有值时账本会把它写进 run.task_id）。 */
+  activeTaskId?: string;
 }
 
 /**
@@ -851,6 +855,37 @@ export class AgentRegistry {
     this.sessionFactory.reloadModelRuntime?.();
   }
 
+  /**
+   * 记录会话当前执行的任务（任务在会话里被创建/绑定时调用）。
+   * 中文说明：只影响**之后**开始的 run——账本在 run 开始时落 task_id。传 null 表示解绑。
+   */
+  setActiveTask(sessionId: string, taskId: string | null): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry) return;
+    if (taskId === null) delete entry.activeTaskId;
+    else entry.activeTaskId = taskId;
+  }
+
+  /**
+   * 把任务变更广播给相关会话（SSE `task_updated`）。
+   *
+   * 中文说明：本服务的 SSE 通道是**按会话**的，没有全局流，所以路由规则必须写清楚：
+   * - 任务绑定了 sessionId → 只推给该会话；
+   * - 没有绑定 → 推给所有 cwd 匹配（或任务未指定 cwd）的活跃会话。
+   * 未打开的会话不会收到推送，但它们重新打开时面板会通过 REST 拉到最新状态。
+   */
+  announceTask(task: TaskRecord): void {
+    const payload = { type: 'task_updated' as const, task };
+    if (task.sessionId !== undefined) {
+      const entry = this.entries.get(task.sessionId);
+      if (entry) this.publish(entry, payload);
+      return;
+    }
+    for (const entry of this.entries.values()) {
+      if (task.cwd === undefined || entry.cwd === task.cwd) this.publish(entry, payload);
+    }
+  }
+
   /** 把审批结果交给审批中枢（挂起的 bash 工具调用会据此放行/拦截）。 */
   approveTool(sessionId: string, toolCallId: string, approved: boolean): void {
     if (!this.approvals)
@@ -945,6 +980,7 @@ export class AgentRegistry {
       cwd: entry.cwd,
       ...(session.model ? { provider: session.model.provider, model: session.model.id } : {}),
       thinkingLevel: session.thinkingLevel,
+      ...(entry.activeTaskId === undefined ? {} : { taskId: entry.activeTaskId }),
     };
   }
 

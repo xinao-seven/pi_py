@@ -21,7 +21,6 @@ import {
   applyStepStatus,
   deriveTaskStatus,
   emptyExecution,
-  isTerminalStatus,
   moveStep,
   newStep,
   nextStepId,
@@ -350,11 +349,14 @@ export class TaskService {
 
   /**
    * 由步骤状态重新聚合任务状态。
-   * 中文说明：终态（completed / cancelled）粘滞——终态之后再改步骤不会把任务撤回；
-   * 阻塞时若任务层没有原因，则从第一个阻塞步骤复制过来，免得面板上显示「阻塞但没原因」。
+   * 中文说明：**只有 `cancelled` 是冻结的**——它是显式的用户意图，不能被步骤变更覆盖。
+   * `completed` 则与其他状态一样由步骤派生：删掉未完成的步骤就可能回到 pending/in_progress。
+   * 这样做的好处是「状态只有一个真相源（步骤）」，不会出现「任务说已完成、步骤还挂着」
+   * 或「删了步骤但状态回不去」这种隐藏状态。
+   * 阻塞时若任务层没有原因，就从第一个阻塞步骤复制过来，免得面板上显示「阻塞但没原因」。
    */
   refreshStatus(task: TaskRecord): TaskRecord {
-    if (isTerminalStatus(task.status)) return task;
+    if (task.status === 'cancelled') return task;
     const status = deriveTaskStatus(task.steps);
     const blockedReason =
       status === 'blocked'

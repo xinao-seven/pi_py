@@ -101,9 +101,14 @@ export interface TaskQuery {
   limit?: number;
 }
 
-/** 终态：不再接受状态推进（cancelled 也不接受）。 */
+/** 终态：completed（由步骤聚合）与 cancelled（显式冻结）都不再需要推进。 */
 export function isTerminalStatus(status: TaskStatus): boolean {
   return status === 'completed' || status === 'cancelled';
+}
+
+/** 冻结状态：只能由 cancel() 设置，不能被步骤变更覆盖。 */
+export function isFrozenStatus(status: TaskStatus): boolean {
+  return status === 'cancelled';
 }
 
 /**

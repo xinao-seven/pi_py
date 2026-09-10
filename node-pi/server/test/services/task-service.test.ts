@@ -278,12 +278,19 @@ describe('TaskService steps', () => {
     expect(resumed.status).toBe('in_progress');
   });
 
-  it('keeps terminal status sticky when steps change afterwards', () => {
+  it('re-derives a completed task when its steps change (only cancelled is frozen)', () => {
     const { service } = makeService();
     const task = createTask(service, [{ title: 'a' }]);
     const done = service.update(task.id, { status: 'completed', ifRevision: 1 });
+    expect(done.status).toBe('completed');
+
+    // 已完成的任务再动步骤：状态重新由步骤聚合（手动状态不是隐藏真相源）。
     const stepped = service.addStep(done.id, { title: 'b', ifRevision: done.revision });
-    expect(stepped.status).toBe('completed');
+    expect(stepped.status).toBe('pending');
+
+    // 取消是唯一冻结状态：取消之后任何步骤变更都不会把它拉回来。
+    const cancelled = service.cancel(task.id, { ifRevision: stepped.revision });
+    expect(service.refreshStatus({ ...cancelled, steps: [] }).status).toBe('cancelled');
   });
 
   it('reorders steps by position', () => {

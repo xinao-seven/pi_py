@@ -127,6 +127,10 @@ function buildStore(input: {
     flush: () => traces.flush(),
     close: () => {
       traces.close();
+      // 显式再关一次后端：trace 关闭时 traces 是空实现（不会关连接），
+      // 而任务仓储共用同一个连接，必须在这里释放，否则文件句柄会泄漏。
+      // 已关闭时重复调用是幂等的（各后端都有 closed 标志）。
+      input.storage.close();
       input.tasks.close();
     },
     stats: () => traces.stats(),
