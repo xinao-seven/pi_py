@@ -65,6 +65,14 @@ SDK 自动发现。接入说明见 [`docs/node-extension-system.md`](../../docs/
 契约见 [`docs/node-web-plan-mode.md`](../../docs/node-web-plan-mode.md)，
 实现说明见 [`docs/node-plan-mode-m4.md`](../../docs/node-plan-mode-m4.md)。
 
+**子任务委派（M5）**：`SubagentService` 按预设（`~/.pi/agent/agents/*.md` + 项目级
+`.pi/agents/`）创建**进程内子会话**，只把摘要 + 用量回传父会话；子会话走 `AgentRegistry`
+（审批/trace/任务绑定自动生效），落 `~/.pi/agent-node-server/subagents/`。
+三条不变量：不递归是结构保证（到 `maxDepth` 不注册工具）、只读预设真的只读
+（子会话工具集 = 预设工具集）、一定要收尾（成功/失败/超预算/取消/停机都 `remove`）。
+官方文件扩展 `subagent` 已被内联实现同名接管（`INLINE_OWNED_EXTENSION_DIRS`）。
+说明见 [`docs/node-subagent-m5.md`](../../docs/node-subagent-m5.md)。
+
 **MCP 模板库（M4.2）**：`GET /api/mcp/templates` 返回推荐清单（`services/mcp/mcp-templates.ts`，
 18 个模板 / 7 组，附 `requiresCredentials` 与 `canAddDirectly`），前端配置页据此一键添加或填入表单。
 模板自检 `assertTemplateTable()` 保证：凭据只能是 `$ENV` 引用（env / headers / args 三处都做

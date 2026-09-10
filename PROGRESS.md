@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `343b27b feat(node): M4 评测 golden set 与版本号语义修正`         |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **318** / Web **118**，全绿；spike 30 项断言 + eval 8 个用例全过 |
+| 测试基线   | Node 后端 **368** / Web **124**，全绿；spike 30 项断言 + eval 11 个用例全过 |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -34,7 +34,7 @@
 | **M2** 任务领域         | ✅ **完成** | 领域 + 存储 + 8 个 REST + SSE + 任务面板，详见 3.7 |
 | **M3** 断点续跑         | ✅ **完成** | 租约 + 在飞动作 + 恢复清单 + 一键续跑，详见 3.8 |
 | **M4** Plan 重构        | ✅ **完成** | 工具驱动计划 + 任务视图 + 能力集权限 + 评测，详见 3.9 |
-| **M5** Subagent         | ⬜ 下一步   | 见第 5 节；需先决策与官方扩展的关系（见第 6 节） |
+| **M5** Subagent         | ✅ **完成** | 内联子会话 + 预算 + 审批继承 + trace 树 + 委派卡片，详见 3.12 |
 
 ---
 
@@ -389,6 +389,66 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
+### 3.12 M5 子任务委派（已完成，`docs/node-subagent-m5.md`）
+
+#### 为什么不是「把官方扩展接进来」
+
+官方 `subagent` 文件扩展在本机**一调用就失败**：四个预设写死 `model: claude-sonnet-4-5` /
+`claude-haiku-4-5`，而本机只鉴权了 deepseek → 子进程直接以
+`Model "claude-sonnet-4-5" is ambiguous across providers … No matching provider is authenticated`
+退出。它还有三个结构性缺陷：spawn 独立 `pi` 进程（`--mode json --no-session`）导致
+拿不到 Web 审批通道、不进 trace 树、不受租约约束，且无法离线评测。
+因此**内联实现 + 同名接管**（`subagent` 加进 `INLINE_OWNED_EXTENSION_DIRS`，
+只影响本服务加载，CLI 照常）。
+
+#### 交付物
+
+| 层 | 内容 |
+| --- | --- |
+| 服务 | `services/subagent-service.ts`（子会话创建/预算/并发闸门/取消级联/`buildExtension`）、`subagent-presets.ts`（预设发现 + 只读判定）、`subagent-models.ts`（模型解析与回退） |
+| 工具 | `services/subagent-tools.ts`：`subagent` 工具（单任务 + 平行调用靠 `executionMode: 'parallel'`） |
+| 接线 | `agent-registry`（`CreateSessionInput.subagent`、子会话工具集特例、`parentRunId` 进账本、`abortSession()` 级联、审批挂父会话）、`tool-approval`（父会话回退查找）、`session-ledger`（`currentRunId`/`lastRunId`）、`plan-mode-service`+`plan-policy`（规划期委派门禁）、`task-runner`（`stop()` 级联） |
+| 前端 | `SubagentCallBlock.vue`：预设/深度/用量/轨迹/回退说明/摘要；`ToolCallBlock` 分流 |
+| 评测 | `eval/` 3 个用例 + 新门禁；**harness 改跑真实工厂**（新增 `useRuntime()` 注入口） |
+
+#### 已冻结的决策
+
+1. **内联替换 + 同名接管**（保留共存 = 保留一个必然报错的工具）。
+2. **工具名 `subagent`**（叫 `task` 会与 M2 任务领域撞概念）。
+3. **预设只用 `~/.pi/agent/agents/*.md` + 项目级 `.pi/agents/`**（与官方扩展同契约，
+   你已有的 scout/planner/reviewer/worker 直接可用；不另立 explore/verify/general）。
+4. **预设模型解析不了就回退父会话模型 + 在结果里说明**（官方就是死在这里，必须让人看见）。
+5. **不能递归是结构保证**：到 `maxDepth` 的子会话根本不注册该工具。
+6. **只读预设真的只读**：子会话工具集就是预设工具集，不并入 MCP/计划/ask_user。
+7. **子会话落 `~/.pi/agent-node-server/subagents/`**（不进 CLI 的会话列表）。
+8. **预算以轮数 + token + 时限为主**（deepseek 上报成本恒为 0，美元上限形同虚设），
+   超限 abort 并**带回已产出的摘要**。
+9. **审批弹窗挂到父会话**（子会话没有自己的界面），`approve_tool` 仍只用父会话 id。
+10. **取消级联的五个入口**：父 abort / 计划暂停·放弃 / 会话删除 / 服务关闭 / `TaskRunner.stop`。
+11. **规划期只放行结构上只读的预设**（`tools ⊆ read/grep/find/ls`）。
+
+#### 实施中抓到的真实缺陷
+
+- **子会话审批发到了没人订阅的流上**（父会话看不到弹窗 → 30 秒超时按拒绝 → 委派失败）。
+- **`finishRun` 抹掉 run 元信息**（M1 遗留）：`UPDATE runs … meta = :meta` 在收尾不带 meta
+  时写 NULL，`{parentSessionId, preset, depth}` 全丢 → SQL 改保留原值 + 内存后端同步 +
+  账本收尾改为合并；补了回归测试。
+- **`withInlineTools` 对子会话必须关掉**：否则「只读预设」会悄悄拿到 MCP 与写工具。
+- **工具结果里塞进了完整 Model 对象**（含 baseUrl/api）：规整为 `{provider, id}`。
+
+#### 验证
+
+- 单测 +36（预设发现 7 / 模型解析 8 / 服务 19 / 审批继承 4 / 注册表·账本 8 /
+  规划门禁 2 / 租约级联 1 / meta 回归 1）→ 368 passed。
+- `npm run eval` 11/11 + 四项门禁（新增「子任务 trace 关联率」3/3）；
+  `npm run spike` 30 项断言仍全过。
+- **真机**：模型自己调用 `subagent` 委派 scout → 子会话 3 轮 `bash×2` 回摘要「45 个 .ts」，
+  工具结果里带「预设模型 claude-haiku-4-5 不可用，改用父会话模型」与用量；
+  父会话随后用 bash 复核数字；平台库里子 run 的 `parent_run_id` → 父 run、
+  `meta = {parentSessionId, preset: scout, depth: 1}`。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -415,37 +475,36 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 ---
 
-## 5. 下一步：M5 Subagent
+## 5. 下一步
 
-> M4 的任务清单已全部完成，DoD 对照见 `docs/node-plan-mode-m4.md` §4 与 §6。
-> 本节改写为 M5 的开工清单（细节以 `docs/node-platform-plan.md` §4.5 为准）。
+> **M5（Subagent）已完成**：交付物、决策与验证见 §3.12 与
+> [`docs/node-subagent-m5.md`](docs/node-subagent-m5.md)（含 DoD 对照与「已知未做」）。
 
-### 5.1 开工前必须先决策
+### 5.1 目前没有既定的下一个里程碑
 
-**官方 `subagent` 扩展的去留**（见第 6 节 #1）：现状是它注册 `subagent` 工具并 spawn 独立 `pi`
-子进程，因此**拿不到 Web 的审批通道、不进 trace 树、不受租约约束**。
-建议复用 `~/.pi/agent/agents/*.md` 已有的 `scout`/`planner`/`reviewer`/`worker` 预设，
-内联实现一个 `SubagentService`，而不是另起一套 `explore`/`verify`/`general`。
+规划里的 M5 是最后一个里程碑，之后只剩三类可选工作（都**不是**必须先做的）：
 
-### 5.2 任务清单（按规划 §4.5）
+| 方向 | 内容 | 价值 |
+| --- | --- | --- |
+| 委派可视化加深 | 侧栏会话树（子会话缩进）、子会话轨迹回看页、观测面板的「按 `parent_run_id` 分组」视图 | 现在只有工具卡片摘要（`docs/node-subagent-m5.md` §6 已记） |
+| 会话删除加固 | 两阶段提交 + 移入 trash（第 6 节 #2） | 误删会话不可恢复目前是唯一「破坏性」缺口 |
+| 命名空间卫生 | `mcp.json` / `node-server-*.json` 迁到 `~/.pi/agent-node-server/`（第 6 节 #3） | 无功能风险，纯卫生 |
+| Plan 期放行只读 MCP | `PlanPolicy` 加只读 MCP 白名单 | 规划期能用 context7/tavily 查资料 |
 
-| 任务 | 落点 |
-| --- | --- |
-| `task` 工具（模型侧入口）+ `SubagentService`（按预设创建子会话） | 新 `services/subagent-service.ts` + `services/subagent-tools.ts` |
-| 子会话的**预算隔离**（token/成本/步数上限）与**权限继承**（子会话的审批仍走同一 broker） | 复用 M1 的 cost 采集 + M2 的 task/steps |
-| 取消传播：父会话 abort / 任务 cancel / 服务关闭都要终止子会话 | `AgentRegistry` + `TaskRunner` 的停机路径 |
-| trace 树：子 run 的 `parent_run_id` 串起来（M1 已预留字段） | `session-ledger.ts` + `runs.parent_run_id` |
-| 前端：子会话/子任务的可视化（在任务面板里展开，而不是另开一栏） | `TaskPanel.vue` + `types` |
-| 评测：把 subagent 的委派收益纳入 golden set 指标（规划 §9.2 的「单任务平均成本」） | `eval/` 新增用例 |
+### 5.2 M5 之后若要继续，建议的顺序
 
-### 5.3 必须遵守的实现要点
+1. **（可选）委派可视化**：M5 已经把数据都存下来了（`parent_run_id` + `meta`），
+   做视图是纯前端/一个 REST 的事，改动小、收益直观。
+2. **会话删除加固**：这是目前唯一会「破坏性」丢数据的路径，值得提前做。
+3. 其余按需。
 
-1. **子会话同样是会话**：必须走 `AgentRegistry` 与 `TaskService`，不要旁路（否则审批、租约、
-   trace、任务面板都会漏掉它）。
-2. **`parent_run_id` 必须真的串起来**：这是 M5 相对官方扩展唯一不可替代的价值（可观测的委派）。
-3. **预算必须硬约束**：超限时要能中止子会话并如实上报，而不是「尽量省」。
-4. 子会话的每一层都要遵守 M4 的 Plan 契约（子计划同样是 `origin='plan'` 的任务）。
-5. **不要与官方扩展同时注册同名工具**（`subagent`）：决策落地后要么接管、要么显式共存并写清边界。
+### 5.3 继续时的既有约束（不变）
+
+- 子会话必须走 `AgentRegistry`（审批/租约/trace/任务绑定都要生效），不要旁路。
+- 共享态（`~/.pi/agent/sessions`、`models.json`）只做增量写入；本项目私有态落
+  `~/.pi/agent-node-server/`。
+- 新能力落地时必须补：单测（正常 + 边界）、`npm run spike`/`eval` 门禁、
+  `docs/` 说明并在 README/CLAUDE 索引登记。
 
 ---
 
@@ -453,8 +512,8 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 | #   | 事项                           | 选项                                                                  | 影响                                                                                                                                                                                                                       |
 | --- | ------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **官方 `subagent` 扩展的去留** | (a) 保留共存 (b) 内联实现替换 (c) 按预设开关切换                      | M5。现状：它注册工具 `subagent`，spawn 独立 `pi` 子进程，**拿不到 Web 审批通道、不进 trace 树**。建议复用 `~/.pi/agent/agents/*.md` 的 `scout`/`planner`/`reviewer`/`worker` 预设，而不是另起 `explore`/`verify`/`general` |
-| 2   | 会话删除的加固                 | 两阶段提交 + 移入 trash                                               | 非阻塞，可 M2/M3 顺带                                                                                                                                                                                                      |
+| 1   | ~~官方 `subagent` 扩展的去留~~ | ✅ **已决策（M5）**：内联实现替换 + 同名接管                          | 已落地，见 §3.12 / `docs/node-subagent-m5.md`                                                                                                                                                                              |
+| 2   | 会话删除的加固                 | 两阶段提交 + 移入 trash                                               | 非阻塞；目前唯一会破坏性丢数据的路径（误删不可恢复）                                                                                                                                                                       |
 | 3   | PI 命名空间                    | `mcp.json` / `node-server-*.json` 是否迁到 `~/.pi/agent-node-server/` | 仅卫生，无功能风险                                                                                                                                                                                                         |
 
 ---
@@ -464,11 +523,11 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 318 passed / 构建成功 / spike 全过 / eval 门禁全过
+#   → 期望：format OK / 无类型错误 / 368 passed / 构建成功 / spike 全过 / eval 门禁全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 118 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 124 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -674,6 +733,40 @@ web/src/{types/index.ts,lib/api.ts}                  McpTemplate 类型与 getMc
 docs/node-mcp-guide.md                               §3 新增「推荐模板库」与推荐清单表
 ```
 
+### M5 新增（子任务委派，2026-08-21）
+
+```
+node-pi/server/src/services/subagent-service.ts     子会话创建/预算/并发闸门/取消级联/buildExtension
+node-pi/server/src/services/subagent-presets.ts     预设发现（用户级 agents/*.md + 项目级 .pi/agents/）+ 只读判定
+node-pi/server/src/services/subagent-models.ts      预设 model 解析与「回退父会话模型」策略
+node-pi/server/src/services/subagent-tools.ts       subagent 工具定义与结果渲染
+web/src/components/SubagentCallBlock.vue            委派卡片（预设/深度/用量/轨迹/回退说明/摘要）
+node-pi/server/test/services/subagent-{presets,models,service}.test.ts
+node-pi/server/test/services/agent-registry-subagent.test.ts
+web/test/components/SubagentCallBlock.test.ts
+docs/node-subagent-m5.md                            实施说明（决策/契约/缺陷/验证/DoD）
+```
+
+### M5 改动（关键位置）
+
+```
+node-pi/server/src/services/agent-registry.ts       CreateSessionInput.subagent、子会话工具集特例、
+                                                    INLINE_OWNED_EXTENSION_DIRS += subagent、
+                                                    ledgerContext.parentRunId、abortSession() 级联、
+                                                    announceApproval 挂父会话、useRuntime() 注入口
+node-pi/server/src/services/tool-approval.ts        PendingToolApproval.parentSessionId/agent、setParentResolver、
+                                                    decide() 父会话回退、cancelSession 连带子会话
+node-pi/server/src/services/observability/session-ledger.ts  parentRunId→parent_run_id、currentRunId/lastRunId、meta 合并收尾
+node-pi/server/src/services/platform/sqlite-trace-storage.ts · run 收尾不再抹掉开始时写入的 meta
+node-pi/server/src/services/plan-mode-service.ts / plan-policy.ts  规划期委派门禁（只读预设）
+node-pi/server/src/services/task-runner.ts          stop() 级联停子任务
+node-pi/server/src/app.ts                           装配 SubagentService（延迟绑定）+ 只读预设判定注入
+node-pi/server/eval/harness.mjs                     改用真实 OriginalPiSessionFactory（+ scriptedResponses）
+node-pi/server/eval/run.mjs                         direct 模式 + 3 个委派用例 + 新门禁
+web/src/components/ToolCallBlock.vue                分流到委派卡片
+web/src/types/index.ts                              SubagentToolDetails
+```
+
 ### 与前端共享的契约文件（任何接口改动都必须同步）
 
 ```
@@ -699,6 +792,9 @@ web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.v
 | 聚合时间分辨率只有「天 + cwd」 | 自定义小时级窗口会按整天计入（分位数仍按精确窗口取样本）；需要小时级时给预聚合表加 `hour` 分桶 | M3 可选 |
 | 进程被强杀会留下 `running` run | 正常关闭会收尾为 `aborted`；异常退出的残留记录需要清理或恢复扫描 | M3 |
 | 用量面板无实时刷新 | 目前手动刷新 + 切条件自动加载；未新增 SSE 事件（避免提前改前端契约） | M2/M3 可选 |
+| 子会话没有专门的 UI 入口 | 只有工具卡片摘要 + 轨迹计数；子会话 JSONL 落在 `~/.pi/agent-node-server/subagents/`，侧栏会话树/回看页未做 | M5 可选 |
+| 委派统计未进观测面板 | 子 run 已挂 `parent_run_id`、`meta` 记了 preset/depth，但面板还没有「按父 run 展开」的视图 | M5 可选 |
+| 规划期不能委派带 bash 的预设 | 结构上只读才放行；你的 `scout.md` 带 bash，因此规划期被拦（执行期正常）。想放行就把它改为不带 bash | M5（刻意的约束） |
 | ~~规划期拦截未做端到端验证~~ | ✅ M4 已在真实 SDK 下验证（spike ⑦ 断言规划期写工具被拦、验证命令放行） | 已完成 |
 | 任务与 run 的关联时机 | 只在 run **开始**时写 `runs.task_id`；执行中绑定任务不会回溯已有 run | M3 可选 |
 | ~~`verification` 只存不校验~~ | ✅ M4 起 `complete_step` 会按声明校验证据（file 查产物 / command 查退出码 / manual 要结论） | 已完成 |

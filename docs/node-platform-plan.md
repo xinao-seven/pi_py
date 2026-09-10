@@ -820,6 +820,29 @@ export class SubagentService {
   - 侧栏会话树缩进展示子会话（已有 `parentSessionPath`）；
   - 观测面板增加「委派统计」（次数、平均成本、成功率、被预算截断的比例）。
 
+#### 4.5.5 实施修订（M5 落地后回填）
+
+落地时与上面设计有四处**刻意**差异，均已实现并验证（详见
+[`node-subagent-m5.md`](node-subagent-m5.md)）：
+
+1. **工具名是 `subagent` 而不是 `task`**：与官方扩展同名接管
+   （`INLINE_OWNED_EXTENSION_DIRS` 屏蔽其文件扩展，CLI 不受影响）。
+   叫 `task` 会和 M2 的任务领域（`taskId` / 租约 / `TaskPanel`）撞概念。
+2. **没有 `explore` / `verify` / `general` 预设**：直接用用户已有的
+   `~/.pi/agent/agents/*.md`（与官方扩展同契约），项目级 `.pi/agents/` 同名覆盖。
+   预设里的 `model:` **解析不了就回退父会话模型并说明原因**（官方扩展正是死在这里：
+   预设写死 `claude-*`，本机只有 deepseek，子进程直接以 ambiguous 退出）。
+3. **子会话不与父会话共享会话目录**：落在 `~/.pi/agent-node-server/subagents/`，
+   而不是 `~/.pi/agent/sessions/`——否则 CLI 的会话列表会凭空多出一堆子会话。
+4. **子会话关掉 Plan**（`planMode: false`）：子任务自己再起一个计划状态机只会让
+   「谁在等我确认」变模糊；规划期的委派由父会话的策略门禁管（只放行结构上只读的预设）。
+
+另外两处修正：
+
+- 预算以**轮数 + token + 时限**为主，`maxCostUsd` 只在 provider 如实上报成本时生效
+  （本机 deepseek 上报 `cost.total = 0`，只靠美元上限等于没有预算）；
+- 并发上限之外还按**父会话**限流（默认全局 3 / 每父会话 4），超限排队而不是拒绝。
+
 #### 4.5.4 测试
 
 - 集成（用 `fauxProvider` 驱动，**不访问网络**）：

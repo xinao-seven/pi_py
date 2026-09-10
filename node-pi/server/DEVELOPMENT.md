@@ -63,6 +63,10 @@ node-pi/server/
   危险命令 → `ToolApprovalBroker`；向用户提问 → `QuestionBroker`（都能挂起工具、
   推 SSE、由命令结算，且超时/中止/关闭都有确定结果）。**「谁在等用户」只存一份**：
   不要在任务/计划里镜像（M4.1 因此移除了 `PlanView.question*`）。
+- 子任务相关改动：子会话必须经 `AgentRegistry.create({ …, subagent })` 创建（不要旁路，
+  否则审批/trace/任务绑定会漏掉）；工具白名单**不要**对子会话调用 `withInlineTools`
+  （会把 MCP/计划/ask_user 并进「只读预设」）；新增取消入口时必须接到
+  `AgentRegistry.abortSession()` / `subagents.abortAll()` 上。
 - MCP 相关改动：配置写入必须遵守「凭据只写 `$ENV` 引用」——env / headers / `args` 三处都会在
   spawn 时插值，因此 `--token=$VAR` 是合法写法，而把令牌明文写进 `mcp.json` 是红线
   （该文件与原版 CLI 共享）。新增推荐模板要过 `assertTemplateTable()`（重复 id、

@@ -154,6 +154,23 @@ Agent 需要你拍板时（需求歧义、方案取舍、风险偏好）会**弹
 
 契约见 [`docs/node-question-channel.md`](docs/node-question-channel.md)。
 
+## 子任务委派（subagent）
+
+模型可以把「自包含但会污染上下文」的活派出去：`subagent` 工具按预设
+（`~/.pi/agent/agents/*.md`，与官方扩展同契约；你已有的 `scout`/`planner`/`reviewer`/`worker`
+直接可用）创建一个**进程内子会话**，只把摘要 + 用量回传父会话。
+
+- 子会话走 `AgentRegistry` 创建：危险命令审批共用同一个 broker（弹窗出现在**父会话**界面）、
+  进 trace 树（`parent_run_id`）、继承父会话的任务绑定；
+- **不能递归是结构保证**：到深度上限的子会话根本不注册该工具；
+- **只读预设真的只读**：子会话工具集就是预设工具集，不并入 MCP/计划/ask_user；
+- **预算硬约束**：轮数 / token / 成本 / 时限，超限中止但把已产出的摘要带回来；
+- 预设里的 `model:` **解析不了就回退父会话模型并说明原因**（官方扩展正是死在这里）；
+- 子会话落在 `~/.pi/agent-node-server/subagents/`（可查，**不进 CLI 的会话列表**）。
+
+前端在工具卡片里展示预设/深度/用量/轨迹/回退说明/摘要。详见
+[`docs/node-subagent-m5.md`](docs/node-subagent-m5.md)。
+
 ## MCP 接入
 
 支持任意 MCP server（stdio 子进程 / streamable-http 静态头），配置落在
@@ -212,5 +229,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
 | [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据 |
 | [`docs/node-question-channel.md`](docs/node-question-channel.md) | **向用户提问的交互通道**：ask_user 工具契约、弹窗行为、SSE/命令、测试 |
+| [`docs/node-subagent-m5.md`](docs/node-subagent-m5.md) | **M5 子任务委派**：为什么内联替换官方扩展、预算/审批继承/trace 树、决策与验证 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
