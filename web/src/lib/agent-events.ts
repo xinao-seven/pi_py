@@ -16,6 +16,19 @@ export const INITIAL_STREAM_STATE: AgentStreamState = {
   pendingQuestion: null,
 };
 
+/**
+ * 把规约结果完整拷进响应式状态对象。
+ * 中文说明：这里必须整对象拷贝，不能逐字段手写——曾经 assignStream 只抄了五个字段、
+ * 漏掉 pendingQuestion，导致 SSE 的 question_pending 被静默丢弃：模型挂起等回答、
+ * 前端永远不弹窗（只有刷新页面走状态快照才看得到）。字段完整性由 agent-events 测试守住。
+ */
+export function applyStreamState(
+  target: AgentStreamState,
+  next: AgentStreamState,
+): AgentStreamState {
+  return Object.assign(target, next);
+}
+
 export function reduceAgentEvent(state: AgentStreamState, event: AgentEvent): AgentStreamState {
   // 事件 -> 状态的规约函数（纯函数，便于测试）：
   // agent_start 进入等待；message_update 显示流式回复；

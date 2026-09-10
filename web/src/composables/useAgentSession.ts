@@ -15,7 +15,12 @@ import {
   listTasks,
   sendAgentCommand,
 } from '@/lib/api';
-import { INITIAL_STREAM_STATE, normalizeQuestion, reduceAgentEvent } from '@/lib/agent-events';
+import {
+  INITIAL_STREAM_STATE,
+  applyStreamState,
+  normalizeQuestion,
+  reduceAgentEvent,
+} from '@/lib/agent-events';
 import { fireUnauthorized } from '@/lib/session';
 import type {
   AgentEvent,
@@ -117,11 +122,9 @@ export function useAgentSession(options: AgentSessionOptions) {
   });
 
   function assignStream(next: AgentStreamState): void {
-    stream.running = next.running;
-    stream.phase = next.phase;
-    stream.streamingMessage = next.streamingMessage;
-    stream.error = next.error;
-    stream.pendingToolCall = next.pendingToolCall;
+    // 整对象拷贝（不再逐字段手写）：漏一个字段就等于丢一类弹窗，
+    // 尤其是 pendingQuestion（提问）与 pendingToolCall（审批）。
+    applyStreamState(stream, next);
   }
 
   /** 重新拉取计划视图（步骤编辑后立即刷新，避免等 SSE 的往返延迟）。 */

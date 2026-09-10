@@ -1,9 +1,11 @@
 import {
   INITIAL_STREAM_STATE,
+  applyStreamState,
   messageText,
   normalizeQuestion,
   reduceAgentEvent,
 } from '@/lib/agent-events';
+import type { AgentStreamState } from '@/types';
 
 describe('reduceAgentEvent', () => {
   it('tracks a streaming assistant response through completion', () => {
@@ -202,5 +204,68 @@ describe('question_pending / question_resolved（M4.1 提问通道）', () => {
       toolCallId: '',
       questions: [{ id: 'q1', question: '没有 id', allowFreeText: false }],
     });
+  });
+});
+
+describe('applyStreamState（把规约结果写回响应式状态）', () => {
+  it('copies every field of the stream state（漏字段＝丢弹窗）', () => {
+    // 用哨兵值逐字段断言：将来给 AgentStreamState 加字段却忘了同步，
+    // 这里会直接失败，而不是出现「某个弹窗永远不显示」这种只能靠肉眼发现的缺陷。
+    const next = {
+      running: true,
+      phase: 'tool',
+      streamingMessage: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '哨兵' }],
+      },
+      error: '哨兵错误',
+      pendingToolCall: {
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        reason: '哨兵',
+        rule: 'recursive-delete',
+        risk: 'critical',
+        category: 'destructive',
+        args: {},
+      },
+      pendingQuestion: {
+        sessionId: 'session-1',
+        questionId: 'question-1',
+        toolCallId: 'call-1',
+        createdAt: '2026-08-21T10:00:00.000Z',
+        questions: [{ id: 'q1', question: '继续吗？' }],
+      },
+    } satisfies AgentStreamState;
+
+    const target: AgentStreamState = { ...INITIAL_STREAM_STATE };
+    applyStreamState(target, next);
+
+    for (const key of Object.keys(INITIAL_STREAM_STATE) as (keyof AgentStreamState)[]) {
+      expect(target[key]).toEqual(next[key]);
+      expect(target[key]).not.toBe(INITIAL_STREAM_STATE[key]);
+    }
+  });
+
+  it('keeps the dialog state produced by question_pending（真实链路：归约 → 写回 → 弹窗）', () => {
+    const asked = reduceAgentEvent(INITIAL_STREAM_STATE, {
+      type: 'question_pending',
+      question: {
+        sessionId: 'session-1',
+        questionId: 'question-1',
+        toolCallId: 'call-1',
+        createdAt: '2026-08-21T10:00:00.000Z',
+        questions: [{ id: 'q1', question: '继续吗？', options: ['继续', '停'] }],
+      },
+    });
+    const stream: AgentStreamState = { ...INITIAL_STREAM_STATE };
+    applyStreamState(stream, asked);
+    expect(stream.pendingQuestion?.questionId).toBe('question-1');
+
+    // 结算后必须能关掉弹窗（同一个漏字段缺陷也会让弹窗永远挂着）。
+    applyStreamState(
+      stream,
+      reduceAgentEvent(stream, { type: 'question_resolved', questionId: 'question-1' }),
+    );
+    expect(stream.pendingQuestion).toBeNull();
   });
 });
