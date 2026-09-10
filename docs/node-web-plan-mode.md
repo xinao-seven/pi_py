@@ -102,11 +102,14 @@ interface PlanView {
 
 ## 3. 计划工具契约（模型侧）
 
-由内联扩展注册，**只在计划会话里加入 activeTools**（普通会话里对模型不可见；
-`ask_user` 例外——它属于通用交互通道，任何会话都可用）：
+由内联扩展注册，**从会话创建起就始终在 `activeTools` 里**（预设白名单经 `withInlineTools` 并入，
+见 [`node-plan-cache-stability.md`](node-plan-cache-stability.md)：计划开关不再增删工具，避免请求前缀缓存失效）。
+没计划时误调 `submit_plan` 不会造出计划：`PlanToolbox.requirePlan()` 会直接报错。
+`ask_user` 也是常驻（属于通用交互通道，与 Plan 无关）。
 
 | 工具 | 参数 | 行为 |
 | --- | --- | --- |
+| `propose_plan` | `{ goal?, reason? }` | **模型提议进入规划**：走提问通道问用户「要不要先规划」，用户选**先规划**才 `startPlanning`（本轮直接拿到规划期说明）；选「直接做」/超时/取消则不建计划、不进只读态；已有计划时报错让模型改用 `submit_plan` / `update_plan` |
 | `submit_plan` | `{ title, steps: [{ title, details?, verification? }] }` | 创建/替换计划步骤 → `proposed`；校验空步骤、重复标题、>50 步、`verification` 声明不自洽 |
 | `update_plan` | `{ revision, title?, steps? }` | 按 `revision` 修订；不匹配时错误信息里给出当前 revision；**不能删除或重命名已经开始/已完成的步骤**（可改还没做的步骤） |
 | `complete_step` | `{ stepId, evidence: { summary?, commands?, files? } }` | 校验证据后把步骤置完成；证据不符 → 工具错误（模型补齐后重试） |
@@ -140,8 +143,9 @@ interface PlanView {
 `git status`、`rg -n x src`。拦截示例：`rm -rf`、`sed -i`、`> out.txt`、`git commit`、
 `npm install`、`curl`、`npx 未知包`、`powershell -c ...`、MCP 工具。
 
-**退出**：只撤销本会话 Plan 期造成的工具差集（`added` / `disabled` 两张表），
-用户在此期间用 `set_tools` 做的改动不会被吞掉（P6）。计划自然完成时同样收回计划工具。
+**退出**：不再有任何「工具差集」——计划开始/结束都不动 `activeTools`（工具集恒定，见
+[`node-plan-cache-stability.md`](node-plan-cache-stability.md)）。只读完全由 `tool_call` 拦截兜底：
+即使模型看得到写工具，规划期调用也会被拦。
 
 ---
 

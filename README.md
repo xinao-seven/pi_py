@@ -132,9 +132,14 @@ $env:PI_NODE_TRACE_CONTENT = '1'  # 额外保留已脱敏正文（默认只存 d
   **新会话也能直接规划**，不再需要先开开关再发消息。
 - **规划期只读**：Agent 只读调研、可以跑验证类命令（`tsc --noEmit` / `pnpm test` / `npm run build`），
   不能改工作区；写操作与 MCP 工具一律拦截（能力分类判定，不是白名单比对）。
-- **计划由工具产出**：`submit_plan` / `update_plan` / `complete_step` / `block_step` / `ask_user`，
+- **计划由工具产出**：`propose_plan` / `submit_plan` / `update_plan` / `complete_step` / `block_step` / `ask_user`，
   模型不需要写任何特殊标记；步骤完成必须带证据，服务端按声明的 `verification` 校验
   （产物存在 / 命令与退出码 / 人工结论）。
+- **模型也能发起规划**：任务较大时会用 `propose_plan` 弹窗问你「要不要先出计划」，你点「先规划」
+  才进入只读规划期（提议权给模型、决定权在你）；你选「直接做」或没答，它就直接干活。
+- **工具集常驻**：计划工具从第一轮就在会话里，开关计划**不增删工具**——`tools` + 系统提示词
+  构成请求最前面的前缀，改一次就让整段缓存失效（详见 [`docs/node-plan-cache-stability.md`](docs/node-plan-cache-stability.md)），
+  只读改由 `tool_call` 拦截兜底，「用量」面板的**缓存命中率**可直接看到效果。
 - **全生命周期可控**：确认执行、执行中改后面几步、暂停/继续、放弃（记录保留可查）；
   崩溃后由 M3 的恢复清单接上（`replan` 只对计划任务开放）。
 - **留在任务库里**：计划就是 `origin='plan'` 的任务，因此任务面板、成本账本、断点续跑天然共用同一份状态。
@@ -228,6 +233,7 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
 | [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据 |
+| [`docs/node-plan-cache-stability.md`](docs/node-plan-cache-stability.md) | **Plan 缓存稳定性 + `propose_plan`**：为什么不再增删工具、注入去抖、模型提议的边界 |
 | [`docs/node-question-channel.md`](docs/node-question-channel.md) | **向用户提问的交互通道**：ask_user 工具契约、弹窗行为、SSE/命令、测试 |
 | [`docs/node-subagent-m5.md`](docs/node-subagent-m5.md) | **M5 子任务委派**：为什么内联替换官方扩展、预算/审批继承/trace 树、决策与验证 |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |

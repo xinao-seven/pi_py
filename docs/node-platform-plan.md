@@ -654,6 +654,11 @@ git status|log|diff|show|branch|remote / rg|fd|cat|head|tail|wc|ls|find|du
 
 **退出恢复**：`restoreTools()` 不再写回旧快照，而是「叠加撤销」——记录本会话 Plan 期新增/移除的工具差集，退出时只撤销差集，用户在此期间的手动改动得以保留。
 
+> 后续修订（M4.2，见 [`node-plan-cache-stability.md`](node-plan-cache-stability.md)）：
+> 本节写的「工具差集」最终也被删掉了——改工具列表会让 `tools` + system prompt 构成的请求前缀
+> 缓存整段失效，所以现在**工具集恒定**，规划期只读改由 `tool_call` 拦截兑现；
+> 想开新计划由模型用 `propose_plan` 征求用户同意。
+
 #### 4.4.4 入口 UX 重构（修正 P1）
 
 - 移除 `AgentControls.vue` 的 Plan 预开关（`planActive` / `togglePlan`）。

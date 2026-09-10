@@ -44,8 +44,8 @@ M4 的方向：**Plan 是 Task 的受控视图 + 结构化工具契约 + 能力�
 | `platform/plan-model.ts` | 纯投影：`PlanView` / `PlanStatus` / `derivePlanStatus` / `toPlanView` |
 | `platform/step-verification.ts` | 纯判定：证据是否满足 `verification`（M3 的恢复产物校验也用它） |
 | `plan-policy.ts` | 规划期能力分类与 `PlanPolicy` |
-| `plan-tools.ts` | 五个计划工具 + `PlanToolbox`（用例层，可脱离 Pi 会话单测） |
-| `plan-mode-service.ts` | 会话状态机（工具差集 + 上下文注入 + 拦截）、命令分发、视图广播 |
+| `plan-tools.ts` | 计划工具（含 `propose_plan`）+ `PlanToolbox`（用例层，可脱离 Pi 会话单测） |
+| `plan-mode-service.ts` | 会话状态机（工具集恒定 + 上下文注入去抖 + `tool_call` 拦截）、命令分发、视图广播 |
 | `task-runner.ts` | 计划执行复用租约/在飞动作（`start` / `stop`） |
 
 ---
@@ -88,12 +88,14 @@ status/evidence 会被清空（等于忘掉刚做完的工作）。因此规则�
 与「危险命令必须人工确认」的约束直接冲突。因此文档里明确写：`command` 验证的是
 「确实跑过并如实上报」，不是「跑对了」。等 M5 把完成工具接进工具调用与审批链路后可以加强。
 
-### 3.6 权限用能力集 + 差集撤销（P6）
+### 3.6 权限用能力集（P6）
 
 - 分类判定（审批规则 → 拆段 → 程序名归类），**未归类即不放行**；
-- 退出时只撤销自己造成的差集（`toolsAdded` / `toolsDisabled`），不写回旧快照；
-- 计划自然完成时也要收回计划工具（否则 `submit_plan` 会永远挂在 activeTools 里，
-  变成「已经在做的计划旁边还挂着一个可随时新建计划的入口」）。
+- ~~退出时只撤销自己造成的差集（`toolsAdded` / `toolsDisabled`）~~ → **已改为工具集恒定**：
+  计划开始/结束都不动 `activeTools`，只读完全由 `tool_call` 拦截兜底。原因与证据见
+  [`node-plan-cache-stability.md`](node-plan-cache-stability.md)（改工具数组会让整段请求前缀缓存失效）。
+- 同理，`submit_plan` 也不再「完成后被收回」——它常驻；没计划时模型调用它会被 `requirePlan()` 拒绝，
+  而「要不要开一个新计划」改由模型用 `propose_plan` 征求用户同意（M4.2）。
 
 ### 3.7 版本号语义修正：只给用户可见内容记版本
 
@@ -120,15 +122,20 @@ CLI 侧也不会解析它），新的不再写。
 - `web-plan-execution-context`（执行期）：当前步骤/进度/证据 + 推进方式。
 
 按类型只保留最后一条（否则随轮数线性膨胀），旧的 `web-plan-execute` 类型一律丢弃。
-执行期上下文**每轮**注入，而不是像 M3 的恢复摘要那样一次性注入：状态永远是最新的，
-不会出现「一次性注入的内容已经过期」的问题。
+执行期上下文在注入前会先比对历史里最后一条同类注入：内容相同就不重复注入（M4.2）。
+中文说明：custom 消息会被转成 user 消息夹在历史中间，旧实现「每轮删旧加新」等于从注入点
+往后每轮都改写历史，前缀缓存从那里开始就全部失效；去抖后只在状态跃迁时改一次。
+参见 [`node-plan-cache-stability.md`](node-plan-cache-stability.md)。
 
-### 3.10 `ask_user` 不放在计划工具里（M4.1）
+### 3.10 `ask_user` / `propose_plan` 不放在「计划专用」里（M4.1 / M4.2）
 
 提问是**通用交互**，不是计划的一部分：它已在 M4.1 拆到独立的 `QuestionBroker`
 （`services/user-question.ts`），任何会话都激活，且计划结束后依然可用。
 为此 `PlanView` 里的 `question` / `questionOptions` 被移除——「谁在等用户回答」只有一个真相源
 （挂起队列 + 会话状态快照的 `pendingQuestion`），避免两处状态互相矛盾。
+
+M4.2 给同一通道加了第二个使用方 `propose_plan`（模型提议进入规划，用户点头才开启）：
+「模型自己判断要不要规划」因此不需要新契约，也不破坏「只有用户能确认执行」。
 
 ### 3.11 M3 的 `replan` 只对计划任务开放
 
@@ -166,7 +173,7 @@ CLI 侧也不会解析它），新的不再写。
 ✅ 执行期计划工具仍激活、写工具已放行、租约已持有
 ✅ 退出码不符的证据被拒（且没有写进状态）、产物缺失被拒、错误信息可照做
 ✅ 补齐产物后计划完成、每一步都有证据、模型零标记
-✅ 计划完成后收回计划工具；放弃后记录保留（cancelled）且工具差集撤销
+✅ 计划完成后工具集一字不变（不再收回计划工具）；放弃后记录保留（cancelled）
 ```
 
 这个 spike 抓到两个真实缺陷（已修，见 §5）。

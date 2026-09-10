@@ -275,9 +275,9 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 | 层 | 内容 |
 | --- | --- |
 | 领域 | `platform/plan-model.ts`（`PlanView` + `derivePlanStatus`，纯投影）、`platform/step-verification.ts`（证据判定，M3 恢复也复用）、`execution.plan` 落库（无新迁移） |
-| 工具 | `services/plan-tools.ts`：`submit_plan` / `update_plan` / `complete_step` / `block_step` / `ask_user`（TypeBox + promptSnippet/Guidelines） |
+| 工具 | `services/plan-tools.ts`：`propose_plan` / `submit_plan` / `update_plan` / `complete_step` / `block_step`（TypeBox + promptSnippet/Guidelines）、`ask_user`（独立通道） |
 | 权限 | `services/plan-policy.ts`：能力分类（审批规则 → 拆段 → 程序名归类），未归类即不放行 |
-| 状态机 | `services/plan-mode-service.ts` 重写：工具差集撤销、上下文注入（规划/执行两种，每轮去重）、`tool_call` 拦截、命令分发 |
+| 状态机 | `services/plan-mode-service.ts` 重写：**工具集恒定**（不再有差集；只读由 `tool_call` 拦截兑现——已冻结决策 5 于 3.14 修订）、上下文注入（规划/执行两种，内容不变不重复注入）、命令分发 |
 | 执行 | `TaskRunner.start/stop`：计划执行复用 M3 的租约与任务绑定 |
 | 接口 | `plan_start/execute/pause/resume/refine/abandon`（`plan_enable/disable` 弃用别名）、`prompt.mode`、SSE `plan_updated` → `PlanView` |
 | 前端 | 计划面板（证据/验证声明/暂停/继续/改名/跳过/删除）、输入框 `[直接执行 \| 先规划]` + `/plan` 前缀、移除 Plan 预开关 |
@@ -289,7 +289,7 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 2. **`planId === taskId`**；落库状态只有四种意图，`completed`/`abandoned` 由任务状态推导。
 3. **按标题复用进度**；执行期允许调整还没开始的步骤，但**不能删除或重命名已开始/已完成的步骤**。
 4. **证据校验分级**：`file` 查产物、`command` 只验「跑过且如实上报」（不重跑，避免绕开审批）、`manual` 要结论。
-5. **权限差集撤销**：只撤销自己造成的工具改动，用户改动不被吞；计划自然完成时也收回计划工具。
+5. **权限靠能力集 + `tool_call` 拦截**：~~只撤销自己造成的工具改动~~ → 已修订（3.14）：**工具集在整个会话生命周期内恒定**（计划开始/结束不增删工具，避免请求前缀缓存失效），只读完全由拦截兑现；想开新计划由模型用 `propose_plan` 征求用户同意。
 6. **版本号＝用户可见内容的版本**：心跳/在飞不占用 revision；`mutate` 的「change 返回原对象=无变化」让幂等命令不写库。
 7. **JSONL 只写 `web-plan-ref` 指针**，旧快照保留不删也不再写（CLI 兼容）。
 
@@ -479,6 +479,28 @@ Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
 
 **已知限制**：Python 后端仍返回嵌套树（其 `json.dumps` 在 ~1000 层 `RecursionError`）——
 `pi-python` 已冻结，只在前端兜底；生产走 Node 后端。
+
+---
+
+### 3.14 Plan 缓存稳定性 + `propose_plan`（已完成，`docs/node-plan-cache-stability.md`）
+
+**问题**：Plan 的开关以前靠改 `activeTools` 实现（规划期关掉 `edit/write`、计划结束时收回 4 个计划工具），
+而 `tools` 数组与 system prompt 一起位于请求最前面——改一次就让**整段前缀缓存失效**
+（DeepSeek 自动前缀缓存 / anthropic 的 `cache_control` 三处断点同理）。
+另外发现的更大漏点：规划上下文**每轮删旧加新**，等于从注入点往后每轮改写历史（计划越久越贵）。
+
+**修法（已冻结的决策）**：
+
+1. **工具集恒定**：计划生命周期不再调用 `setActiveTools`（删除工具差集）；只读由 `tool_call` 拦截兑现。
+   代价：模型在规划期可能试一次写工具被拦（可读的理由文本已写明先让用户确认执行）。
+2. **注入去抖**：`beforeAgentStart` 先比对历史里最后一条同类注入，内容相同就不再注入——
+   只在状态跃迁（drafting → proposed → executing / revision 变化）时改写一次。
+3. **`propose_plan`**：提议权给模型、决定权给用户——走提问通道问一句「要不要先规划」，
+   用户选「先规划」才 `startPlanning`；拒绝/超时则不建计划、不进只读态。
+   不做「`submit_plan` 无计划时自建」（过度规划 + 自锁只读）。
+4. 前端「用量」面板新增 **缓存命中** KPI（`cacheRead /（输入 + cacheRead）`），用于量化这类优化。
+
+**证据**：Node 379 用例、spike 36 项断言、eval 12/12（新增 `propose-plan-accepted`）、Web 134 用例全绿。
 
 ---
 
@@ -705,7 +727,8 @@ docs/node-plan-mode-m4.md                                  M4 实现说明 + 验
 
 ```
 node-pi/server/src/services/plan-mode-service.ts      · 删除 extractPlan/markDone/[DONE:n]
-                                                      · 工具差集撤销 + 两种上下文注入 + 能力集拦截
+                                                      · 工具集恒定 + 上下文注入去抖 + 能力集拦截（差集已于 3.14 删除）
+                                                      · propose_plan（模型提议、用户拍板）
                                                       · 命令：plan_start/execute/pause/resume/refine/abandon
 node-pi/server/src/services/platform/task-model.ts    · execution.plan（四种意图，无新迁移）
 node-pi/server/src/services/task-service.ts           · createPlan/setPlanState/replacePlanSteps/abandonPlan
