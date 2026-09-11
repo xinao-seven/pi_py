@@ -425,7 +425,8 @@ watch(
       behavior: stream.streamingMessage ? 'auto' : 'smooth',
     });
   },
-  { deep: true },
+  // 不用 deep：源里已经是「数组长度 + message 对象引用」，每条 SSE 事件都换成新对象；
+  // deep 只会在每个 token 上深度遍历整条消息，纯浪费（合并渲染后每帧最多触发一次）。
 );
 
 watch(

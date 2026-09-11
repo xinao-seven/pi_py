@@ -11,6 +11,7 @@ import { mount } from '@vue/test-utils';
 import { defineComponent, ref } from 'vue';
 
 import { useAgentSession } from '@/composables/useAgentSession';
+import { messageText } from '@/lib/agent-events';
 
 const api = vi.hoisted(() => ({
   createAgent: vi.fn(),
@@ -93,20 +94,24 @@ function mountHost() {
   return { wrapper, session: session! };
 }
 
+/** 各用例共用的接口默认返回值（真实前端的常规路径：running + isStreaming）。 */
+function mockApiDefaults(): void {
+  api.getSession.mockResolvedValue({
+    session: { id: SESSION_ID },
+    context: { messages: [], entryIds: [] },
+  });
+  api.getPlan.mockResolvedValue({ plan: null });
+  api.listTasks.mockResolvedValue([]);
+  api.getTaskRecovery.mockResolvedValue([]);
+  api.getModels.mockResolvedValue({ models: [], defaultModel: null });
+  api.getPresets.mockResolvedValue([]);
+  api.getAgentState.mockResolvedValue({ running: true, state: { isStreaming: true } });
+}
+
 describe('useAgentSession 的提问通道状态', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    api.getSession.mockResolvedValue({
-      session: { id: SESSION_ID },
-      context: { messages: [], entryIds: [] },
-    });
-    api.getPlan.mockResolvedValue({ plan: null });
-    api.listTasks.mockResolvedValue([]);
-    api.getTaskRecovery.mockResolvedValue([]);
-    api.getModels.mockResolvedValue({ models: [], defaultModel: null });
-    api.getPresets.mockResolvedValue([]);
-    // running + isStreaming：loadSession 据此建立 SSE 连接（真实前端的常规路径）。
-    api.getAgentState.mockResolvedValue({ running: true, state: { isStreaming: true } });
+    mockApiDefaults();
   });
 
   it('shows the dialog when question_pending arrives over SSE', async () => {
@@ -142,6 +147,83 @@ describe('useAgentSession 的提问通道状态', () => {
 
     sse.push({ type: 'agent_end', error: null });
     await vi.waitFor(() => expect(session.stream.pendingQuestion).toBeNull());
+
+    sse.close();
+    wrapper.unmount();
+  });
+});
+
+/**
+ * 流式增量合并：SDK 每个 token 发一条带**整条消息快照**的 message_update，
+ * 前端必须按帧合并成一次渲染，否则长回复会把主线程压成「页面卡死」。
+ */
+describe('useAgentSession 的流式增量合并', () => {
+  const frames: Array<() => void> = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApiDefaults();
+    frames.length = 0;
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => {
+      frames.push(callback);
+      return frames.length;
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function assistantUpdate(text: string) {
+    return {
+      type: 'message_update',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    };
+  }
+
+  it('coalesces per-token message_update into one render per frame', async () => {
+    const sse = controllableStream();
+    api.fetchAgentEvents.mockResolvedValue({ ok: true, body: sse.stream });
+
+    const { wrapper, session } = mountHost();
+    await vi.waitFor(() => expect(api.fetchAgentEvents).toHaveBeenCalled());
+
+    sse.push(assistantUpdate('a'));
+    sse.push(assistantUpdate('ab'));
+    sse.push(assistantUpdate('abc'));
+
+    // 三条增量只调度一次帧，且在帧回调跑之前不写进响应式状态。
+    await vi.waitFor(() => expect(frames.length).toBe(1));
+    expect(session.stream.streamingMessage).toBeNull();
+
+    frames.shift()!();
+    await vi.waitFor(() => {
+      const message = session.stream.streamingMessage;
+      expect(message && messageText(message)).toBe('abc');
+    });
+
+    sse.close();
+    wrapper.unmount();
+  });
+
+  it('flushes the pending update before applying message_end', async () => {
+    const sse = controllableStream();
+    api.fetchAgentEvents.mockResolvedValue({ ok: true, body: sse.stream });
+
+    const { wrapper, session } = mountHost();
+    await vi.waitFor(() => expect(api.fetchAgentEvents).toHaveBeenCalled());
+
+    sse.push(assistantUpdate('partial'));
+    // 帧还没跑就来 message_end：必须先落地挂起增量、再由 message_end 清空，顺序不能反。
+    sse.push({
+      type: 'message_end',
+      entryId: 'entry-1',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+    });
+
+    await vi.waitFor(() => expect(session.messages.value).toHaveLength(1));
+    expect(session.stream.streamingMessage).toBeNull();
+    expect(messageText(session.messages.value[0]!)).toBe('done');
 
     sse.close();
     wrapper.unmount();

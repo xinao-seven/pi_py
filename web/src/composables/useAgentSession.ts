@@ -50,6 +50,8 @@ const RECONNECT_BASE_DELAY_MS = 500; // 首退避 0.5s
 const RECONNECT_MAX_DELAY_MS = 10_000; // 退避封顶 10s
 const STREAM_IDLE_TIMEOUT_MS = 45_000; // 超过 3 倍心跳间隔（15s）没有数据 = 连接假死
 const ACTIVITY_CHECK_INTERVAL_MS = 10_000; // 假死检测轮询间隔
+// 没有 requestAnimationFrame 的环境（SSR / 老测试环境）下合并渲染的退化间隔。
+const STREAMING_FLUSH_FALLBACK_MS = 50;
 
 interface AgentSessionOptions {
   sessionId: Ref<string | null>;
@@ -100,6 +102,16 @@ export function useAgentSession(options: AgentSessionOptions) {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let activityTimer: ReturnType<typeof setInterval> | undefined;
   let lastActivityAt = 0;
+
+  // ---- 流式增量合并（长回复不再压满主线程）----
+  // 中文说明：SDK 每产生一个 token 增量就发一条 message_update，且每条都带**整条累计消息**
+  // 的快照（pi-agent-core 的 agent-loop 里 `message: { ...partialMessage }`）。若逐条写进响应式
+  // 状态，MarkdownContent 就会对整条消息全量重跑 marked + highlight.js + DOMPurify，单条越长
+  // 开销越大（O(n²)），长回复时消费跟不上生产、主线程积压成「页面卡死」。这里只保留最新一条，
+  // 按帧合并成一次渲染；其余事件（message_end / tool_* 等）照旧即时处理，顺序不受影响。
+  let pendingStreamingMessage: AgentMessage | null = null;
+  let streamingFlushScheduled = false;
+  let streamingFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
   let loadSequence = 0;
   let catalogRetryTimer: ReturnType<typeof setInterval> | undefined;
@@ -209,6 +221,7 @@ export function useAgentSession(options: AgentSessionOptions) {
   function closeEvents(): void {
     // 完全拆除事件流：使当前 generation 失效，旧的读取循环立刻停止且不再调度重连。
     ++streamGeneration;
+    cancelStreamingFlush();
     if (reconnectTimer !== undefined) {
       clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
@@ -272,6 +285,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         }
       }
       stopActivityTimer();
+      flushStreamingMessage(); // 流自然结束：把最后一条挂起的增量补上
     } catch {
       stopActivityTimer();
       if (controller.signal.aborted || generation !== streamGeneration) return;
@@ -346,9 +360,51 @@ export function useAgentSession(options: AgentSessionOptions) {
     stream.phase = 'tool';
   }
 
+  /** 把挂起的流式增量合并成一次渲染（每帧最多一次）。 */
+  function flushStreamingMessage(): void {
+    streamingFlushScheduled = false;
+    if (streamingFlushTimer !== undefined) {
+      clearTimeout(streamingFlushTimer);
+      streamingFlushTimer = undefined;
+    }
+    const message = pendingStreamingMessage;
+    if (message === null) return;
+    pendingStreamingMessage = null;
+    assignStream(reduceAgentEvent(stream, { type: 'message_update', message }));
+  }
+
+  /** 调度一次合并渲染：优先 rAF（跟随屏幕刷新），无 rAF 时退化为 50ms 定时。 */
+  function scheduleStreamingFlush(): void {
+    if (streamingFlushScheduled) return;
+    streamingFlushScheduled = true;
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => flushStreamingMessage());
+      return;
+    }
+    streamingFlushTimer = setTimeout(flushStreamingMessage, STREAMING_FLUSH_FALLBACK_MS);
+  }
+
+  /** 取消挂起的合并渲染并丢弃未渲染的增量（会话切换 / 拆除事件流时调用）。 */
+  function cancelStreamingFlush(): void {
+    streamingFlushScheduled = false;
+    if (streamingFlushTimer !== undefined) {
+      clearTimeout(streamingFlushTimer);
+      streamingFlushTimer = undefined;
+    }
+    pendingStreamingMessage = null;
+  }
+
   function handleAgentEvent(event: AgentEvent, sessionId: string): void {
     // 处理一个 SSE 事件：更新流式状态、上下文占用、重试/压缩状态与消息列表
-    assignStream(reduceAgentEvent(stream, event));
+    if (event.type === 'message_update' && event.message?.role === 'assistant') {
+      // 流式增量：只留最新一条，按帧合并渲染（见上面「流式增量合并」的说明）。
+      pendingStreamingMessage = event.message;
+      scheduleStreamingFlush();
+    } else {
+      // 其它事件先落地挂起的增量，保证 message_end / tool_execution_start 不被盖过。
+      flushStreamingMessage();
+      assignStream(reduceAgentEvent(stream, event));
+    }
     if (event.contextUsage !== undefined) contextUsage.value = event.contextUsage ?? null;
 
     if (event.type === 'plan_updated' && event.plan) {
