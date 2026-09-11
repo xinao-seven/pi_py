@@ -186,17 +186,45 @@ function images(value: unknown): ImageAttachment[] {
  * 前端 EventSource 会自动解析 id 字段，断线重连时通过 Last-Event-ID 请求头
  * 告知服务端从哪条事件之后开始补发。
  */
-function sendSse(
-  reply: {
-    raw: NodeJS.WritableStream & {
-      write(chunk: string): boolean;
-      end(): void;
-    };
-    hijack(): void;
-  },
-  event: StreamEvent,
-): void {
-  reply.raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event.payload)}\n\n`);
+/**
+ * 单条 SSE 连接的写缓冲上限。
+ *
+ * 中文说明：客户端卡住/掉线后不及时读时，`reply.raw.write()` 会把数据积在服务端内存里；
+ * 超过这个上限就判定客户端已僵死，主动断开让它重连（重放已合并，代价低）。
+ */
+export const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
+
+/** SSE 写出目标（生产环境是 http.ServerResponse，测试里是假实现）。 */
+export interface SseSink {
+  write(chunk: string): boolean;
+  /** Node Writable 的待写字节数（http.ServerResponse 自带）。 */
+  writableLength?: number;
+}
+
+/**
+ * 一条 SSE 连接的写出器。
+ * 中文说明：`sendSse` 以前直接 `write()` 且不看返回值，慢客户端会让服务端写缓冲无限增长
+ * （现场见过常驻 1.2GB 的 server 进程）。这里在写之前检查 `writableLength`，超限就置
+ * `dropped` 并拒绝再写；由调用方负责断开连接。
+ */
+export function createSseWriter(sink: SseSink): {
+  push(event: StreamEvent): void;
+  readonly dropped: boolean;
+} {
+  let dropped = false;
+  return {
+    get dropped() {
+      return dropped;
+    },
+    push(event: StreamEvent): void {
+      if (dropped) return;
+      if ((sink.writableLength ?? 0) > MAX_SSE_PENDING_BYTES) {
+        dropped = true;
+        return;
+      }
+      sink.write(`id: ${event.id}\ndata: ${JSON.stringify(event.payload)}\n\n`);
+    },
+  };
 }
 
 /** Agent 路由插件：对外路径都以 /api/agent 开头（前缀由 app.ts 注册时指定）。 */
@@ -310,18 +338,42 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
     // 首个连接时补推一条待恢复提醒（M3）：重启后用户不必先去执行清单里找。
     remindRecovery(options.registry, request.params.sessionId, options.recoveryProvider);
     // 订阅注册表的事件流：subscribe() 会先补发 lastEventId 之后的历史事件（断线重连），
-    // 然后持续把新事件写入连接；返回的 unsubscribe 用于断开时取消订阅。
-    const unsubscribe = options.registry.subscribe(request.params.sessionId, lastEventId, (event) =>
-      sendSse(reply, event),
-    );
+    // 然后持续把新事件写入连接。写入统一走 createSseWriter：写缓冲超限就断开。
+    let closed = false;
+    let unsubscribe: (() => void) | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const closeStream = (): void => {
+      if (closed) return;
+      closed = true;
+      if (heartbeat !== undefined) clearInterval(heartbeat);
+      unsubscribe?.();
+      reply.raw.end();
+    };
+    const writer = createSseWriter({
+      write: (chunk) => reply.raw.write(chunk),
+      get writableLength() {
+        return reply.raw.writableLength;
+      },
+    });
+    unsubscribe = options.registry.subscribe(request.params.sessionId, lastEventId, (event) => {
+      writer.push(event);
+      if (writer.dropped) {
+        app.log.warn(
+          { sessionId: request.params.sessionId, pendingBytes: reply.raw.writableLength },
+          'SSE 客户端写缓冲超限，主动断开等待重连',
+        );
+        closeStream();
+      }
+    });
+    if (closed) {
+      // 重放阶段就已超限：closeStream 已经 end 掉响应，这里补上取消订阅即可。
+      unsubscribe();
+      return;
+    }
     // 心跳：每 15 秒写一条注释帧，防止代理/浏览器因"长时间无数据"判定连接超时。
-    const heartbeat = setInterval(() => reply.raw.write(': heartbeat\n\n'), 15_000);
+    heartbeat = setInterval(() => reply.raw.write(': heartbeat\n\n'), 15_000);
     // 客户端断开（关闭页面/网络中断）时，Node 会在 request.raw 上触发 "close" 事件。
     // 这里做清理：停心跳、取消订阅、结束响应，避免资源泄漏。
-    request.raw.on('close', () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-      reply.raw.end();
-    });
+    request.raw.on('close', closeStream);
   });
 };

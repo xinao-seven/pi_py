@@ -53,6 +53,15 @@ import type { SubagentService } from './subagent-service.js';
 const MAX_REPLAY_EVENTS = 256;
 
 /**
+ * 事件载荷是不是 SDK 的流式增量。
+ * 中文说明：SDK 每个 token 产生一条 `message_update`，且每条带整条累计消息的快照；
+ * 重放时只保留每段连续增量的最后一条，避免客户端一建连就重渲染几百次。
+ */
+function isMessageUpdatePayload(payload: StreamEvent['payload'] | undefined): boolean {
+  return payload?.type === 'message_update';
+}
+
+/**
  * 由服务端“内联扩展”接管的扩展目录名。
  *
  * 中文说明：SDK 的 DefaultResourceLoader 会自动发现 `~/.pi/agent/extensions/` 与
@@ -826,8 +835,19 @@ export class AgentRegistry {
     listener: (event: StreamEvent) => void,
   ): () => void {
     const entry = this.require(sessionId);
-    for (const event of entry.events) {
-      if (event.id > afterEventId) listener(event);
+    // 重放合并：缓存里同一段流式输出会有几百条 message_update，逐条补发等于让客户端
+    // 一建连就重渲染几百次（长回复会把主线程压满，见 docs/web-stream-coalescing.md）。
+    // 只发每段连续 message_update 的最后一条；事件 id 仍单调递增，Last-Event-ID 语义不变。
+    const replay = entry.events.filter((event) => event.id > afterEventId);
+    for (let index = 0; index < replay.length; index += 1) {
+      const event = replay[index]!;
+      if (
+        isMessageUpdatePayload(event.payload) &&
+        isMessageUpdatePayload(replay[index + 1]?.payload)
+      ) {
+        continue;
+      }
+      listener(event);
     }
     entry.subscribers.add(listener);
     return () => entry.subscribers.delete(listener);
