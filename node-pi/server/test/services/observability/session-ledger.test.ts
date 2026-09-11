@@ -519,16 +519,13 @@ describe('cost fallback for models shadowed by models.json', () => {
   it('recomputes cost from the built-in catalog when the SDK reports $0', () => {
     const harness = makeLedger();
     try {
-      recordAssistant(
-        harness.ledger,
-        {
-          role: 'assistant',
-          provider: 'deepseek',
-          model: 'deepseek-v4-flash',
-          stopReason: 'stop',
-          usage: { input: 1_000, output: 200, cacheRead: 50, cacheWrite: 10, cost: { total: 0 } },
-        },
-      );
+      recordAssistant(harness.ledger, {
+        role: 'assistant',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        stopReason: 'stop',
+        usage: { input: 1_000, output: 200, cacheRead: 50, cacheWrite: 10, cost: { total: 0 } },
+      });
 
       // flash: 0.14/0.28/0.0028/0 美元每百万 token。
       expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBeCloseTo(0.00019614, 9);
@@ -540,16 +537,13 @@ describe('cost fallback for models shadowed by models.json', () => {
   it('keeps an explicit non-zero cost even for built-in model ids', () => {
     const harness = makeLedger();
     try {
-      recordAssistant(
-        harness.ledger,
-        {
-          role: 'assistant',
-          provider: 'deepseek',
-          model: 'deepseek-v4-pro',
-          stopReason: 'stop',
-          usage: { input: 1_000, output: 200, cost: { total: 0.5 } },
-        },
-      );
+      recordAssistant(harness.ledger, {
+        role: 'assistant',
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        stopReason: 'stop',
+        usage: { input: 1_000, output: 200, cost: { total: 0.5 } },
+      });
 
       expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBe(0.5);
     } finally {
@@ -560,16 +554,13 @@ describe('cost fallback for models shadowed by models.json', () => {
   it('leaves cost at 0 when the model is absent from the built-in catalog', () => {
     const harness = makeLedger();
     try {
-      recordAssistant(
-        harness.ledger,
-        {
-          role: 'assistant',
-          provider: 'deepseek',
-          model: 'deepseek-v4.1-flash-expires-on-0910',
-          stopReason: 'stop',
-          usage: { input: 1_000, output: 200, cost: { total: 0 } },
-        },
-      );
+      recordAssistant(harness.ledger, {
+        role: 'assistant',
+        provider: 'deepseek',
+        model: 'deepseek-v4.1-flash-expires-on-0910',
+        stopReason: 'stop',
+        usage: { input: 1_000, output: 200, cost: { total: 0 } },
+      });
 
       expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBe(0);
     } finally {

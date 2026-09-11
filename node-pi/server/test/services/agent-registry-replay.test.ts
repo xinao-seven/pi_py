@@ -86,7 +86,12 @@ describe('AgentRegistry 的 SSE 重放合并', () => {
   it('collapses consecutive message_update frames in the replay', async () => {
     const { registry, session, sessionId } = await makeRegistry();
     for (const text of ['a', 'ab', 'abc', 'abcd', 'abcde']) session.emit(messageUpdate(text));
-    session.emit({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'bash', args: {} });
+    session.emit({
+      type: 'tool_execution_start',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      args: {},
+    });
 
     const replay: Array<{ id: number; payload: Record<string, unknown> }> = [];
     registry.subscribe(sessionId, 0, (event) =>
