@@ -120,6 +120,18 @@ SDK 对两者都只发 `tool_execution_end(isError=true)`，因此账本主动�
 `steps.is_error` 保留 SDK 原始值，`byTool.errorRate` 只统计 `blocked_by IS NULL AND is_error=1`。
 **被正确拦下的调用不计入失败率**，`cwd` 侧另有 `blocked` 计数单独展示。
 
+**成本兜底（DeepSeek 用量恒为 $0 的根因）**：
+`models.json` 里重复定义同名模型时，SDK 的 provider-composer 会用该定义覆盖内置模型，并把未填写的
+`cost` 归零（`dist/core/provider-composer.js` 的 `modelFromJson`），于是「自定义了 provider 但没写价格」
+的配置（典型是 DeepSeek）在用量面板里永远是 $0。账本在 `message_end` 累计成本时按此口径处理：
+
+1. 模型显式给出的**非零** `usage.cost.total` 优先，原样累加；
+2. 为 0/缺省时，用 `getBuiltinModel(provider, model)` 回查内置目录，按与 pi-ai `calculateCost` 相同的
+   阶梯价口径重算（`services/observability/model-cost.ts` 的 `builtinCostUsd`）；
+3. 目录里没有该模型则保持 0——自定义模型的真实价格只能由用户在模型配置页填 `cost`。
+
+兜底只影响**新写入**的 run，不回溯已有记录；模型配置页的一键 DeepSeek 预设已带上官方价格。
+
 ---
 
 ## 5. 关键取舍与对规划的偏离
@@ -245,3 +257,5 @@ cd web && npm run typecheck && npm run lint && npm test && npm run build
 | 规划期拦截的端到端验证 | 归因逻辑有单测；未在 e2e 中开启 Plan 模式（需要 `session_start` + 命令链路）。 |
 | 子 agent run | `parent_run_id` 已预留，实际写入留给 M5。 |
 | 面板刷新 | 手动刷新 + 切换条件自动加载；未做 SSE 实时推送（M1 不引入新事件类型，避免改前端契约）。 |
+| 成本兜底不回溯 | 被 `models.json` 覆盖掉价格的历史 run 仍是 $0；兜底只对新记录生效，不重算历史。 |
+| 目录外模型仍为 $0 | 不在内置目录里的模型（如内测模型）没有价格来源，需用户在模型配置页填 `cost`，否则成本保持 0。 |
