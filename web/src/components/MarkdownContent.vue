@@ -98,6 +98,53 @@ const html = computed(() => {
   color: var(--muted);
 }
 
+/* 表格：加边框区分单元格，宽表横向滚动而不是撑出容器（这就是“错位”的根因之一）。 */
+.markdown-content :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 13px 0;
+  border: 1px solid var(--line);
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.markdown-content :deep(thead th) {
+  background: var(--panel-soft);
+  font-weight: 650;
+}
+
+.markdown-content :deep(tbody tr:nth-child(even)) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme='light'] .markdown-content :deep(tbody tr:nth-child(even)) {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+/* marked 把表格对齐写成 align 属性；表头默认左对齐，只在显式声明时才覆盖。 */
+.markdown-content :deep(th) {
+  text-align: left;
+}
+
+.markdown-content :deep(th[align='center']),
+.markdown-content :deep(td[align='center']) {
+  text-align: center;
+}
+
+.markdown-content :deep(th[align='right']),
+.markdown-content :deep(td[align='right']) {
+  text-align: right;
+}
+
 .markdown-content :deep(code:not(pre code)) {
   padding: 2px 5px;
   border: 1px solid var(--line);

@@ -35,11 +35,15 @@ const contextPercent = computed(() =>
     ? null
     : Math.min(100, props.contextUsage.percent),
 );
-const contextTitle = computed(() =>
-  props.contextUsage?.tokens
-    ? `${props.contextUsage.tokens.toLocaleString()} tokens`
-    : '上下文占用未知',
+const contextPercentLabel = computed(() =>
+  contextPercent.value === null ? null : `${Math.round(contextPercent.value)}%`,
 );
+const contextTitle = computed(() => {
+  const tokens = props.contextUsage?.tokens;
+  const label = contextPercentLabel.value;
+  if (!tokens) return '上下文占用未知';
+  return label ? `${tokens.toLocaleString()} tokens · ${label}` : `${tokens.toLocaleString()} tokens`;
+});
 const availableThinkingLevels = computed(() =>
   // 当前模型支持的思考档位（来自模型目录）
   props.model
@@ -143,8 +147,16 @@ function changePreset(event: Event): void {
     <div v-if="retryInfo" class="retry-indicator">
       重试 {{ retryInfo.attempt }}/{{ retryInfo.maxAttempts }}
     </div>
-    <div v-else-if="contextPercent !== null" class="context-meter" :title="contextTitle">
-      <span :style="{ width: `${contextPercent}%` }" />
+    <div v-else-if="contextPercent !== null" class="context-usage" :title="contextTitle">
+      <!-- 填充用 min-width(is-visible) 保证 1M 窗口下也肉眼可见，而不是只靠百分比 -->
+      <div class="context-meter">
+        <span
+          class="context-meter-fill"
+          :class="{ 'is-visible': contextPercent > 0 }"
+          :style="{ width: `${contextPercent}%` }"
+        />
+      </div>
+      <span class="context-percent">{{ contextPercentLabel }}</span>
     </div>
   </div>
 </template>
@@ -255,18 +267,36 @@ function changePreset(event: Event): void {
   font-size: 10px;
 }
 
-.context-meter {
+.context-usage {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 轨道必须跟着主题走：浅色主题下 --accent 是近黑色，硬编码深色轨道会让整条看着全黑。 */
+.context-meter {
   width: 52px;
   height: 4px;
   overflow: hidden;
   border-radius: 2px;
-  background: #292d35;
+  background: var(--panel-soft);
 }
 
-.context-meter span {
+.context-meter-fill {
   display: block;
   height: 100%;
+  border-radius: 2px;
   background: var(--accent);
+}
+
+.context-meter-fill.is-visible {
+  min-width: 3px;
+}
+
+.context-percent {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

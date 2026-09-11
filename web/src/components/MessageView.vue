@@ -90,7 +90,7 @@ const images = computed(() =>
   margin-left: 0;
   padding-left: min(18%, 120px);
   border-left: 0;
-  text-align: right;
+  /* 整条靠右成块，但文字按正常方向左对齐（之前 text-align:right 会让每行都靠右）。 */
 }
 
 .message-body {

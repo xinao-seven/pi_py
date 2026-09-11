@@ -92,3 +92,30 @@ describe('AgentControls（M4：不再有 Plan 预开关）', () => {
     expect(labels.some((label) => label.includes('压缩上下文'))).toBe(true);
   });
 });
+
+describe('AgentControls 上下文占用条', () => {
+  it('renders the fill with a visible class and shows the percentage', () => {
+    const wrapper = mount(AgentControls, {
+      props: {
+        ...baseProps(),
+        contextUsage: { tokens: 20_000, contextWindow: 1_000_000, percent: 2 },
+      },
+    });
+
+    const fill = wrapper.get('.context-meter-fill');
+    expect(fill.classes()).toContain('is-visible');
+    expect(fill.attributes('style')).toContain('width: 2%');
+    expect(wrapper.get('.context-percent').text()).toBe('2%');
+  });
+
+  it('hides the meter when context usage is unknown after compaction', () => {
+    const wrapper = mount(AgentControls, {
+      props: {
+        ...baseProps(),
+        contextUsage: { tokens: null, contextWindow: 1_000_000, percent: null },
+      },
+    });
+
+    expect(wrapper.find('.context-usage').exists()).toBe(false);
+  });
+});

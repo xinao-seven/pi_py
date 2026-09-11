@@ -8,6 +8,8 @@ describe('MessageView', () => {
       props: { message: { role: 'user', content: '只显示一次' } },
     });
 
+    // 用户消息保持右靠块（message-row--user），但块内文字不强制右对齐。
+    expect(wrapper.get('.message-row').classes()).toContain('message-row--user');
     expect(wrapper.findAll('.message-text')).toHaveLength(1);
     expect(wrapper.get('.message-text').text()).toBe('只显示一次');
     expect(wrapper.find('.markdown-content').exists()).toBe(false);
