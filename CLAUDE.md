@@ -148,7 +148,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
 - 后端形状差异（如分支树：Node 扁平 / Python 嵌套）在 API 层归一化（`web/src/lib/session-tree.ts`），组件只面对一种形状；**任何遍历会话结构的地方一律用显式栈，不用递归**（长会话会爆栈）。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
-- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`TaskPanel.vue`（任务面板）、`ObservabilityPanel.vue`（设置 → 用量）。
+- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`TaskPlanPanel.vue`（计划/任务悬浮面板，右上角按钮开关）+ `TaskStepList.vue`（步骤列表，计划/任务两种视角共用）、`ObservabilityPanel.vue`（设置 → 用量）。
 - 主题/声音偏好存 localStorage（`pi.theme` / `pi.sound`），写入 `<html data-theme>`。
 
 ## 关键文档
@@ -175,6 +175,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/web-observability-panel-scroll.md` | 前端修复：设置 →「用量」面板的高度与滚动契约（滚不动的根因与回归防线） |
 | `docs/web-chat-render-fixes.md` | 前端修复：上下文占用条对比度、Markdown 表格边框/横向滚动、用户消息块内左对齐 |
 | `docs/web-stream-coalescing.md` | **前端卡死修复**：流式增量按帧合并渲染 + SSE 重放合并与写缓冲上限（`message_update` 全量快照的 O(n²) 问题） |
+| `docs/web-task-plan-panel.md` | **计划/任务合并为右上角悬浮面板**：合并规则（计划就是任务）、按钮徽标与自动展开时机、组件分工 |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |

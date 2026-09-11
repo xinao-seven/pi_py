@@ -239,4 +239,5 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/node-session-tree-flat.md`](docs/node-session-tree-flat.md) | **长会话读取崩溃修复**：分支树扁平化（`tree` 契约、前端归一化、回归测试） |
 | [`docs/web-observability-panel-scroll.md`](docs/web-observability-panel-scroll.md) | **用量页面滚不动的修复**：设置弹窗里嵌入式面板的高度/滚动契约 |
+| [`docs/web-task-plan-panel.md`](docs/web-task-plan-panel.md) | **计划/任务合并为右上角悬浮面板**：合并规则、交互契约、自动展开时机 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |

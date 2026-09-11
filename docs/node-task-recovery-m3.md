@@ -144,6 +144,10 @@ SSE 新增：`{ type: 'task_recovery_required', tasks: TaskRecoveryItem[] }`。
 
 ## 5. 前端
 
+> 面板已于后续改动中合并为 `TaskPlanPanel.vue`（右上角按钮点开的悬浮面板），
+> 本节的「中断提示块」内容与入口不变，仅位置/宿主组件变了。
+> 详见 [`docs/web-task-plan-panel.md`](web-task-plan-panel.md)。
+
 - `TaskPanel` 新增「上次运行被中断」提示块：当前步骤、中断说明、待验证产物（存在/未找到），
   以及 [继续执行] / [重试当前步骤]；需要确认时明确写「需要你确认副作用风险后再继续」。
 - 任务被 `blocked` 时也给出同一组入口（例如产物未验证导致的 blocked）。

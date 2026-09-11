@@ -504,6 +504,27 @@ Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
 
 ---
 
+### 3.15 计划/任务合并为右上角悬浮面板（已完成，`docs/web-task-plan-panel.md`）
+
+**问题**：`PlanProgress.vue` 与 `TaskPanel.vue` 都钉在输入框上方（同一条 `composer-dock` strip），
+最多占半屏；而且 M4 起「计划就是任务」，模型提交计划后同一条任务会被两个面板渲染两遍。
+
+**修法**：
+
+1. 合并成一个面板：**计划活跃时以计划视角展示它自己的那条任务**，任务区只在会话里还有
+   「不是这条计划」的任务时才出现（`planActive` / `taskSection` 两个 computed 决定，结构上不会重复渲染）。
+2. 从对话框上方挪到聊天头部右上角：按钮「计划/任务」+ 完成计数，点开是**不可拖动**的悬浮面板
+   （锚在头部下方，`z-index: 50`，高于分支条、低于各类弹窗），`Esc` / 点面板外 / 再点按钮收起。
+3. 需要用户动手时按钮点亮；**只有一个自动展开时机**：计划进入 `proposed`（等「确认并执行」）。
+4. 步骤行渲染抽到 `TaskStepList.vue`（`mode: 'plan' | 'task'`），两套视角共用一份副标题与阻塞/删除确认逻辑。
+
+**顺带修掉的缺陷**：旧 `PlanProgress` 在「执行中/已暂停」分支里渲染了「按我的要求调整」按钮
+却没有输入框，`refineText` 恒为空 → 按钮永远 disabled；合并后补上了输入框（提交要求）。
+
+**证据**：Web 140 用例全绿（`TaskPlanPanel.test.ts` 26 例）、`npm run typecheck` / `lint` / `build` 通过。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -823,6 +844,18 @@ web/src/components/ToolCallBlock.vue                分流到委派卡片
 web/src/types/index.ts                              SubagentToolDetails
 ```
 
+### 计划/任务悬浮面板合并（2026-09-11）
+
+```
+web/src/components/TaskPlanPanel.vue   新增：面板内容体（计划区/任务区/恢复块/空态）
+web/src/components/TaskStepList.vue    新增：步骤列表（mode: plan | task 共用行渲染）
+web/src/components/ChatWindow.vue      入口按钮 + 悬浮面板 host + 自动展开/Esc/点外关闭
+web/src/components/PlanProgress.vue    删除（并入 TaskPlanPanel）
+web/src/components/TaskPanel.vue       删除（并入 TaskPlanPanel）
+web/test/components/TaskPlanPanel.test.ts  新增：26 例（替换 PlanProgress/TaskPanel 两份旧测试）
+docs/web-task-plan-panel.md            合并规则与交互契约
+```
+
 ### 长会话修复（分支树扁平化，2026-09-10）
 
 ```
@@ -845,7 +878,7 @@ web/src/types/index.ts        PlanView/PlanStepView/PromptMode、TaskRecoveryIte
 web/src/lib/api.ts            REST 封装（统一解析 ApiError）
 web/src/lib/agent-events.ts   reduceAgentEvent（SSE → 状态规约）
 web/src/composables/useAgentSession.ts   plan/task/recovery 三个独立 ref
-web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.vue
+web/src/components/{TaskPlanPanel,TaskStepList,ChatWindow,ChatInput,AgentControls}.vue
 ```
 
 ---
