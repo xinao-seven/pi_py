@@ -25,13 +25,7 @@ import {
   updateTaskStep,
 } from '@/lib/api';
 import { useAppStore } from '@/stores/app';
-import type {
-  AgentMessage,
-  QuestionAnswer,
-  SessionInfo,
-  TaskStep,
-  TaskStepStatus,
-} from '@/types';
+import type { AgentMessage, QuestionAnswer, SessionInfo, TaskStep, TaskStepStatus } from '@/types';
 
 const props = defineProps<{
   sessionId: string | null;

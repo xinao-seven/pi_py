@@ -38,7 +38,11 @@ export function toSessionTreeNodes(
 }
 
 function isFlatNode(value: SessionTreeInput | undefined): boolean {
-  return typeof value === 'object' && value !== null && typeof (value as { depth?: unknown }).depth === 'number';
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { depth?: unknown }).depth === 'number'
+  );
 }
 
 function project(
