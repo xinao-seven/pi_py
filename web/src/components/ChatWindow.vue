@@ -1,15 +1,14 @@
 <!-- 聊天主窗口：消息流、Agent 控制条、输入框，以及分支导航/合并等会话操作。 -->
 <script setup lang="ts">
 import { useVirtualizer } from '@tanstack/vue-virtual';
-import { computed, nextTick, ref, toRef, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 
 import AgentControls from '@/components/AgentControls.vue';
 import BranchNavigator from '@/components/BranchNavigator.vue';
 import ChatInput from '@/components/ChatInput.vue';
 import MessageView from '@/components/MessageView.vue';
-import PlanProgress from '@/components/PlanProgress.vue';
-import TaskPanel from '@/components/TaskPanel.vue';
 import QuestionDialog from '@/components/QuestionDialog.vue';
+import TaskPlanPanel from '@/components/TaskPlanPanel.vue';
 import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
 import {
@@ -414,6 +413,71 @@ function removePlanStep(payload: { stepId: string }): void {
   });
 }
 
+/**
+ * 计划/任务悬浮面板（合并 PlanProgress + TaskPanel）。
+ *
+ * 中文说明：两个面板原来都钉在输入框上方，占地方且会把同一条任务渲染两遍。
+ * 现在收进右上角一个按钮里：按钮上带状态徽标（待确认/阻塞/中断会给视觉提示），
+ * 面板浮在消息区上方且不可拖动，点按钮/按 Esc/点面板外都会收起。
+ */
+const workPanelOpen = ref(false);
+const workPanelCount = computed(() => {
+  const steps = plan.value?.planId ? plan.value.steps : task.value?.steps;
+  if (!steps?.length) return '';
+  const done = steps.filter(
+    (step) => step.status === 'completed' || step.status === 'skipped',
+  ).length;
+  return `${done}/${steps.length}`;
+});
+const workPanelAttention = computed(
+  () =>
+    Boolean(plan.value?.awaitingUserAction) ||
+    task.value?.status === 'blocked' ||
+    recovery.value.length > 0,
+);
+const workPanelHost = ref<HTMLElement | null>(null);
+const workPanelButton = ref<HTMLElement | null>(null);
+const autoOpenedPlanId = ref<string | null>(null);
+
+function toggleWorkPanel(): void {
+  workPanelOpen.value = !workPanelOpen.value;
+}
+
+function onDocumentPointerDown(event: Event): void {
+  if (!workPanelOpen.value) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (workPanelHost.value?.contains(target) || workPanelButton.value?.contains(target)) return;
+  workPanelOpen.value = false;
+}
+
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') workPanelOpen.value = false;
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown);
+  document.addEventListener('keydown', onDocumentKeydown);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown);
+  document.removeEventListener('keydown', onDocumentKeydown);
+});
+
+// 计划提交后必须由用户点「确认并执行」：这是唯一会自动展开面板的时机，
+// 否则默认收起的面板会让待确认的计划被错过（等价于旧版本钉在输入框上方的可见性）。
+watch(
+  () => plan.value,
+  (value) => {
+    if (value?.planId && value.status === 'proposed' && autoOpenedPlanId.value !== value.planId) {
+      autoOpenedPlanId.value = value.planId;
+      workPanelOpen.value = true;
+    }
+  },
+  { immediate: true },
+);
+
 watch(
   () => [messages.value.length, stream.streamingMessage] as const,
   async () => {
@@ -433,6 +497,9 @@ watch(
   () => props.sessionId,
   () => {
     followBottom.value = true;
+    // 悬浮面板属于单个会话：切换会话时收起，避免把上一个会话的计划/任务带过来。
+    workPanelOpen.value = false;
+    autoOpenedPlanId.value = null;
   },
 );
 
@@ -491,6 +558,47 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         <span v-if="contextPercentLabel" class="context-chip">
           {{ contextPercentLabel }}
         </span>
+        <button
+          v-if="sessionId || task || plan?.planId || recovery.length"
+          ref="workPanelButton"
+          class="work-panel-button"
+          :class="{ 'work-panel-button--attention': workPanelAttention }"
+          type="button"
+          aria-haspopup="dialog"
+          :aria-expanded="workPanelOpen"
+          title="计划与任务"
+          @click="toggleWorkPanel"
+        >
+          <span aria-hidden="true">▤</span>
+          <span>计划/任务</span>
+          <span v-if="workPanelCount" class="work-panel-button-count">{{ workPanelCount }}</span>
+        </button>
+      </div>
+
+      <div v-if="workPanelOpen" ref="workPanelHost" class="work-panel-host">
+        <TaskPlanPanel
+          :plan="plan"
+          :task="task"
+          :session-id="sessionId"
+          :recovery="recovery"
+          :busy="taskBusy || planBusy"
+          :error="taskError || error || null"
+          @close="workPanelOpen = false"
+          @refresh="refreshTask"
+          @plan-execute="actPlan('execute')"
+          @plan-pause="actPlan('pause')"
+          @plan-resume="actPlan('resume')"
+          @plan-abandon="actPlan('abandon')"
+          @plan-refine="(message) => actPlan('refine', message)"
+          @step-patch="patchPlanStep"
+          @step-remove="removePlanStep"
+          @create="createSessionTask"
+          @add-step="addSessionStep"
+          @set-step-status="setSessionStepStatus"
+          @remove-step="removeSessionStep"
+          @cancel-task="cancelSessionTask"
+          @resume-task="resumeSessionTask"
+        />
       </div>
     </header>
 
@@ -585,33 +693,6 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         <div v-if="error || stream.error || compactionError" class="chat-error" role="alert">
           {{ error || stream.error || compactionError }}
         </div>
-        <PlanProgress
-          :plan="plan"
-          :session-id="sessionId"
-          :busy="planBusy"
-          @execute="actPlan('execute')"
-          @pause="actPlan('pause')"
-          @resume="actPlan('resume')"
-          @abandon="actPlan('abandon')"
-          @refine="(message) => actPlan('refine', message)"
-          @step-patch="patchPlanStep"
-          @step-remove="removePlanStep"
-        />
-        <TaskPanel
-          v-if="sessionId || task || recovery.length"
-          :task="task"
-          :session-id="sessionId"
-          :recovery="recovery"
-          :busy="taskBusy"
-          :error="taskError"
-          @create="createSessionTask"
-          @add-step="addSessionStep"
-          @set-step-status="setSessionStepStatus"
-          @remove-step="removeSessionStep"
-          @cancel="cancelSessionTask"
-          @resume="resumeSessionTask"
-          @refresh="refreshTask"
-        />
         <AgentControls
           :catalog="catalog"
           :model="displayModel"
@@ -667,6 +748,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
 }
 
 .chat-header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -718,7 +800,8 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
 }
 
 .files-toggle-button,
-.workspace-switch-button {
+.workspace-switch-button,
+.work-panel-button {
   min-height: 30px;
   padding: 4px 8px;
   border: 1px solid var(--line);
@@ -729,6 +812,43 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
   cursor: pointer;
 }
 
+/* 需要用户动手时（待确认 / 阻塞 / 中断恢复）把按钮点亮，否则收起的面板会被忽略 */
+.work-panel-button {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.work-panel-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.work-panel-button--attention {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.work-panel-button-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.work-panel-button--attention .work-panel-button-count {
+  color: inherit;
+}
+
+/* 悬浮面板：锚在头部下方、不可拖动；z-index 高于分支条（12），低于各类弹窗（60/100） */
+.work-panel-host {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 14px;
+  z-index: 50;
+  display: flex;
+  width: min(400px, calc(100vw - 28px));
+  max-height: min(64vh, 560px);
+}
+
 .files-toggle-button:disabled,
 .workspace-switch-button:disabled {
   opacity: 0.4;
@@ -736,13 +856,15 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
 }
 
 :root[data-theme='light'] .files-toggle-button,
-:root[data-theme='light'] .workspace-switch-button {
+:root[data-theme='light'] .workspace-switch-button,
+:root[data-theme='light'] .work-panel-button {
   color: var(--muted);
   background: #f8f9f5;
 }
 
 :root[data-theme='light'] .files-toggle-button:hover,
-:root[data-theme='light'] .workspace-switch-button:hover {
+:root[data-theme='light'] .workspace-switch-button:hover,
+:root[data-theme='light'] .work-panel-button:hover {
   background: #edf1e5;
 }
 
@@ -1083,6 +1205,13 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
 
   .composer-dock {
     padding: 0 12px 11px;
+  }
+
+  /* 窄屏：面板几乎占满宽度，避免贴边裁切 */
+  .work-panel-host {
+    right: 8px;
+    width: calc(100vw - 16px);
+    max-height: min(70vh, 560px);
   }
 
   .welcome-state h2 {
