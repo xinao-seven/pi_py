@@ -157,6 +157,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 |------|------|
 | [`PROGRESS.md`](PROGRESS.md) | **当前进度与下一步**（新会话先读这个） |
 | `README.md` | 仓库总览与快速开始（唯一入口） |
+| [`docs/node-platform-explained.md`](docs/node-platform-explained.md) | **平台讲解稿（大白话）**：M1–M5 主线、名词扫盲（租约/在飞/run/step）、跨模块的三条不可让步规则、已知限制 |
 | `docs/development-standards.md` | Python 项目开发规范 |
 | `node-pi/server/DEVELOPMENT.md` | Node 后端开发规范 |
 | `docs/node-pi-backend.md` | Node 后端功能清单 |

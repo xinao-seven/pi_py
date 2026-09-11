@@ -217,6 +217,7 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | 文档 | 内容 |
 |------|------|
 | [`PROGRESS.md`](PROGRESS.md) | 当前进度与下一步计划 |
+| [`docs/node-platform-explained.md`](docs/node-platform-explained.md) | **平台讲解稿（大白话）**：M1–M5 主线、名词扫盲、设计取舍与面试速答（想快速搞懂「怎么串起来」先读这份） |
 | [`pi-python/README.md`](pi-python/README.md) | Python 版项目文档（配置、API、安全） |
 | [`docs/three-layer-architecture.md`](docs/three-layer-architecture.md) | Python 三层包结构与依赖规则 |
 | [`docs/node-pi-backend.md`](docs/node-pi-backend.md) | Node 版后端说明 |
@@ -230,7 +231,6 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合语义、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md) | M3 断点续跑：执行租约、在飞动作与副作用分级、恢复清单与一键续跑 |
-| [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
 | [`docs/node-plan-mode-m4.md`](docs/node-plan-mode-m4.md) | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据 |
 | [`docs/node-plan-cache-stability.md`](docs/node-plan-cache-stability.md) | **Plan 缓存稳定性 + `propose_plan`**：为什么不再增删工具、注入去抖、模型提议的边界 |
