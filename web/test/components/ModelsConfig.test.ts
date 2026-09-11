@@ -62,7 +62,7 @@ describe('ModelsConfig', () => {
     expect(saveModelsConfig).toHaveBeenCalledWith({
       providers: {
         deepseek: {
-          api: 'deepseek-chat-completions',
+          api: 'openai-completions',
           baseUrl: 'https://api.deepseek.com',
           apiKey: '$DEEPSEEK_API_KEY',
           models: [
@@ -71,6 +71,7 @@ describe('ModelsConfig', () => {
               name: 'DeepSeek V4 Flash',
               contextWindow: 1_000_000,
               reasoning: true,
+              cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
               thinkingLevels: ['off', 'low', 'high', 'max'],
             },
             {
@@ -78,8 +79,40 @@ describe('ModelsConfig', () => {
               name: 'DeepSeek V4 Pro',
               contextWindow: 1_000_000,
               reasoning: true,
+              cost: { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0 },
               thinkingLevels: ['off', 'high', 'max'],
             },
+          ],
+        },
+      },
+    });
+  });
+
+  it('round-trips model prices and drops empty ones', async () => {
+    vi.mocked(getModelsConfig).mockResolvedValue({
+      providers: {
+        custom: {
+          api: 'openai-completions',
+          models: [
+            { id: 'priced', cost: { input: 1.5, output: 2 } },
+            { id: 'unpriced', cost: {} },
+          ],
+        },
+      },
+    });
+    vi.mocked(saveModelsConfig).mockResolvedValue();
+    const wrapper = mount(ModelsConfig);
+    await flushPromises();
+    await wrapper.findAll('.config-footer button')[1].trigger('click');
+    await flushPromises();
+
+    expect(saveModelsConfig).toHaveBeenCalledWith({
+      providers: {
+        custom: {
+          api: 'openai-completions',
+          models: [
+            { id: 'priced', reasoning: true, cost: { input: 1.5, output: 2 } },
+            { id: 'unpriced', reasoning: true },
           ],
         },
       },

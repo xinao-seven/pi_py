@@ -3,16 +3,30 @@
 import { onMounted, ref } from 'vue';
 
 import { getModelsConfig, saveModelsConfig } from '@/lib/api';
-import type { ModelDefinition, ModelsConfigValue } from '@/types';
+import type { ModelCost, ModelDefinition, ModelsConfigValue } from '@/types';
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+
+/** 价格表单：四个美元/百万 token 的输入框，全部可空。 */
+interface CostForm {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  /** 保留 tiers 等未知字段。 */
+  [key: string]: unknown;
+}
+
+interface ModelForm extends ModelDefinition {
+  cost: CostForm;
+}
 
 interface ProviderForm {
   name: string;
   api: string;
   baseUrl: string;
   apiKey: string;
-  models: ModelDefinition[];
+  models: ModelForm[];
   raw: Record<string, unknown>;
 }
 
@@ -36,7 +50,11 @@ onMounted(async () => {
       api: provider.api ?? 'openai-completions',
       baseUrl: provider.baseUrl ?? '',
       apiKey: provider.apiKey ?? '',
-      models: (provider.models ?? []).map((model) => ({ ...model })),
+      models: (provider.models ?? []).map((model) => ({
+        ...model,
+        // 保证 cost 对象存在，模板才能直接 v-model 到四个价格输入。
+        cost: { ...(model.cost ?? {}) },
+      })),
       raw: { ...provider },
     }));
   } catch (cause) {
@@ -58,12 +76,11 @@ function addProvider(): void {
 }
 
 function configureDeepSeek(): void {
-  // 一键写入 DeepSeek V4 预设（Flash/Pro、1M 上下文、思考档位、密钥变量引用）。
-  // 写入的是 pi.py 自身配置目录（~/.pi/agent-python/models.json），
-  // 不会修改原版 pi 的 ~/.pi/agent/models.json。
+  // 一键写入 DeepSeek V4 预设（Flash/Pro、1M 上下文、思考档位、密钥变量引用、官方价格）。
+  // 价格必须写进去：SDK 用 models.json 的定义覆盖内置模型，缺 cost 就会按 $0 计费。
   const preset: ProviderForm = {
     name: 'deepseek',
-    api: 'deepseek-chat-completions',
+    api: 'openai-completions',
     baseUrl: 'https://api.deepseek.com',
     apiKey: '$DEEPSEEK_API_KEY',
     models: [
@@ -72,6 +89,7 @@ function configureDeepSeek(): void {
         name: 'DeepSeek V4 Flash',
         contextWindow: 1_000_000,
         reasoning: true,
+        cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
         thinkingLevels: ['off', 'low', 'high', 'max'],
       },
       {
@@ -79,6 +97,7 @@ function configureDeepSeek(): void {
         name: 'DeepSeek V4 Pro',
         contextWindow: 1_000_000,
         reasoning: true,
+        cost: { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0 },
         thinkingLevels: ['off', 'high', 'max'],
       },
     ],
@@ -95,7 +114,20 @@ function configureDeepSeek(): void {
 }
 
 function addModel(provider: ProviderForm): void {
-  provider.models.push({ id: '', name: '', reasoning: true });
+  provider.models.push({ id: '', name: '', reasoning: true, cost: {} });
+}
+
+/** 只保留真正填了的有限数字，且保留 tiers 等未知字段，避免空输入污染配置。 */
+function cleanCost(cost: CostForm): ModelCost | undefined {
+  const cleaned: ModelCost = {};
+  for (const [key, value] of Object.entries(cost)) {
+    if (key === 'input' || key === 'output' || key === 'cacheRead' || key === 'cacheWrite') {
+      if (typeof value === 'number' && Number.isFinite(value)) cleaned[key] = value;
+    } else if (value !== undefined) {
+      cleaned[key] = value;
+    }
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
 }
 
 async function save(): Promise<void> {
@@ -123,6 +155,9 @@ async function save(): Promise<void> {
       if (model.contextWindow && model.contextWindow > 0) {
         serialized.contextWindow = model.contextWindow;
       } else delete serialized.contextWindow;
+      const cost = cleanCost(model.cost);
+      if (cost) serialized.cost = cost;
+      else delete serialized.cost;
       return serialized;
     });
     value.providers[provider.name.trim()] = {
@@ -216,26 +251,70 @@ function messageOf(cause: unknown): string {
             <button type="button" @click="addModel(provider)">＋ 添加模型</button>
           </div>
           <div v-if="provider.models.length === 0" class="config-empty">尚未添加模型</div>
-          <div v-for="(model, modelIndex) in provider.models" :key="modelIndex" class="model-row">
-            <input v-model="model.id" aria-label="模型 ID" placeholder="model-id" />
-            <input v-model="model.name" aria-label="模型显示名称" placeholder="显示名称" />
-            <input
-              v-model.number="model.contextWindow"
-              aria-label="上下文窗口"
-              type="number"
-              min="1"
-              placeholder="context"
-            />
-            <label class="checkbox-field"
-              ><input v-model="model.reasoning" type="checkbox" />推理</label
-            >
-            <button
-              type="button"
-              aria-label="删除模型"
-              @click="provider.models.splice(modelIndex, 1)"
-            >
-              ×
-            </button>
+          <div
+            v-for="(model, modelIndex) in provider.models"
+            :key="modelIndex"
+            class="model-row-group"
+          >
+            <div class="model-row">
+              <input v-model="model.id" aria-label="模型 ID" placeholder="model-id" />
+              <input v-model="model.name" aria-label="模型显示名称" placeholder="显示名称" />
+              <input
+                v-model.number="model.contextWindow"
+                aria-label="上下文窗口"
+                type="number"
+                min="1"
+                placeholder="context"
+              />
+              <label class="checkbox-field"
+                ><input v-model="model.reasoning" type="checkbox" />推理</label
+              >
+              <button
+                type="button"
+                aria-label="删除模型"
+                @click="provider.models.splice(modelIndex, 1)"
+              >
+                ×
+              </button>
+            </div>
+            <div class="model-cost-row">
+              <label
+                >输入 $/M<input
+                  v-model.number="model.cost.input"
+                  aria-label="输入价格"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="0"
+              /></label>
+              <label
+                >输出 $/M<input
+                  v-model.number="model.cost.output"
+                  aria-label="输出价格"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="0"
+              /></label>
+              <label
+                >缓存读 $/M<input
+                  v-model.number="model.cost.cacheRead"
+                  aria-label="缓存读价格"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="0"
+              /></label>
+              <label
+                >缓存写 $/M<input
+                  v-model.number="model.cost.cacheWrite"
+                  aria-label="缓存写价格"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="0"
+              /></label>
+            </div>
           </div>
           <button type="button" class="danger-link" @click="providers.splice(providerIndex, 1)">
             删除 Provider
@@ -271,11 +350,42 @@ function messageOf(cause: unknown): string {
   cursor: pointer;
 }
 
+.model-row-group {
+  margin-bottom: 12px;
+}
+
 .model-row {
   display: grid;
   grid-template-columns: 1.2fr 1fr 90px auto 28px;
   gap: 6px;
-  margin-bottom: 6px;
+}
+
+.model-cost-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.model-cost-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.model-cost-row input {
+  min-width: 0;
+  min-height: 30px;
+  width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--input-bg);
+  font-size: 11px;
 }
 
 .model-row > input {
@@ -298,6 +408,10 @@ function messageOf(cause: unknown): string {
 @media (max-width: 760px) {
   .model-row {
     grid-template-columns: 1fr;
+  }
+
+  .model-cost-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .model-row > button {

@@ -152,11 +152,22 @@ export interface ModelCatalog {
   thinkingLevelMaps: Record<string, Record<string, unknown>>;
 }
 
+/** 模型价格（美元 / 百万 token），与 pi models.json 的 cost 字段一致。 */
+export interface ModelCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  [key: string]: unknown;
+}
+
 export interface ModelDefinition {
   id: string;
   name?: string;
   contextWindow?: number;
   reasoning?: boolean;
+  /** 不填时 SDK 会按 0 计费（用量面板会显示 $0）。 */
+  cost?: ModelCost;
   thinkingLevels?: string[];
   [key: string]: unknown;
 }
