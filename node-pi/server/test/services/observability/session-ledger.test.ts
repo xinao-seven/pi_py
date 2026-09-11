@@ -505,6 +505,80 @@ describe('SessionLedger', () => {
 });
 
 /**
+ * 成本兜底：models.json 重复定义同名模型会把内置 cost 归零（provider-composer 的行为），
+ * 账本要按内置目录价格重算，且显式非零 cost 不能被覆盖。
+ */
+describe('cost fallback for models shadowed by models.json', () => {
+  function recordAssistant(ledger: SessionLedger, message: Record<string, unknown>): void {
+    ledger.record(context, event({ type: 'agent_start' }));
+    ledger.record(context, event({ type: 'turn_start' }));
+    ledger.record(context, event({ type: 'message_end', message }));
+    ledger.record(context, event({ type: 'agent_settled' }));
+  }
+
+  it('recomputes cost from the built-in catalog when the SDK reports $0', () => {
+    const harness = makeLedger();
+    try {
+      recordAssistant(
+        harness.ledger,
+        {
+          role: 'assistant',
+          provider: 'deepseek',
+          model: 'deepseek-v4-flash',
+          stopReason: 'stop',
+          usage: { input: 1_000, output: 200, cacheRead: 50, cacheWrite: 10, cost: { total: 0 } },
+        },
+      );
+
+      // flash: 0.14/0.28/0.0028/0 美元每百万 token。
+      expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBeCloseTo(0.00019614, 9);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('keeps an explicit non-zero cost even for built-in model ids', () => {
+    const harness = makeLedger();
+    try {
+      recordAssistant(
+        harness.ledger,
+        {
+          role: 'assistant',
+          provider: 'deepseek',
+          model: 'deepseek-v4-pro',
+          stopReason: 'stop',
+          usage: { input: 1_000, output: 200, cost: { total: 0.5 } },
+        },
+      );
+
+      expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBe(0.5);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('leaves cost at 0 when the model is absent from the built-in catalog', () => {
+    const harness = makeLedger();
+    try {
+      recordAssistant(
+        harness.ledger,
+        {
+          role: 'assistant',
+          provider: 'deepseek',
+          model: 'deepseek-v4.1-flash-expires-on-0910',
+          stopReason: 'stop',
+          usage: { input: 1_000, output: 200, cost: { total: 0 } },
+        },
+      );
+
+      expect(harness.store.traces.getRun('run-1')?.run.costUsd).toBe(0);
+    } finally {
+      harness.close();
+    }
+  });
+});
+
+/**
  * DoD 门禁：`record()` 在事件回调里同步执行，单次开销必须足够小。
  * 中文说明：这条用例守住「写入不能阻塞事件循环」——入队是 O(1)，每 200 条触发一次
  * 批量 flush（SQLite 单事务），所以只有极少数调用的开销包含落库时间。

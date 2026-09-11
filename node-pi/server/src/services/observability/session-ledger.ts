@@ -20,6 +20,7 @@ import type { AgentSessionEvent, InlineExtension } from '@earendil-works/pi-codi
 import type { ServiceLogger } from '../service-logger.js';
 import type { TraceRepository } from '../platform/trace-repository.js';
 import type { BlockedBy, RunRow, StepRow } from '../platform/trace-model.js';
+import { builtinCostUsd } from './model-cost.js';
 import { buildObservabilityExtension, type ProviderObserver } from './observability-extension.js';
 import { summarize, type ContentSummary } from './redact.js';
 
@@ -392,7 +393,16 @@ export class SessionLedger implements ProviderObserver {
       state.outputTokens += usage.output ?? 0;
       state.cacheReadTokens += usage.cacheRead ?? 0;
       state.cacheWriteTokens += usage.cacheWrite ?? 0;
-      state.costUsd += usage.cost?.total ?? 0;
+      const reported = usage.cost?.total ?? 0;
+      // models.json 覆盖内置模型会把 cost 归零，这时用内置目录价格兜底（显式非零价优先）。
+      state.costUsd +=
+        reported > 0
+          ? reported
+          : (builtinCostUsd(
+              message.provider ?? state.provider,
+              message.model ?? state.model,
+              usage,
+            ) ?? 0);
     }
   }
 
