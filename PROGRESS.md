@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **373** / Web **128**，全绿；spike 30 项断言 + eval 11 个用例全过 |
+| 测试基线   | Node 后端 **399** / Web **149**，全绿；spike 全绿（含新增 `spike/08-preset-capabilities.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -525,6 +525,33 @@ Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
 
 ---
 
+### 3.16 预设能力清单 + 「极简（原版 pi）」模式（已完成，`docs/node-preset-capabilities.md`）
+
+**问题**：预设只能配提示词/工具/压缩/模型/MCP，平台侧的能力（Plan、审批、`ask_user`、`subagent`、
+任务面板、观测钩子、用户文件扩展）**一律无条件开启**；而用户还想要一个「和原版 pi 一模一样、
+什么都不加」的会话。
+
+**修法（已冻结的决策）**：
+
+1. 预设新增 `capabilities`（7 个布尔：`plan` / `approval` / `questions` / `subagent` / `tasks` /
+   `observability` / `fileExtensions`），**未指定 = 开启**（旧预设零迁移）；`POST /api/agent/new`
+   透传为 `extensions` 并在响应里回 `capabilities` 能力位（前端据此隐藏面板）。
+2. `toolNames` 支持 `null`（不限制白名单，SDK 自己发现）、`compaction` 支持 `null`（不覆盖设置）——
+   这两档是「极简」的必要条件；`plan=true` 且 `tasks=false` 直接 422（Plan 是 Task 的视图）。
+3. 新增内置预设 **`minimal`「极简（原版 pi）」**：能力全关 + 工具不限 + 不覆盖压缩 + 禁用 MCP +
+   不加载用户文件扩展（`noExtensions`），只剩 SDK 原生行为；与 `coding-agent` 一样不可改删。
+4. 能力位**不持久化**：它只在创建会话时决定装什么（不需要额外存储）；前端的内存记忆只为少一个
+   空面板，刷新后按「显示」处理。
+
+**顺带修掉的两个既有缺陷**：① `withInlineTools` 漏并 `subagent`，导致带工具白名单的预设会话里
+该工具直接 `not found`；② 同名文件扩展过滤过宽（无论开关都 drop `plan-mode`/`subagent`），
+现在只 drop **本次真的注册了内联实现**的目录。
+
+**证据**：Node 399 用例 / Web 149 用例全绿，新增 `spike/08-preset-capabilities.mjs`（15 项断言，
+真实 SDK + faux provider）；详见 `docs/node-preset-capabilities.md` §8。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -879,6 +906,19 @@ web/src/lib/api.ts            REST 封装（统一解析 ApiError）
 web/src/lib/agent-events.ts   reduceAgentEvent（SSE → 状态规约）
 web/src/composables/useAgentSession.ts   plan/task/recovery 三个独立 ref
 web/src/components/{TaskPlanPanel,TaskStepList,ChatWindow,ChatInput,AgentControls}.vue
+```
+
+---
+
+### 预设能力清单（2026-08-22）
+
+```
+node-pi/server/src/services/preset-service.ts   capabilities / toolNames|null / compaction|null / 内置 minimal
+node-pi/server/src/services/agent-registry.ts   SessionExtensions + inlineCapabilities() + 定向 drop + 广播能力过滤
+node-pi/server/src/routes/agent.ts              extensions 透传 + 响应 capabilities + null 语义
+node-pi/server/spike/08-preset-capabilities.mjs 能力开关端到端（真实 SDK + 临时目录）
+web/src/lib/preset-capabilities.ts              能力映射 + 表单文案 + shouldShowWorkPanel
+docs/node-preset-capabilities.md               契约 / 极简模式定义 / 与 CLI 的边界 / 证据
 ```
 
 ---

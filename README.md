@@ -75,9 +75,11 @@ Python 版详细说明见 [`pi-python/README.md`](pi-python/README.md)。
 ## 扩展（给 Node 版加能力）
 
 Node 版后端把工具审批、Plan 模式与 MCP 工具以**内联扩展**注入每个会话（闭包直连服务单例），
-注册点集中在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories`，并支持按预设开关
-（`extensions.approval` / `extensions.planMode`）启用/关闭；MCP 服务还可按预设选择白名单
-（预设的 `mcpServers` 字段：null = 全部，[] = 禁用，非空数组 = 服务名白名单）。
+注册点集中在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories`，并按**预设能力开关**
+（`extensions` 的 7 个键：审批 / Plan / 提问 / subagent / 任务 / 观测 / 文件扩展）启用或关闭；
+MCP 服务还可按预设选择白名单（预设的 `mcpServers` 字段：null = 全部，[] = 禁用，非空数组 = 服务名白名单）。
+设置里的预设编辑器可以逐项开关这些能力，并内置一个 **「极简（原版 pi）」** 预设（什么都不加，
+只剩 SDK 原生行为）。契约见 [`docs/node-preset-capabilities.md`](docs/node-preset-capabilities.md)。
 
 - 原版 pi（TUI）的 `~/.pi/agent/extensions/` 与项目 `.pi/extensions/` 仍由 SDK 自动发现；
   仓库不再随服务发布 jiti 文件扩展。
