@@ -923,6 +923,24 @@ docs/node-preset-capabilities.md               契约 / 极简模式定义 / 与
 
 ---
 
+### 移动端适配（2026-08-22）
+
+```
+web/index.html                                 viewport-fit=cover（安全区 env() 生效前提）
+web/src/globals.css                            弹窗铺满 + dvh + config-header/footer 紧凑
+web/src/components/ChatWindow.vue              头部/分支条/消息区/输入区收紧，头部按钮可滚动
+web/src/components/ChatInput.vue               输入区按钮换行，不再被挤压变形
+web/src/components/AgentControls.vue           控制条窄屏尺寸收紧
+web/src/components/MessageView.vue             行间距/正文行高收紧
+web/src/components/MarkdownContent.vue         代码块与表格窄屏紧凑
+web/src/components/TaskPlanPanel.vue           面板头部换行 + 按钮 nowrap
+web/src/components/QuestionDialog.vue          贴底抽屉 + 底部安全区
+web/src/components/AppShell.vue                侧栏底部安全区
+docs/web-mobile-adaptation.md                  三条规则 / 高度预算表 / 已知限制
+```
+
+---
+
 ## 9. 已知尚未处理（明确记录，避免重复发现）
 
 | 项                                            | 说明                                                                                                                         | 归属   |
