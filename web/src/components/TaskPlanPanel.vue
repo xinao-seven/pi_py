@@ -669,4 +669,28 @@ function submitStep(): void {
   font-family: inherit;
   font-size: 10px;
 }
+
+@media (max-width: 760px) {
+  /*
+   * 面板窄屏下几乎占满屏宽：头部允许换行（而不是把标题/按钮挤扁），
+   * 按钮统一 nowrap + 保持固有宽度，触摸目标抬到 26px 左右。
+   */
+  .work-panel-head {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 7px 9px;
+  }
+
+  .work-panel-tools button,
+  .work-panel-body button {
+    flex: 0 0 auto;
+    padding: 5px 9px;
+    white-space: nowrap;
+  }
+
+  .work-panel-body {
+    gap: 7px;
+    padding: 8px 9px 10px;
+  }
+}
 </style>

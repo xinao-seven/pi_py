@@ -478,5 +478,47 @@ textarea.composer-input:focus-visible {
   .composer-hint {
     display: none;
   }
+
+  .composer {
+    padding: 7px 9px;
+  }
+
+  /*
+   * 放不下就换行，而不是把按钮挤扁。
+   * `.composer-actions` 原本只有 flex-end + gap：窄屏下运行态的「插入指令/排队跟进/停止」
+   * 与发送方式选择器会把中间按钮压成两行（按钮变形）；这里改成可换行的行布局，
+   * 并给每个按钮 `flex: 0 0 auto` 保住它的固有尺寸。
+   */
+  .composer-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    row-gap: 7px;
+  }
+
+  .composer-tools {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .attach-button,
+  .send-mode,
+  .queue-button,
+  .send-button,
+  .abort-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* 触摸目标抬高到 32px（仍比桌面紧凑，但按得中） */
+  .queue-button,
+  .send-button,
+  .abort-button {
+    min-height: 32px;
+  }
+
+  .send-mode-option {
+    padding: 3px 8px;
+  }
 }
 </style>

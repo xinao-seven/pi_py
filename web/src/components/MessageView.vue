@@ -169,8 +169,23 @@ const images = computed(() =>
 }
 
 @media (max-width: 760px) {
+  /* 行间距紧一点：窄屏一屏能多显示一条消息（虚拟行的间距在 ChatWindow 的 .virtual-row 上） */
+  .message-row {
+    margin-bottom: 22px;
+  }
+
   .message-row--user {
-    padding-left: 10%;
+    padding-left: 8%;
+  }
+
+  /* 字号不变（移动端 14px 仍是舒适阅读区间），只收行高 */
+  .message-text {
+    line-height: 1.7;
+  }
+
+  .message-images img {
+    max-width: min(240px, 68vw);
+    max-height: 220px;
   }
 }
 </style>

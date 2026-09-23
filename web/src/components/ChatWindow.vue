@@ -1186,39 +1186,83 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
 @media (max-width: 760px) {
   .mobile-menu-button {
     display: block;
+    margin-right: 2px;
   }
 
+  /* 头部更矮：省下来的高度全部让给消息区 */
   .chat-header {
-    min-height: 62px;
-    padding: 0 14px;
+    min-height: 46px;
+    padding: 0 10px;
+    gap: 8px;
   }
 
+  .chat-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .chat-title {
+    max-width: 100%;
+  }
+
+  /* 窄屏只留标题：工作区路径交给 title 悬浮提示，模型/上下文芯片本来就有别处展示 */
+  .chat-title-dot,
+  .workspace-path,
   .header-meta .model-chip,
   .header-meta .context-chip {
     display: none;
   }
 
+  /*
+   * 头部按钮：不换行、不被压缩。
+   * 窄屏下 3 个按钮与标题抢宽度，若允许收缩会把「切换项目」挤成两行（按钮变形）；
+   * 这里改为“可收缩的横向滚动条”，放不下就滑动，按钮尺寸始终保持不变。
+   */
+  .header-meta {
+    flex: 0 1 auto;
+    min-width: 0;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .header-meta::-webkit-scrollbar {
+    display: none;
+  }
+
+  .header-meta > button {
+    flex: 0 0 auto;
+    min-height: 28px;
+    white-space: nowrap;
+  }
+
   .branch-strip {
     align-items: flex-start;
-    padding: 6px 12px;
+    padding: 4px 10px;
     overflow-x: auto;
   }
 
   .branch-strip-content {
     align-items: stretch;
-    padding: 0 11px 8px;
+    padding: 0 9px 6px;
   }
 
   .branch-error {
     display: none;
   }
 
+  /* 消息区：四周留白与行间距收紧，一屏能多看两三条 */
   .message-list {
-    padding: 26px 17px 35px;
+    padding: 14px 12px 20px;
+  }
+
+  .virtual-row {
+    padding-bottom: 24px;
   }
 
   .composer-dock {
-    padding: 0 12px 11px;
+    /* 底部安全区：iPhone 的 home 指示条不会压住输入框 */
+    padding: 0 8px calc(8px + env(safe-area-inset-bottom));
   }
 
   /* 窄屏：面板几乎占满宽度，避免贴边裁切 */
@@ -1229,7 +1273,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
   }
 
   .welcome-state h2 {
-    font-size: 35px;
+    font-size: 30px;
   }
 }
 </style>

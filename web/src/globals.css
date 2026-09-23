@@ -404,7 +404,7 @@ select:focus-visible {
   border-radius: 6px;
 }
 
-/* ---- 移动端：弹窗铺满 ---- */
+/* ---- 移动端：弹窗铺满 + 收紧头部/底部（给内容让出高度） ---- */
 @media (max-width: 760px) {
   .modal-backdrop {
     padding: 0;
@@ -413,10 +413,39 @@ select:focus-visible {
   .config-dialog,
   .config-dialog--wide {
     width: 100%;
+    /* dvh 优先：移动端地址栏收起/展开时不会把底部按钮顶出可视区（100vh 做不到） */
     max-height: 100vh;
     min-height: 100vh;
+    max-height: 100dvh;
+    min-height: 100dvh;
     border: 0;
     border-radius: 0;
+  }
+
+  /* 描述文字在窄屏要占三四行：收进标题里（桌面仍完整显示） */
+  .config-header {
+    padding: 12px 13px;
+  }
+
+  .config-header h2 {
+    font-size: 18px;
+  }
+
+  .config-header p {
+    display: none;
+  }
+
+  /* 底部按钮：换行 + 拉平铺满，而不是被挤成两行文字 */
+  .config-footer {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 12px 13px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .config-footer button {
+    flex: 1 1 auto;
+    white-space: nowrap;
   }
 
   .provider-grid {

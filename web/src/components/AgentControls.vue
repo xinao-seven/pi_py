@@ -303,4 +303,35 @@ function changePreset(event: Event): void {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+
+@media (max-width: 760px) {
+  /*
+   * 窄屏控制条：本类已是 flex + overflow-x:auto + 子项 flex:0 0 auto，
+   * 天生不会被挤压变形；这里只把尺寸收紧，让同一屏能看到更多控件。
+   */
+  .agent-controls {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .control-field > span {
+    padding-left: 6px;
+    font-size: 8px;
+  }
+
+  .control-field select {
+    max-width: 108px;
+    padding: 5px 6px 5px 4px;
+  }
+
+  .compact-button {
+    min-height: 28px;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+
+  .context-meter {
+    width: 40px;
+  }
+}
 </style>

@@ -192,4 +192,25 @@ const html = computed(() => {
 :root[data-theme='light'] .markdown-content :deep(pre .hljs) {
   color: #213025;
 }
+
+@media (max-width: 760px) {
+  /* 代码块与表格在窄屏更紧凑：同一屏能看到更多正文 */
+  .markdown-content :deep(pre) {
+    margin: 10px 0;
+    padding: 10px 11px;
+  }
+
+  .markdown-content :deep(pre code) {
+    font-size: 11.5px;
+  }
+
+  .markdown-content :deep(table) {
+    font-size: 12px;
+  }
+
+  .markdown-content :deep(th),
+  .markdown-content :deep(td) {
+    padding: 5px 7px;
+  }
+}
 </style>
