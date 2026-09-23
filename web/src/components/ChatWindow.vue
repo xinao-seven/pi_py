@@ -11,6 +11,7 @@ import QuestionDialog from '@/components/QuestionDialog.vue';
 import TaskPlanPanel from '@/components/TaskPlanPanel.vue';
 import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
+import { shouldShowWorkPanel } from '@/lib/preset-capabilities';
 import {
   addTaskStep,
   ApiError,
@@ -61,6 +62,7 @@ const {
   contextUsage,
   task,
   recovery,
+  sessionCapabilities,
   refreshPlan,
   refreshTask,
   refreshRecovery,
@@ -439,6 +441,18 @@ const workPanelHost = ref<HTMLElement | null>(null);
 const workPanelButton = ref<HTMLElement | null>(null);
 const autoOpenedPlanId = ref<string | null>(null);
 
+/**
+ * 入口按钮是否出现。
+ * 中文说明：预设关掉「任务面板」的会话（极简模式）不显示计划/任务入口；
+ * 历史会话/刷新后能力位未知（null）按显示处理——面板本来就只有有内容时才有徽标。
+ */
+const workPanelEnabled = computed(() => shouldShowWorkPanel(sessionCapabilities.value));
+
+// 能力位切到关闭时（例如刚创建了极简会话）顺手收起面板，避免浮现一个空面板。
+watch(workPanelEnabled, (enabled) => {
+  if (!enabled) workPanelOpen.value = false;
+});
+
 function toggleWorkPanel(): void {
   workPanelOpen.value = !workPanelOpen.value;
 }
@@ -559,7 +573,7 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
           {{ contextPercentLabel }}
         </span>
         <button
-          v-if="sessionId || task || plan?.planId || recovery.length"
+          v-if="workPanelEnabled && (sessionId || task || plan?.planId || recovery.length)"
           ref="workPanelButton"
           class="work-panel-button"
           :class="{ 'work-panel-button--attention': workPanelAttention }"

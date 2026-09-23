@@ -24,7 +24,9 @@ import { stat } from 'node:fs/promises';
 
 import {
   AgentRegistry,
+  sessionCapabilitiesOf,
   type ImageAttachment,
+  type SessionExtensions,
   type StreamEvent,
 } from '../services/agent-registry.js';
 import { ApiError } from '../errors.js';
@@ -67,6 +69,8 @@ interface NewAgentBody {
   compaction?: unknown;
   images?: unknown;
   mcpServers?: unknown;
+  /** 会话能力开关（预设 capabilities）：未提供 = 全部开启。 */
+  extensions?: unknown;
 }
 
 // ---- 下面是一组"手写校验"辅助函数 ------------------------------------------
@@ -90,13 +94,51 @@ function optionalString(value: unknown, field: string): string | undefined {
   return value;
 }
 
-/** 可选字符串数组（用于 toolNames 工具白名单）。 */
-function optionalStringArray(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
+/**
+ * 可选工具白名单。
+ * 中文说明：`null` 与缺省都表示「不限制白名单」（让 SDK 自己发现可用工具）——
+ * 极简预设需要这一档；显式空数组才是「无工具」。
+ */
+function optionalToolNames(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new ApiError(422, 'validation_error', 'toolNames must be an array of strings');
+    throw new ApiError(422, 'validation_error', 'toolNames must be null or an array of strings');
   }
   return value;
+}
+
+/** 会话能力开关的合法键（与 SessionExtensions 一一对应）。 */
+const SESSION_EXTENSION_KEYS = [
+  'approval',
+  'planMode',
+  'questions',
+  'subagents',
+  'tasks',
+  'observability',
+  'fileExtensions',
+] as const;
+
+/**
+ * 可选会话能力开关。
+ * 中文说明：只接受布尔；未列出的键直接忽略（与 Python 后端的宽松解析一致），
+ * 缺省键由服务端按「开启」处理。值类型写错一律 422，避免静默忽略写错的开关。
+ */
+function optionalExtensions(value: unknown): SessionExtensions | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(422, 'validation_error', 'extensions must be an object');
+  }
+  const source = value as Record<string, unknown>;
+  const result: SessionExtensions = {};
+  for (const key of SESSION_EXTENSION_KEYS) {
+    const item = source[key];
+    if (item === undefined) continue;
+    if (typeof item !== 'boolean') {
+      throw new ApiError(422, 'validation_error', `extensions.${key} must be a boolean`);
+    }
+    result[key] = item;
+  }
+  return result;
 }
 
 /**
@@ -113,7 +155,8 @@ function optionalMcpServers(value: unknown): string[] | undefined {
 
 /** 可选压缩策略：enabled 布尔，keepRecentTokens/reserveTokens 正整数。 */
 function optionalCompaction(value: unknown): CompactionSettings | undefined {
-  if (value === undefined) return undefined;
+  // null = 显式「不覆盖设置」（极简预设）：与不传等价。
+  if (value === undefined || value === null) return undefined;
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new ApiError(422, 'validation_error', 'compaction must be an object');
   }
@@ -250,15 +293,18 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
     }
     // 1) 在注册表中创建会话（内部会调用 Pi SDK 的 createAgentSession）；
     // 2) 下发 type: "prompt" 命令，让模型开始工作。
+    const extensions = optionalExtensions(body.extensions);
+    const mcpServers = optionalMcpServers(body.mcpServers);
     const entry = await options.registry.create({
       cwd,
       provider: optionalString(body.provider, 'provider'),
       modelId: optionalString(body.modelId, 'modelId'),
       thinkingLevel: optionalString(body.thinkingLevel, 'thinkingLevel'),
-      toolNames: optionalStringArray(body.toolNames),
+      toolNames: optionalToolNames(body.toolNames),
       systemPrompt: optionalString(body.systemPrompt, 'systemPrompt'),
       compaction: optionalCompaction(body.compaction),
-      mcpServers: optionalMcpServers(body.mcpServers),
+      mcpServers,
+      extensions,
     });
     // `mode: 'plan'` 是消息级属性（M4）：同一请求里先建/采纳计划，再发这条消息，
     // 因此新建会话也能直接「先规划」，不再需要「先发一条消息再开开关」。
@@ -268,7 +314,12 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
       images: inputImages,
       ...(body.mode === undefined ? {} : { mode: body.mode }),
     });
-    return reply.code(202).send({ success: true, sessionId: entry.session.sessionId });
+    return reply.code(202).send({
+      success: true,
+      sessionId: entry.session.sessionId,
+      // 会话能力位：前端据此决定计划/任务面板等 UI 是否出现。
+      capabilities: entry.capabilities ?? sessionCapabilitiesOf({ extensions, mcpServers }),
+    });
   });
 
   // POST /api/agent/:sessionId —— 向已有会话下发命令。

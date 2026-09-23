@@ -242,4 +242,25 @@ describe('OriginalPiSessionFactory 过滤被内联接管的文件扩展', () => 
     // M5 起 subagent 也被内联实现接管（工具名同名，避免两套并存）
     expect(infos[0]).toMatchObject({ cwd: '/tmp/ws', ownedBy: ['plan-mode', 'subagent'] });
   });
+
+  it('关掉内联 Plan 时不再抑制同名文件扩展（否则「关内联」变成「关一切」）', async () => {
+    const factory = new OriginalPiSessionFactory('/home/u/.pi/agent');
+    await factory.create({
+      cwd: '/tmp/ws',
+      extensions: { planMode: false, subagents: false },
+    });
+
+    expect(loaderOptions?.extensionsOverride).toBeUndefined();
+  });
+
+  it('极简模式（fileExtensions=false）不发现任何文件扩展', async () => {
+    const factory = new OriginalPiSessionFactory('/home/u/.pi/agent');
+    await factory.create({
+      cwd: '/tmp/ws',
+      extensions: { planMode: false, subagents: false, fileExtensions: false },
+    });
+
+    expect(loaderOptions?.noExtensions).toBe(true);
+    expect(loaderOptions?.extensionFactories).toEqual([]);
+  });
 });

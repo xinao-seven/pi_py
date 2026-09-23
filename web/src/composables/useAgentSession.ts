@@ -21,6 +21,7 @@ import {
   normalizeQuestion,
   reduceAgentEvent,
 } from '@/lib/agent-events';
+import { DEFAULT_CAPABILITIES, capabilitiesToExtensions } from '@/lib/preset-capabilities';
 import { fireUnauthorized } from '@/lib/session';
 import type {
   AgentEvent,
@@ -31,9 +32,11 @@ import type {
   ModelCatalog,
   ModelRef,
   PlanView,
+  PresetCapabilities,
   PresetCompaction,
   PromptMode,
   RetryInfo,
+  SessionCapabilities,
   SessionDetail,
   SessionPreset,
   QuestionAnswer,
@@ -79,12 +82,16 @@ export function useAgentSession(options: AgentSessionOptions) {
   const catalog = ref<ModelCatalog | null>(null);
   const newSessionModel = ref<ModelRef | null>(null);
   const thinkingLevel = ref('off');
-  const activeTools = ref<string[]>([...DEFAULT_TOOLS]);
+  const activeTools = ref<string[] | null>([...DEFAULT_TOOLS]);
   const presets = ref<SessionPreset[]>([]);
   const selectedPreset = ref(BUILTIN_PRESET_ID);
   const presetSystemPrompt = ref('');
   const presetCompaction = ref<PresetCompaction | null>(null);
   const presetMcpServers = ref<string[] | null>(null);
+  // 当前预设的能力开关（创建会话时映射成 extensions 发给后端）。
+  const presetCapabilities = ref<PresetCapabilities>({ ...DEFAULT_CAPABILITIES });
+  // 当前会话的能力位（创建响应返回）：历史会话/刷新后未知，按「显示」处理。
+  const sessionCapabilities = ref<SessionCapabilities | null>(null);
   // 思考等级是否被显式选择过（用户改下拉或预设指定）：为 true 才随创建请求发送，
   // 避免默认的 'off' 占位值把新会话的思考意外关掉（后端现在会把 'off' 透传给 SDK）。
   const thinkingExplicit = ref(false);
@@ -473,7 +480,7 @@ export function useAgentSession(options: AgentSessionOptions) {
         // 新会话：带模型/思考/工具配置创建 Agent 并连接事件流
         const cwd = options.newSessionCwd.value;
         if (!cwd) throw new Error('请先选择工作区');
-        const sessionId = await createAgent({
+        const created = await createAgent({
           cwd,
           message: text,
           // 执行方式（M4）：消息级属性——「先规划」不再需要先切换全局开关，
@@ -483,17 +490,21 @@ export function useAgentSession(options: AgentSessionOptions) {
           modelId: displayModel.value?.modelId,
           // 默认路径（未显式选择思考）不发送 thinkingLevel，保持与改动前一致。
           ...(thinkingExplicit.value ? { thinkingLevel: thinkingLevel.value } : {}),
-          toolNames: activeTools.value,
+          // null = 不限制白名单（SDK 默认发现）：省略字段比传 null 更干净，语义等价。
+          ...(activeTools.value === null ? {} : { toolNames: activeTools.value }),
           images: imageBlocks,
           ...(presetSystemPrompt.value ? { systemPrompt: presetSystemPrompt.value } : {}),
           ...(presetCompaction.value ? { compaction: presetCompaction.value } : {}),
           // mcpServers 仅在预设显式配置（非 null）时发送；null/缺省 = 后端默认全部
           ...(presetMcpServers.value !== null ? { mcpServers: presetMcpServers.value } : {}),
+          // 预设能力开关 → 会话 extensions（关掉的能力在会话创建时就不装配）。
+          extensions: capabilitiesToExtensions(presetCapabilities.value),
         });
-        activeSessionId.value = sessionId;
-        options.onSessionCreated?.(sessionId);
-        await loadSession(sessionId);
-        connectEvents(sessionId);
+        activeSessionId.value = created.sessionId;
+        sessionCapabilities.value = created.capabilities;
+        options.onSessionCreated?.(created.sessionId);
+        await loadSession(created.sessionId);
+        connectEvents(created.sessionId);
       } else {
         // 历史会话：直接发送 prompt 命令
         const sessionId = activeSessionId.value;
@@ -613,9 +624,11 @@ export function useAgentSession(options: AgentSessionOptions) {
     // 应用预设：预填模型/推理/工具（仍可在控件里修改），并记住系统提示词与压缩策略
     selectedPreset.value = preset.id;
     presetSystemPrompt.value = preset.systemPrompt;
-    presetCompaction.value = { ...preset.compaction };
+    presetCompaction.value = preset.compaction === null ? null : { ...preset.compaction };
     presetMcpServers.value = preset.mcpServers ?? null;
-    activeTools.value = [...preset.toolNames];
+    presetCapabilities.value = { ...preset.capabilities };
+    // null = 不限制白名单（极简预设：SDK 自己发现工具）。
+    activeTools.value = preset.toolNames === null ? null : [...preset.toolNames];
     // 预设指定了模型就用它，否则退回目录默认模型。
     newSessionModel.value =
       preset.provider && preset.modelId
@@ -649,12 +662,14 @@ export function useAgentSession(options: AgentSessionOptions) {
     }
   }
 
-  async function changeTools(toolNames: string[]): Promise<void> {
-    // 切换激活工具集合
+  async function changeTools(toolNames: string[] | null): Promise<void> {
+    // 切换激活工具集合；null = 不限制白名单（只能在新会话选择：已存在的会话
+    // 只能通过 set_tools 传数组，没有「取消白名单」这条命令）。
     if (!activeSessionId.value) {
       activeTools.value = toolNames;
       return;
     }
+    if (toolNames === null) return;
     try {
       await sendAgentCommand(activeSessionId.value, { type: 'set_tools', toolNames });
       activeTools.value = toolNames;
@@ -712,6 +727,8 @@ export function useAgentSession(options: AgentSessionOptions) {
       presetSystemPrompt.value = '';
       presetCompaction.value = null;
       presetMcpServers.value = null;
+      presetCapabilities.value = { ...DEFAULT_CAPABILITIES };
+      sessionCapabilities.value = null;
       thinkingExplicit.value = false;
       retryInfo.value = null;
       compacting.value = false;
@@ -739,6 +756,8 @@ export function useAgentSession(options: AgentSessionOptions) {
       presetSystemPrompt.value = '';
       presetCompaction.value = null;
       presetMcpServers.value = null;
+      presetCapabilities.value = { ...DEFAULT_CAPABILITIES };
+      sessionCapabilities.value = null;
       thinkingExplicit.value = false;
       assignStream({ ...INITIAL_STREAM_STATE });
       error.value = null;
@@ -836,6 +855,8 @@ export function useAgentSession(options: AgentSessionOptions) {
     presets,
     selectedPreset,
     applyPreset,
+    presetCapabilities,
+    sessionCapabilities,
     compacting,
     compactionError,
     retryInfo,

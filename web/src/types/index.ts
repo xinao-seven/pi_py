@@ -336,12 +336,47 @@ export interface PresetCompaction {
   reserveTokens: number;
 }
 
+export interface PresetCapabilities {
+  // 会话能力开关（与后端 PresetCapabilities 一致）
+  plan: boolean; // Plan 模式
+  approval: boolean; // 危险命令审批
+  questions: boolean; // 向用户提问（ask_user）
+  subagent: boolean; // 子 agent 委派
+  tasks: boolean; // 任务面板/任务域（Plan 依赖它）
+  observability: boolean; // 平台观测钩子
+  fileExtensions: boolean; // 是否加载用户/工作区文件扩展
+}
+
+/** 会话能力开关（POST /api/agent/new 的 extensions）。 */
+export interface SessionExtensions {
+  approval?: boolean;
+  planMode?: boolean;
+  questions?: boolean;
+  subagents?: boolean;
+  tasks?: boolean;
+  observability?: boolean;
+  fileExtensions?: boolean;
+}
+
+/** 会话能力位（创建会话的响应返回）：前端据此决定计划/任务面板是否出现。 */
+export interface SessionCapabilities {
+  plan: boolean;
+  approval: boolean;
+  questions: boolean;
+  subagent: boolean;
+  tasks: boolean;
+  observability: boolean;
+  fileExtensions: boolean;
+  mcp: boolean;
+}
+
 export interface SessionPresetInput {
   // 预设输入（创建/更新用）：空串/缺省 = 用 SDK/设置默认值
   name: string;
   systemPrompt: string; // '' = SDK 默认系统提示词
-  toolNames: string[]; // [] = 无工具
-  compaction: PresetCompaction;
+  toolNames: string[] | null; // null = SDK 默认发现（不限制白名单）；[] = 无工具
+  compaction: PresetCompaction | null; // null = 不覆盖设置
+  capabilities: PresetCapabilities;
   provider?: string; // 空串/缺省 = 用目录默认模型
   modelId?: string;
   thinkingLevel?: string; // 空串/缺省 = 用设置默认思考等级

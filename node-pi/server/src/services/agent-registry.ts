@@ -39,6 +39,7 @@ import { previewOf } from './service-logger.js';
 import { ToolApprovalBroker, type PendingToolApproval } from './tool-approval.js';
 import { PlanModeService } from './plan-mode-service.js';
 import { PLAN_TOOL_NAMES } from './plan-tools.js';
+import { SUBAGENT_TOOL_NAMES } from './subagent-tools.js';
 import { ASK_USER_TOOL_NAME, type PendingQuestion, type QuestionBroker } from './user-question.js';
 import { emptyPlanView, type PlanView } from './platform/plan-model.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
@@ -96,11 +97,15 @@ function extensionDirName(path: string): string | undefined {
  * 过滤掉被内联实现接管的同名文件扩展（只影响本服务的资源加载）。
  * 返回被过滤掉的路径，供调用方记日志。
  */
-export function dropInlineOwnedExtensions(result: LoadExtensionsResult): {
+export function dropInlineOwnedExtensions(
+  result: LoadExtensionsResult,
+  /** 本次会话真正注册了内联实现的目录名；缺省 = 全部接管项。 */
+  ownedDirs: readonly string[] = INLINE_OWNED_EXTENSION_DIRS,
+): {
   result: LoadExtensionsResult;
   dropped: string[];
 } {
-  const owned = new Set<string>(INLINE_OWNED_EXTENSION_DIRS);
+  const owned = new Set<string>(ownedDirs);
   const dropped: string[] = [];
   const extensions = result.extensions.filter((extension) => {
     // 内联扩展的 path 形如 `<inline:N>`，不会被误伤（其目录名取不到）。
@@ -156,21 +161,70 @@ export interface SubagentLink {
   maxDepth: number;
 }
 
+/**
+ * 会话能力开关（来自预设的 capabilities）。
+ *
+ * 中文说明：每个键都可以显式关掉；**未指定一律视为开启**，因此老的预设与调用方
+ * 零迁移。`fileExtensions=false` 是本服务唯一一处主动与 CLI 拉开距离的开关：
+ * 连 `~/.pi/agent/extensions/` 与 `{cwd}/.pi/extensions/` 都不加载（极简模式）。
+ */
+export interface SessionExtensions {
+  approval?: boolean; // 危险命令人工审批（ToolApprovalBroker）
+  planMode?: boolean; // Web Plan 模式（计划工具 + 规划期只读拦截）
+  questions?: boolean; // 向用户提问（ask_user）
+  subagents?: boolean; // 子任务委派（subagent 工具）
+  tasks?: boolean; // 任务域：task_updated 广播 + M3 恢复扩展与补推（Plan 依赖它）
+  observability?: boolean; // provider 层只读观测钩子
+  fileExtensions?: boolean; // 是否加载用户级/工作区级文件扩展
+}
+
+/** 会话能力的对外视图（POST /api/agent/new 响应，供前端决定面板显示）。 */
+export interface SessionCapabilities {
+  plan: boolean;
+  approval: boolean;
+  questions: boolean;
+  subagent: boolean;
+  tasks: boolean;
+  observability: boolean;
+  fileExtensions: boolean;
+  mcp: boolean;
+}
+
+/**
+ * 由创建输入推导会话能力视图。
+ * 中文说明：只看**入参开关**，不看服务是否装配了对应组件——契约因此稳定，
+ * 前端不需要知道部署细节（服务缺失时能力位仍为 true，只是该能力静默不可用）。
+ */
+export function sessionCapabilitiesOf(input: {
+  extensions?: SessionExtensions;
+  mcpServers?: string[] | null;
+}): SessionCapabilities {
+  const extensions = input.extensions;
+  const on = (value: boolean | undefined): boolean => value !== false;
+  return {
+    plan: on(extensions?.planMode),
+    approval: on(extensions?.approval),
+    questions: on(extensions?.questions),
+    subagent: on(extensions?.subagents),
+    tasks: on(extensions?.tasks),
+    observability: on(extensions?.observability),
+    fileExtensions: on(extensions?.fileExtensions),
+    // 只有显式给空数组才算「禁用 MCP」；null/缺省 = 全部可用。
+    mcp: !(Array.isArray(input.mcpServers) && input.mcpServers.length === 0),
+  };
+}
+
 /** 创建会话的输入参数（来自 POST /api/agent/new）。 */
 export interface CreateSessionInput {
   cwd: string; // 工作区目录
   provider?: string; // 模型提供方（如 anthropic）
   modelId?: string; // 模型 id（如 claude-sonnet-4-5）
   thinkingLevel?: string; // 思考强度（off/minimal/low/medium/high/xhigh/max）
-  toolNames?: string[]; // 启用的工具白名单
+  toolNames?: string[]; // 启用的工具白名单；缺省 = SDK 默认发现（不限制）
   systemPrompt?: string; // 预设系统提示词；空串/未提供 = SDK 默认
   compaction?: CompactionSettings; // 预设上下文压缩策略；未提供 = SDK 默认
   /** 预设可关闭的能力开关；未指定一律开启。 */
-  extensions?: {
-    approval?: boolean; // 危险命令人工审批
-    planMode?: boolean; // Web Plan 模式
-    questions?: boolean; // 向用户提问（ask_user，默认启用）
-  };
+  extensions?: SessionExtensions;
   /** MCP 服务白名单；null/缺省 = 全部，[] = 禁用，非空数组 = 服务名白名单（预设的 mcpServers 字段）。 */
   mcpServers?: string[] | null;
   /** M5：本会话是某次委派的子会话时提供（缺省 = 用户会话）。 */
@@ -336,6 +390,29 @@ export interface RegistryEntry {
   activeTaskId?: string;
   /** M5：本会话是由某次委派创建的子会话时提供（用于 trace 树与取消级联）。 */
   subagent?: SubagentLink;
+  /** 会话能力位（创建时的开关快照）：announceTask/announceRecovery 据此过滤。 */
+  capabilities?: SessionCapabilities;
+}
+
+/**
+ * 本次会话实际装配了哪些内联能力。
+ * 中文说明：由 `CreateSessionInput.extensions` 解析一次、多处复用（工具白名单并入、
+ * 资源加载器装配、同名文件扩展抑制），避免「工具并了但扩展没注册」这类不一致。
+ */
+interface InlineCapabilities {
+  planMode: boolean;
+  approval: boolean;
+  questions: boolean;
+  subagents: boolean;
+  tasks: boolean;
+  observability: boolean;
+  fileExtensions: boolean;
+  /** 子会话深度（父会话 0）：只在注册 subagent 扩展时用。 */
+  subagentDepth: number;
+  /** MCP 白名单（null = 全部）；空数组 = 禁用，此时连扩展都不注册。 */
+  mcpServers: string[] | null;
+  /** 白名单内、当前 cwd 已连接的 MCP 工具名（并入 tools 白名单用）。 */
+  mcpToolNames: string[];
 }
 
 /**
@@ -397,12 +474,21 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     //
     // 子会话（M5）是例外：子会话的工具集**就是预设的工具集**，不并入任何内联工具。
     // 否则「只读预设」会因为被并入 MCP / 计划工具而不再只读，隔离性形同虚设。
+    const inline = this.inlineCapabilities(
+      input.cwd,
+      input.extensions,
+      input.subagent,
+      input.mcpServers,
+    );
     const effectiveTools = input.subagent
       ? input.toolNames
       : withInlineTools(input.toolNames, [
-          ...PLAN_TOOL_NAMES,
-          ASK_USER_TOOL_NAME,
-          ...this.mcpToolNames(input.cwd, input.mcpServers),
+          ...(inline.planMode ? PLAN_TOOL_NAMES : []),
+          ...(inline.questions ? [ASK_USER_TOOL_NAME] : []),
+          // 与内联扩展的注册条件保持一致：漏并 subagent 会让「带工具白名单的预设会话」
+          // 里该工具直接 "Tool subagent not found"（白名单是可用集，不是激活集）。
+          ...(inline.subagents ? SUBAGENT_TOOL_NAMES : []),
+          ...inline.mcpToolNames,
         ]);
     // 子会话落盘：落在服务层指定的目录（默认 ~/.pi/agent-node-server/subagents），
     // 并写 parentSession 链；**不落共享的 ~/.pi/agent/sessions**，否则 CLI 的会话列表
@@ -419,13 +505,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       cwd: input.cwd,
       agentDir: this.agentDir,
       modelRuntime: runtime,
-      resourceLoader: await this.loader(
-        input.cwd,
-        input.systemPrompt,
-        input.extensions,
-        input.mcpServers,
-        input.subagent,
-      ),
+      resourceLoader: await this.loader(input.cwd, input.systemPrompt, inline),
       ...(sessionManager === undefined ? {} : { sessionManager }),
       ...(model === undefined ? {} : { model }),
       ...(input.thinkingLevel
@@ -493,7 +573,13 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       agentDir: this.agentDir,
       modelRuntime: runtime,
       sessionManager, // 传入已有的 SessionManager，恢复该会话的完整上下文
-      resourceLoader: await this.loader(sessionManager.getCwd() || input.cwd),
+      resourceLoader: await this.loader(
+        sessionManager.getCwd() || input.cwd,
+        undefined,
+        // 恢复历史会话时能力开关未知（创建时的开关没有持久化）：按「全开」恢复，
+        // 与改动前行为一致；极简会话重开后也只是回到默认能力。
+        this.inlineCapabilities(sessionManager.getCwd() || input.cwd, undefined, undefined, null),
+      ),
     });
     return session as unknown as PiSession;
   }
@@ -536,38 +622,73 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     return this.runtimePromise;
   }
 
+  /**
+   * 把能力开关注解成「本次会话启用了哪些内联能力」。
+   * 中文说明：**只看入参开关，不看服务是否装配** —— 能力位是逻辑开关（也是
+   * POST /api/agent/new 返回给前端的那一份），未指定 = 开启（与 M0–M5 现状一致，
+   * 老调用方零迁移）。loader 里再叠加 this.xxx 与深度判断，避免把部署细节混进契约。
+   */
+  private inlineCapabilities(
+    cwd: string,
+    extensions: SessionExtensions | undefined,
+    subagent: SubagentLink | undefined,
+    mcpServers: string[] | null | undefined,
+  ): InlineCapabilities {
+    const on = (value: boolean | undefined): boolean => value !== false;
+    const allowed = mcpServers ?? null;
+    // 白名单为空数组 = 明确禁用 MCP：连扩展都不注册（不再产生空工具集）。
+    const mcpEnabled = this.mcpService !== undefined && !(allowed !== null && allowed.length === 0);
+    return {
+      planMode: on(extensions?.planMode),
+      approval: on(extensions?.approval),
+      questions: on(extensions?.questions),
+      subagents: on(extensions?.subagents),
+      tasks: on(extensions?.tasks),
+      observability: on(extensions?.observability),
+      fileExtensions: on(extensions?.fileExtensions),
+      subagentDepth: subagent?.depth ?? 0,
+      mcpServers: allowed,
+      mcpToolNames: mcpEnabled ? this.mcpToolNames(cwd, allowed) : [],
+    };
+  }
+
   /** 创建资源加载器（工具/技能发现 + 内联扩展注入）。 */
   private async loader(
     cwd: string,
-    systemPrompt?: string,
-    extensions?: CreateSessionInput['extensions'],
-    mcpServers?: CreateSessionInput['mcpServers'],
-    subagent?: SubagentLink,
+    systemPrompt: string | undefined,
+    inline: InlineCapabilities,
   ): Promise<DefaultResourceLoader> {
     // 内联扩展：不走 jiti、闭包直连服务单例，使多个会话共享同一连接/审批中枢，
-    // 并支持按预设开关动态启用/禁用。仍保留 SDK 的自动发现（与 TUI 平级）加载
-    // 用户级 ~/.pi/agent/extensions/ 与项目级 {cwd}/.pi/extensions/ 的扩展。
+    // 并支持按预设开关动态启用/禁用。除了开关，还要服务真的装配了才注册。
     // 顺序有讲究：plan 在 approval 之前（规划期先拦下危险命令，避免先弹审批框），
     // approval 在 mcp 之前（MCP 审批复用 broker）。
-    const factories: InlineExtension[] = [];
-    if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
-    if (extensions?.approval !== false && this.approvals)
-      factories.push(this.approvals.buildExtension());
-    // 观测扩展：只读 provider 层的两个钩子（不改请求、不阻断），排在审批之后。
-    if (this.observability) factories.push(this.observability.buildExtension());
-    // 任务恢复扩展（M3）：记录在飞动作 + 注入恢复摘要，同样不做决策。
-    if (this.taskRecovery) factories.push(this.taskRecovery.buildExtension());
-    // 提问通道（M4.1）：注册 ask_user；它不是 Plan 的一部分，默认始终启用。
-    if (extensions?.questions !== false && this.questions)
-      factories.push(this.questions.buildExtension());
     // 子任务委派（M5）：「不能递归」在结构上保证——到达深度上限的子会话
     // 根本不注册 `subagent` 工具，模型连试的机会都没有。
-    if (this.subagents && (subagent === undefined || subagent.depth < subagent.maxDepth))
-      factories.push(this.subagents.buildExtension({ depth: subagent?.depth ?? 0 }));
+    const registerSubagents =
+      inline.subagents &&
+      this.subagents !== undefined &&
+      inline.subagentDepth < this.subagents.limits.maxDepth;
+    const factories: InlineExtension[] = [];
+    if (inline.planMode && this.plans) factories.push(this.plans.buildExtension());
+    if (inline.approval && this.approvals) factories.push(this.approvals.buildExtension());
+    // 观测扩展：只读 provider 层的两个钩子（不改请求、不阻断），排在审批之后。
+    if (inline.observability && this.observability)
+      factories.push(this.observability.buildExtension());
+    // 任务恢复扩展（M3）：记录在飞动作 + 注入恢复摘要，同样不做决策。
+    if (inline.tasks && this.taskRecovery) factories.push(this.taskRecovery.buildExtension());
+    // 提问通道（M4.1）：注册 ask_user；它不是 Plan 的一部分，默认启用。
+    if (inline.questions && this.questions) factories.push(this.questions.buildExtension());
+    if (registerSubagents && this.subagents)
+      factories.push(this.subagents.buildExtension({ depth: inline.subagentDepth }));
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
-    if (this.mcpService)
-      factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals, mcpServers ?? null));
+    if (this.mcpService && !(inline.mcpServers !== null && inline.mcpServers.length === 0))
+      factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals, inline.mcpServers));
+    // 只过滤**本次真的声称接管了该名字**的文件扩展（只看开关，不看服务是否装配）：
+    // 关掉 Plan 时，用户装的官方 plan-mode 扩展就应该照常加载（否则「关内联」变成了「关一切」）。
+    const owned: string[] = [];
+    if (inline.planMode) owned.push('plan-mode');
+    if (inline.subagents) owned.push('subagent');
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: this.agentDir,
@@ -575,17 +696,23 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       // 使"默认预设"破坏用户已有的文件级提示词）。空串/未提供 → 走 SDK 默认发现。
       ...(systemPrompt ? { systemPrompt } : {}),
       extensionFactories: factories,
-      // 过滤掉被上面这些内联扩展接管的同名文件扩展。只影响本服务的资源加载，
-      // 不碰磁盘：用户目录里的文件保持原样，CLI 仍会正常加载它们。
-      extensionsOverride: (base) => {
-        const { result, dropped } = dropInlineOwnedExtensions(base);
-        if (dropped.length > 0)
-          this.logger?.info(
-            { cwd, dropped, ownedBy: [...INLINE_OWNED_EXTENSION_DIRS] },
-            'file extensions suppressed (inline implementation owns these names)',
-          );
-        return result;
-      },
+      // 极简模式（fileExtensions=false）：连用户级/工作区级的文件扩展都不发现，
+      // 会话里只剩 SDK 内置工具与上面显式装配的内联扩展。
+      ...(inline.fileExtensions ? {} : { noExtensions: true }),
+      // 过滤只影响本服务的资源加载，不碰磁盘：用户目录里的文件保持原样，CLI 仍照常加载。
+      ...(owned.length === 0
+        ? {}
+        : {
+            extensionsOverride: (base: LoadExtensionsResult) => {
+              const { result, dropped } = dropInlineOwnedExtensions(base, owned);
+              if (dropped.length > 0)
+                this.logger?.info(
+                  { cwd, dropped, ownedBy: owned },
+                  'file extensions suppressed (inline implementation owns these names)',
+                );
+              return result;
+            },
+          }),
     });
     await loader.reload();
     return loader;
@@ -678,7 +805,14 @@ export class AgentRegistry {
     if (existing !== undefined) {
       throw new ApiError(409, 'session_active', `Session ${session.sessionId} is already active`);
     }
-    return this.register(session, input.cwd, new Date(), undefined, input.subagent);
+    return this.register(
+      session,
+      input.cwd,
+      new Date(),
+      undefined,
+      input.subagent,
+      sessionCapabilitiesOf(input),
+    );
   }
 
   /**
@@ -753,6 +887,7 @@ export class AgentRegistry {
     createdAt: Date,
     persisted?: PersistedSessionInfo,
     subagent?: SubagentLink,
+    capabilities?: SessionCapabilities,
   ): Promise<RegistryEntry> {
     if (this.entries.has(session.sessionId)) {
       throw new ApiError(409, 'session_active', `Session ${session.sessionId} is already active`);
@@ -768,6 +903,7 @@ export class AgentRegistry {
       persisted,
       toolStartTimes: new Map(),
       ...(subagent === undefined ? {} : { subagent }),
+      ...(capabilities === undefined ? {} : { capabilities }),
     };
     // 子会话继承父会话当前的任务绑定：这样它的 run/token 也会算在那条任务头上。
     if (subagent !== undefined) {
@@ -1117,10 +1253,12 @@ export class AgentRegistry {
     const payload = { type: 'task_updated' as const, task };
     if (task.sessionId !== undefined) {
       const entry = this.entries.get(task.sessionId);
-      if (entry) this.publish(entry, payload);
+      // 关掉任务能力的会话不推任务事件（前端面板也按能力位隐藏）。
+      if (entry && entry.capabilities?.tasks !== false) this.publish(entry, payload);
       return;
     }
     for (const entry of this.entries.values()) {
+      if (entry.capabilities?.tasks === false) continue;
       if (task.cwd === undefined || entry.cwd === task.cwd) this.publish(entry, payload);
     }
   }
@@ -1133,7 +1271,8 @@ export class AgentRegistry {
   announceRecovery(sessionId: string, items: TaskRecoveryItem[]): void {
     if (items.length === 0) return;
     const entry = this.entries.get(sessionId);
-    if (entry) this.publish(entry, { type: 'task_recovery_required', tasks: items });
+    if (entry && entry.capabilities?.tasks !== false)
+      this.publish(entry, { type: 'task_recovery_required', tasks: items });
   }
 
   /** 该会话当前是否有 SSE 订阅者（用来判断“是不是首个连接”）。 */
@@ -1402,6 +1541,8 @@ export class AgentRegistry {
 
   private announcePlan(plan: PlanView): void {
     const entry = this.entries.get(plan.sessionId);
-    if (entry) this.publish(entry, { type: 'plan_updated', plan });
+    // 计划是任务域的受控视图：任务能力关掉时一并停推。
+    if (entry && entry.capabilities?.tasks !== false)
+      this.publish(entry, { type: 'plan_updated', plan });
   }
 }

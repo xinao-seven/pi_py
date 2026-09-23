@@ -2,14 +2,16 @@
  * 会话预设（Preset）持久化服务。
  *
  * 中文说明：预设是"新会话的一组初始配置"，包含系统提示词、可用工具、上下文
- * 压缩策略、默认模型与思考等级。用户可在设置里增删改自定义预设；内置的
- * coding-agent 预设（保留 SDK 默认提示词与默认工具集）由 list() 合成返回，
- * 不落盘、不可改删。
+ * 压缩策略、默认模型与思考等级，以及**会话能力开关**（Plan / 审批 / 提问 /
+ * 子 agent / 任务面板 / 观测钩子 / 文件扩展）。用户可在设置里增删改自定义预设；
+ * 内置预设（coding-agent 与极简（原版 pi））由 list() 合成返回，不落盘、不可改删。
  *
  * 设计要点：
  * - 与 WorkspaceService/ModelConfigService 一致：读到 `~/.pi/agent/node-server-presets.json`，
  *   原子写（临时文件 + rename），读取/解析失败静默返回空；
  * - 磁盘只存自定义预设（无 builtin 字段）；list() 把内置预设拼在最前；
+ * - 兼容旧文件：缺 capabilities / toolNames 为 null / compaction 为 null 都能读，
+ *   缺省能力按"全开"处理（与改动前的行为一致）；
  * - 校验在写方向做（parsePresetInput），失败抛 ApiError 422，前端据此展示错误。
  */
 
@@ -25,6 +27,12 @@ import { ApiError } from '../errors.js';
 /** 内置预设 id（保留 SDK 默认提示词与工具集，不可改删）。 */
 export const BUILTIN_PRESET_ID = 'coding-agent';
 
+/** 内置「极简（原版 pi）」预设 id：什么都不加，只留 SDK 原生行为。 */
+export const MINIMAL_PRESET_ID = 'minimal';
+
+/** 内置预设 id 集合（都不可改删）。 */
+const BUILTIN_PRESET_IDS: ReadonlySet<string> = new Set([BUILTIN_PRESET_ID, MINIMAL_PRESET_ID]);
+
 /** 预设里的上下文压缩策略（对应 SDK 的 CompactionSettings 数值）。 */
 export interface PresetCompaction {
   enabled: boolean;
@@ -32,12 +40,39 @@ export interface PresetCompaction {
   reserveTokens: number;
 }
 
+/**
+ * 预设里的会话能力开关。
+ * 中文说明：字段名贴近用户概念（plan / subagent / tasks）；前端在创建会话时
+ * 把它映射成 `CreateSessionInput.extensions`（plan→planMode）。
+ */
+export interface PresetCapabilities {
+  plan: boolean; // Plan 模式（计划工具 + 规划期只读）
+  approval: boolean; // 危险命令人工审批
+  questions: boolean; // 向用户提问（ask_user）
+  subagent: boolean; // 子任务委派（subagent 工具）
+  tasks: boolean; // 任务面板/任务域（Plan 依赖它）
+  observability: boolean; // 平台观测钩子（provider 层只读）
+  fileExtensions: boolean; // 是否加载用户级/工作区级文件扩展
+}
+
+/** 缺省能力：全开（与 M0–M5 的现状一致，旧预设零迁移）。 */
+const DEFAULT_CAPABILITIES: PresetCapabilities = {
+  plan: true,
+  approval: true,
+  questions: true,
+  subagent: true,
+  tasks: true,
+  observability: true,
+  fileExtensions: true,
+};
+
 /** 创建/更新预设的输入（provider/modelId/thinkingLevel 空串表示"未指定"）。 */
 export interface PresetInput {
   name: string;
   systemPrompt: string; // '' = 用 SDK 默认系统提示词
-  toolNames: string[]; // [] = 无工具
-  compaction: PresetCompaction;
+  toolNames: string[] | null; // null = SDK 默认发现（不限制白名单）；[] = 无工具
+  compaction: PresetCompaction | null; // null = 不覆盖设置（用 SDK/设置解析）
+  capabilities: PresetCapabilities; // 会话能力开关
   provider: string;
   modelId: string;
   thinkingLevel: string;
@@ -66,10 +101,39 @@ const BUILTIN_CODING_AGENT: SessionPreset = {
   systemPrompt: '',
   toolNames: ['read', 'bash', 'edit', 'write'],
   compaction: { ...DEFAULT_COMPACTION_SETTINGS },
+  capabilities: { ...DEFAULT_CAPABILITIES },
   provider: '',
   modelId: '',
   thinkingLevel: '',
   mcpServers: null,
+};
+
+/**
+ * 内置「极简（原版 pi）」预设：什么都不加，让会话退化成原版 pi。
+ * 中文说明：所有平台能力关闭 + 不限制工具白名单（SDK 自己发现）+ 不覆盖压缩与
+ * 系统提示词 + 禁用 MCP + 不加载用户文件扩展。代价是它与 CLI 不再完全一致
+ * （同一个会话在 CLI 里用户扩展生效），取舍写在 docs/node-preset-capabilities.md。
+ */
+const BUILTIN_MINIMAL: SessionPreset = {
+  id: MINIMAL_PRESET_ID,
+  name: '极简（原版 pi）',
+  builtin: true,
+  systemPrompt: '',
+  toolNames: null,
+  compaction: null,
+  capabilities: {
+    plan: false,
+    approval: false,
+    questions: false,
+    subagent: false,
+    tasks: false,
+    observability: false,
+    fileExtensions: false,
+  },
+  provider: '',
+  modelId: '',
+  thinkingLevel: '',
+  mcpServers: [],
 };
 
 export class PresetService {
@@ -79,10 +143,14 @@ export class PresetService {
     this.path = join(agentDir, 'node-server-presets.json');
   }
 
-  /** 列表 = 内置 coding-agent（合成） + 磁盘上的自定义预设。 */
+  /** 列表 = 内置预设（合成） + 磁盘上的自定义预设。 */
   async list(): Promise<SessionPreset[]> {
     const stored = await this.read();
-    return [BUILTIN_CODING_AGENT, ...stored.map((preset) => ({ ...preset, builtin: false }))];
+    return [
+      BUILTIN_CODING_AGENT,
+      BUILTIN_MINIMAL,
+      ...stored.map((preset) => ({ ...preset, builtin: false })),
+    ];
   }
 
   /** 新建自定义预设。 */
@@ -96,7 +164,7 @@ export class PresetService {
 
   /** 更新自定义预设；内置预设拒绝修改。 */
   async update(id: string, input: unknown): Promise<SessionPreset> {
-    if (id === BUILTIN_PRESET_ID) {
+    if (BUILTIN_PRESET_IDS.has(id)) {
       throw new ApiError(400, 'builtin_preset', 'The built-in preset cannot be modified');
     }
     const validated = parsePresetInput(input);
@@ -105,14 +173,15 @@ export class PresetService {
     if (index < 0) {
       throw new ApiError(404, 'preset_not_found', `Preset ${id} was not found`);
     }
-    stored[index] = { id, ...validated };
+    // spread 原记录：写入时保留我们不认识的字段（磁盘上的文件可能被更高版本写过）。
+    stored[index] = { ...stored[index], id, ...validated };
     await this.write(stored);
     return { id, ...validated, builtin: false };
   }
 
   /** 删除自定义预设；内置预设拒绝删除。 */
   async delete(id: string): Promise<void> {
-    if (id === BUILTIN_PRESET_ID) {
+    if (BUILTIN_PRESET_IDS.has(id)) {
       throw new ApiError(400, 'builtin_preset', 'The built-in preset cannot be deleted');
     }
     const stored = await this.read();
@@ -130,7 +199,11 @@ export class PresetService {
       const presets =
         value && typeof value === 'object' ? (value as { presets?: unknown }).presets : undefined;
       if (!Array.isArray(presets)) return [];
-      return presets.filter(isStoredPreset);
+      // 读时归一化：旧文件没有 capabilities / 可能缺字段，parsePresetInput 会补默认值，
+      // 保证 API 返回的每个预设形状一致；spread 原记录以保留不认识的字段。
+      return presets
+        .filter(isStoredPreset)
+        .map((preset) => ({ ...preset, ...parsePresetInput(preset) }));
     } catch {
       return [];
     }
@@ -155,6 +228,7 @@ function parsePresetInput(value: unknown): PresetInput {
   const systemPrompt = typeof value.systemPrompt === 'string' ? value.systemPrompt : '';
   const toolNames = parseToolNames(value.toolNames);
   const compaction = parseCompaction(value.compaction);
+  const capabilities = parseCapabilities(value.capabilities);
   const provider = optionalString(value.provider);
   const modelId = optionalString(value.modelId);
   // provider 与 modelId 必须成对：只给一个会导致模型解析错误。
@@ -170,6 +244,7 @@ function parsePresetInput(value: unknown): PresetInput {
     systemPrompt,
     toolNames,
     compaction,
+    capabilities,
     provider,
     modelId,
     thinkingLevel,
@@ -182,13 +257,52 @@ function optionalString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** 工具白名单：非空字符串数组并去重（未知工具名由 SDK 静默忽略）。 */
-function parseToolNames(value: unknown): string[] {
-  if (value === undefined) return [];
+/**
+ * 工具白名单：null/缺省 = SDK 默认发现（不限制白名单）；
+ * 非空字符串数组 = 只允许这些工具；空数组 = 无工具。
+ */
+function parseToolNames(value: unknown): string[] | null {
+  if (value === undefined || value === null) return null;
   if (!Array.isArray(value) || value.some((name) => typeof name !== 'string' || !name.trim())) {
-    throw new ApiError(422, 'validation_error', 'toolNames must be an array of strings');
+    throw new ApiError(422, 'validation_error', 'toolNames must be null or an array of strings');
   }
   return [...new Set(value.map((name) => name.trim()))];
+}
+
+/** 能力开关的合法键（与 PresetCapabilities 一一对应）。 */
+const CAPABILITY_KEYS = [
+  'plan',
+  'approval',
+  'questions',
+  'subagent',
+  'tasks',
+  'observability',
+  'fileExtensions',
+] as const;
+
+/**
+ * 会话能力开关：缺省 = 全开（与改动前行为一致，旧预设零迁移）。
+ * 中文说明：`plan` 依赖 `tasks`——Plan 是 `origin='plan'` 任务的受控视图，
+ * 关掉任务域后它没有任何落点，所以在写入方向直接 422，而不是运行时静默降级。
+ */
+function parseCapabilities(value: unknown): PresetCapabilities {
+  if (value === undefined || value === null) return { ...DEFAULT_CAPABILITIES };
+  if (!isObject(value)) {
+    throw new ApiError(422, 'validation_error', 'capabilities must be an object');
+  }
+  const result: PresetCapabilities = { ...DEFAULT_CAPABILITIES };
+  for (const key of CAPABILITY_KEYS) {
+    const item = value[key];
+    if (item === undefined) continue;
+    if (typeof item !== 'boolean') {
+      throw new ApiError(422, 'validation_error', `capabilities.${key} must be a boolean`);
+    }
+    result[key] = item;
+  }
+  if (result.plan && !result.tasks) {
+    throw new ApiError(422, 'validation_error', 'capabilities.plan requires capabilities.tasks');
+  }
+  return result;
 }
 
 /**
@@ -203,8 +317,9 @@ function parseMcpServers(value: unknown): string[] | null {
   return [...new Set(value.map((name) => name.trim()))];
 }
 
-/** 压缩策略：enabled 布尔，keepRecentTokens/reserveTokens 正整数。 */
-function parseCompaction(value: unknown): PresetCompaction {
+/** 压缩策略：null = 不覆盖设置；否则 enabled 布尔，keepRecentTokens/reserveTokens 正整数。 */
+function parseCompaction(value: unknown): PresetCompaction | null {
+  if (value === undefined || value === null) return null;
   if (!isObject(value)) {
     throw new ApiError(422, 'validation_error', 'compaction must be an object');
   }
