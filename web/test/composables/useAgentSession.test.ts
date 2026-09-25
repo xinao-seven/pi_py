@@ -7,11 +7,12 @@
  * （只有刷新页面走 `pendingQuestion` 状态快照才看得到）。
  * 断言的是 ChatWindow 里 `v-if="pendingQuestion"` 读的那个字段，所以组件层不必再重测一遍。
  */
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { defineComponent, ref } from 'vue';
 
 import { useAgentSession } from '@/composables/useAgentSession';
 import { messageText } from '@/lib/agent-events';
+import type { SessionPreset } from '@/types';
 
 const api = vi.hoisted(() => ({
   createAgent: vi.fn(),
@@ -78,13 +79,13 @@ const PENDING_QUESTION = {
   questions: [{ id: 'q1', question: '继续吗？', options: ['继续', '停'] }],
 };
 
-function mountHost() {
+function mountHost(sessionId: string | null = SESSION_ID) {
   let session: ReturnType<typeof useAgentSession> | undefined;
   const wrapper = mount(
     defineComponent({
       setup() {
         session = useAgentSession({
-          sessionId: ref(SESSION_ID),
+          sessionId: ref(sessionId),
           newSessionCwd: ref('/tmp/workspace'),
         });
         return () => null;
@@ -227,5 +228,94 @@ describe('useAgentSession 的流式增量合并', () => {
 
     sse.close();
     wrapper.unmount();
+  });
+});
+
+describe('useAgentSession 的预设能力透传', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApiDefaults();
+    // 新建会话成功后要接事件流：给一个可控流，避免 connectEvents 炸掉。
+    const sse = controllableStream();
+    api.fetchAgentEvents.mockResolvedValue({ ok: true, body: sse.stream });
+    api.createAgent.mockResolvedValue({
+      sessionId: SESSION_ID,
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+        mcp: false,
+      },
+    });
+  });
+
+  it('把极简预设映射成 extensions，并在 null 模式下省略 toolNames/compaction', async () => {
+    const { session } = mountHost(null);
+    await flushPromises();
+
+    const minimal: SessionPreset = {
+      id: 'minimal',
+      name: '极简（原版 pi）',
+      builtin: true,
+      systemPrompt: '',
+      toolNames: null,
+      compaction: null,
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+      },
+      provider: '',
+      modelId: '',
+      thinkingLevel: '',
+      mcpServers: [],
+    };
+    session.applyPreset(minimal);
+
+    await session.send('你好');
+
+    const payload = api.createAgent.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.extensions).toEqual({
+      planMode: false,
+      approval: false,
+      questions: false,
+      subagents: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+    });
+    expect(payload.mcpServers).toEqual([]);
+    // null = 不限制白名单 / 不覆盖设置：请求里干脆不带这两个字段。
+    expect(payload).not.toHaveProperty('toolNames');
+    expect(payload).not.toHaveProperty('compaction');
+    // 能力位写进状态：面板据此隐藏。
+    expect(session.sessionCapabilities.value).toMatchObject({ tasks: false, mcp: false });
+  });
+
+  it('默认能力全开时也发一份 extensions（显式优于隐式）', async () => {
+    const { session } = mountHost(null);
+    await flushPromises();
+
+    await session.send('你好');
+
+    const payload = api.createAgent.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.extensions).toEqual({
+      planMode: true,
+      approval: true,
+      questions: true,
+      subagents: true,
+      tasks: true,
+      observability: true,
+      fileExtensions: true,
+    });
+    expect(payload.toolNames).toEqual(['read', 'bash', 'edit', 'write']);
   });
 });

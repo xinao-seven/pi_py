@@ -474,7 +474,12 @@ const CASES = [
         { stopReason: 'toolUse' },
       ),
       fauxAssistantMessage(
-        [fauxToolCall('submit_plan', { title: '重构 Plan 的缓存策略', steps: [{ title: '一步就够' }] })],
+        [
+          fauxToolCall('submit_plan', {
+            title: '重构 Plan 的缓存策略',
+            steps: [{ title: '一步就够' }],
+          }),
+        ],
         { stopReason: 'toolUse' },
       ),
       fauxAssistantMessage('计划已提交，等你确认。'),

@@ -471,7 +471,9 @@ describe('工具集恒定（缓存前缀稳定）', () => {
     const { service, pi } = makeHarness();
     const before = pi.getActiveTools();
     // 计划工具与写工具从第一轮就都在（生产里由预设白名单并入）。
-    expect(before).toEqual(expect.arrayContaining(['propose_plan', 'submit_plan', 'edit', 'write']));
+    expect(before).toEqual(
+      expect.arrayContaining(['propose_plan', 'submit_plan', 'edit', 'write']),
+    );
 
     service.startPlanning('session-1', 'P');
     expect(pi.getActiveTools()).toEqual(before);

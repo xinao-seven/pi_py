@@ -15,14 +15,51 @@ Node 后端使用原版 Pi SDK 的 `DefaultResourceLoader` 加载工具和事件
 每个会话创建/打开、`reload_resources` 或 MCP 配置变更后都会重跑这些工厂：
 
 ```ts
-// src/services/agent-registry.ts  loader(cwd, systemPrompt, extensions)
+// src/services/agent-registry.ts  loader(cwd, systemPrompt, inline)
+// inline = inlineCapabilities(...)：由 CreateSessionInput.extensions 解析出的开关快照
 const factories: InlineExtension[] = [];
-if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
-if (extensions?.approval !== false && this.approvals)
-  factories.push(this.approvals.buildExtension());
-if (this.mcpService) factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals));
-new DefaultResourceLoader({ cwd, agentDir: this.agentDir, extensionFactories: factories });
+if (inline.planMode && this.plans) factories.push(this.plans.buildExtension());
+if (inline.approval && this.approvals) factories.push(this.approvals.buildExtension());
+if (inline.observability && this.observability) factories.push(this.observability.buildExtension());
+if (inline.tasks && this.taskRecovery) factories.push(this.taskRecovery.buildExtension());
+if (inline.questions && this.questions) factories.push(this.questions.buildExtension());
+if (registerSubagents && this.subagents) factories.push(this.subagents.buildExtension({ depth }));
+if (this.mcpService && !(inline.mcpServers !== null && inline.mcpServers.length === 0))
+  factories.push(buildMcpExtension(this.mcpService, cwd, this.approvals, inline.mcpServers));
+new DefaultResourceLoader({
+  cwd,
+  agentDir: this.agentDir,
+  extensionFactories: factories,
+  // 极简模式：连用户级/工作区级的文件扩展都不发现
+  ...(inline.fileExtensions ? {} : { noExtensions: true }),
+  // 只过滤**本次真的注册了内联实现**的同名文件扩展（关掉 Plan 时官方 plan-mode 照常加载）
+  ...(owned.length === 0
+    ? {}
+    : { extensionsOverride: (base) => dropInlineOwnedExtensions(base, owned).result }),
+});
 ```
+
+### 能力开关（预设 → 会话）
+
+`CreateSessionInput.extensions` 的每个键都可以显式关掉（**未指定 = 开启**，旧调用方零迁移）：
+
+| 开关 | 关掉后的效果 |
+| --- | --- |
+| `approval` | 不注册审批扩展（危险命令不再挂起） |
+| `planMode` | 不注册 Plan 扩展、工具白名单不并入计划工具 |
+| `questions` | 不注册 `ask_user` |
+| `subagents` | 不注册 `subagent`（子会话到深度上限本来就不注册） |
+| `tasks` | 不注入任务恢复扩展；`announceTask/announceRecovery/announcePlan` 也不再向该会话推送 |
+| `observability` | 不注册 provider 层观测钩子（账本记账不受影响） |
+| `fileExtensions` | 传 `noExtensions: true`，不发现用户级/工作区级文件扩展（极简模式） |
+
+预设把这一组开关以用户概念的字段名存成 `capabilities`（`plan` / `subagent` / `tasks` …），
+前端在创建会话时用 `web/src/lib/preset-capabilities.ts` 的 `capabilitiesToExtensions()` 映射。
+完整契约与取舍见 [`docs/node-preset-capabilities.md`](node-preset-capabilities.md)。
+
+注意：**开关解析（`inlineCapabilities`）只看入参，不看服务是否装配**——能力位同时也是
+`POST /api/agent/new` 返回给前端的那一份；服务是否存在属于部署细节，不进入契约。
+`loader()` 里再叠加 `this.plans` 一类的存在判断与子会话深度判断。
 
 - `ToolApprovalBroker.buildExtension()`：注册 `tool_call` 钩子，命中危险命令规则时调用
   `requestApproval()` 挂起等待决定（`src/services/tool-approval.ts`）。
@@ -43,13 +80,22 @@ new DefaultResourceLoader({ cwd, agentDir: this.agentDir, extensionFactories: fa
 总线）传递 JSON 载荷，并把通道名和 payload 当作版本化契约。用户扩展属于个人扩展生态，不在本
 仓库文档的扩展清单内。
 
+两个例外需要知道：
+
+1. **同名接管**：被内联实现接管的目录名（`plan-mode` / `subagent`）会在本服务的加载结果里被
+   过滤掉（`dropInlineOwnedExtensions`，只影响本服务，不碰磁盘）；但这个过滤**只在对应内联能力
+   真的注册时才生效**——关掉 `planMode` 后，用户装的官方 `plan-mode` 扩展照常加载。
+2. **极简模式**（预设 `minimal`，`fileExtensions: false`）：传 `noExtensions: true`，连用户级与
+   工作区级扩展都不发现，会话里只剩 SDK 内置工具与显式装配的内联扩展。
+
 ## 如何接入新能力
 
 1. 在 `node-pi/server/src/services/<feature>.ts` 写一个类，提供 `buildExtension(): InlineExtension`。
 2. 工厂内可注册工具（`pi.registerTool()`）或订阅生命周期/工具事件（`pi.on()`）；需要按会话隔离的
    状态在工厂内创建（参考 `PlanMachine`）。
 3. 在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 中按顺序注册；如需预设开关，
-   通过 `CreateSessionInput.extensions.<feature>` 透传，默认开启。
+   通过 `CreateSessionInput.extensions.<feature>` 透传（在 `inlineCapabilities()` 里解析，默认开启），
+   并在 `sessionCapabilitiesOf()` 里补上对应的对外能力位。
 4. 为规则、输入和结果写纯单元测试；用假 `pi` 覆盖成功、拒绝、超时与 `AbortSignal`/会话关闭路径。
 5. 同步更新 `docs/node-extension-system.md` 与相关功能文档。
 

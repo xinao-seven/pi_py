@@ -145,6 +145,10 @@ WHERE id = :id AND revision = :expectedRevision
 
 ## 7. 前端面板（`TaskPanel.vue`）
 
+> 面板位置与合并方式已在后续改动中变化：`TaskPanel.vue` 与 `PlanProgress.vue` 已合并为
+> `TaskPlanPanel.vue`（右上角按钮点开的悬浮面板），本节描述的行为契约不变。
+> 详见 [`docs/web-task-plan-panel.md`](web-task-plan-panel.md)。
+
 放在 `PlanProgress` 旁的同一条 strip（输入框上方）：
 
 - 无任务：内联「新建任务」（标题 + 目标）；

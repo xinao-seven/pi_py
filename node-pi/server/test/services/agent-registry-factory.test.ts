@@ -59,6 +59,7 @@ describe('OriginalPiSessionFactory', () => {
     // M4：预设白名单会并入内联扩展注册的工具（SDK 的 tools 是可用工具白名单，
     // 不在名单里的工具连调用都失败 —— 计划工具必须并进去）。
     // 顺序即请求里的工具数组顺序：跟随 PLAN_TOOL_NAMES，会话生命周期内不变（缓存前缀稳定）。
+    // M5：`subagent` 同样会并入（之前漏并，导致带白名单的预设会话里调不动它）。
     expect(options.tools).toEqual([
       'propose_plan',
       'submit_plan',
@@ -66,6 +67,7 @@ describe('OriginalPiSessionFactory', () => {
       'complete_step',
       'block_step',
       'ask_user',
+      'subagent',
     ]);
     // tools 是「可用工具白名单」：ask_user 属于通用交互，必须一并并入。
     expect(options.thinkingLevel).toBe('off');
@@ -147,5 +149,65 @@ describe('OriginalPiSessionFactory', () => {
 
     await factory.create({ cwd: '/tmp/workspace', extensions: { questions: false } });
     expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(0);
+  });
+
+  it('gates each inline tool by its capability switch', async () => {
+    const factory = new OriginalPiSessionFactory(agentDir);
+    const toolsOf = (): string[] | undefined => {
+      const calls = mocks.createAgentSession.mock.calls;
+      return (calls[calls.length - 1][0] as Record<string, unknown>).tools as string[] | undefined;
+    };
+
+    await factory.create({ cwd: '/tmp/workspace', toolNames: [] });
+    expect(toolsOf()).toEqual([
+      'propose_plan',
+      'submit_plan',
+      'update_plan',
+      'complete_step',
+      'block_step',
+      'ask_user',
+      'subagent',
+    ]);
+
+    // 三项都关掉时，白名单里不再并入任何内联工具。
+    await factory.create({
+      cwd: '/tmp/workspace',
+      toolNames: [],
+      extensions: { planMode: false, questions: false, subagents: false },
+    });
+    expect(toolsOf()).toEqual([]);
+
+    // toolNames 缺省 = SDK 默认发现（不传 tools 选项），不受能力开关影响。
+    await factory.create({ cwd: '/tmp/workspace', extensions: { planMode: false } });
+    expect(toolsOf()).toBeUndefined();
+  });
+
+  it('suppresses file extension discovery in minimal mode', async () => {
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({ cwd: '/tmp/workspace', extensions: { fileExtensions: false } });
+    expect(loaderOptions?.noExtensions).toBe(true);
+    expect(loaderOptions?.extensionFactories).toEqual([]);
+
+    // 默认：不传 noExtensions，SDK 照常发现用户级/工作区级扩展。
+    await factory.create({ cwd: '/tmp/workspace' });
+    expect(loaderOptions?.noExtensions).toBeUndefined();
+  });
+
+  it('skips the MCP extension when the preset disables every server', async () => {
+    const mcpService = {
+      ensure: vi.fn(async () => undefined),
+      toolsFor: vi.fn(() => [{ name: 'mcp__demo', description: '', parameters: {} }]),
+      approvalRequired: vi.fn(() => false),
+    };
+    const factory = new OriginalPiSessionFactory(agentDir, mcpService as never);
+
+    await factory.create({ cwd: '/tmp/workspace', mcpServers: [] });
+    expect(loaderOptions?.extensionFactories).toEqual([]);
+    expect(mcpService.toolsFor).not.toHaveBeenCalled();
+
+    // null/缺省 = 全部 MCP：扩展照旧注册。
+    await factory.create({ cwd: '/tmp/workspace' });
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
   });
 });

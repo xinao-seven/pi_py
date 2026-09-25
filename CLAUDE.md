@@ -132,7 +132,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 ## 扩展系统（内联扩展）
 
 - 仓库内的工具审批、Plan 模式与 MCP 工具都是**内联扩展**：各服务类（`ToolApprovalBroker` / `PlanModeService` / `buildMcpExtension`）提供 `buildExtension(): InlineExtension`，由 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 注入每个会话（闭包直连服务单例，无事件总线桥接）。
-- 按预设开关动态启用/关闭：`CreateSessionInput.extensions.{approval,planMode}`，默认开启；`loader()` 里按 `plan → approval → mcp` 顺序注册（规划期先拦，避免先弹审批框）。
+- 按预设开关动态启用/关闭：`CreateSessionInput.extensions` 的 7 个键（`approval` / `planMode` / `questions` / `subagents` / `tasks` / `observability` / `fileExtensions`），默认开启（未指定 = 开启，旧预设零迁移）；`loader()` 里按 `plan → approval → mcp` 顺序注册（规划期先拦，避免先弹审批框）。预设把这一组以 `capabilities` 存盘（用户概念字段名），前端 `web/src/lib/preset-capabilities.ts` 负责映射；内置「极简（原版 pi）」预设能力全关 + `noExtensions`（什么都不加），见 `docs/node-preset-capabilities.md`。同名文件扩展的过滤只针对**本次真的注册了内联实现**的目录名，不能一律 drop。
 - 用户级 `~/.pi/agent/extensions/` 与工作区 `.pi/extensions/` 的文件扩展仍由 SDK 自动发现（jiti 隔离，协作需走 `pi.events`）；仓库不再随服务发布文件扩展。
 
 ## 代码规范
@@ -148,7 +148,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
 - 后端形状差异（如分支树：Node 扁平 / Python 嵌套）在 API 层归一化（`web/src/lib/session-tree.ts`），组件只面对一种形状；**任何遍历会话结构的地方一律用显式栈，不用递归**（长会话会爆栈）。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
-- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`PlanProgress.vue`、`TaskPanel.vue`（任务面板）、`ObservabilityPanel.vue`（设置 → 用量）。
+- 关键组件：`ChatWindow.vue`（会话/流式）、`SessionSidebar.vue`、`ToolApprovalDialog.vue`（危险命令确认）、`ModelsConfig.vue`、`McpConfig.vue`、`PresetConfig.vue`、`SkillsConfig.vue`、`TaskPlanPanel.vue`（计划/任务悬浮面板，右上角按钮开关）+ `TaskStepList.vue`（步骤列表，计划/任务两种视角共用）、`ObservabilityPanel.vue`（设置 → 用量）。
 - 主题/声音偏好存 localStorage（`pi.theme` / `pi.sound`），写入 `<html data-theme>`。
 
 ## 关键文档
@@ -169,13 +169,15 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-web-plan-mode.md` | **Plan 模式对外契约**（M4 起：PlanView、五个计划工具、命令表、规划期权限） |
 | `docs/node-plan-mode-m4.md` | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据、已知限制 |
 | `docs/node-plan-cache-stability.md` | **Plan 缓存稳定性 + `propose_plan`**：为什么不再增删工具、注入去抖、模型提议的边界 |
+| `docs/node-preset-capabilities.md` | **预设能力清单 + 「极简（原版 pi）」模式**：7 个能力开关、预设/会话契约、与 CLI 的一致性边界 |
 | `docs/node-question-channel.md` | **向用户提问通道**（`ask_user`）：工具契约、弹窗、SSE/命令、行为取舍 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/node-session-tree-flat.md` | 长会话读取崩溃修复：`GET /api/sessions/:id` 分支树扁平化契约与前端归一化 |
 | `docs/web-observability-panel-scroll.md` | 前端修复：设置 →「用量」面板的高度与滚动契约（滚不动的根因与回归防线） |
 | `docs/web-chat-render-fixes.md` | 前端修复：上下文占用条对比度、Markdown 表格边框/横向滚动、用户消息块内左对齐 |
+| `docs/web-mobile-adaptation.md` | **移动端适配**：窄屏高度预算、按钮不变形的三条规则、安全区与 `dvh` 约定 |
 | `docs/web-stream-coalescing.md` | **前端卡死修复**：流式增量按帧合并渲染 + SSE 重放合并与写缓冲上限（`message_update` 全量快照的 O(n²) 问题） |
-| `docs/sse-streaming-render-pipeline.md` | **SSE 流式渲染全链路**：核心发事件 → 后端 SSE 转发 → 前端规约 → 虚拟列表 → Markdown 上屏 |
+| `docs/web-task-plan-panel.md` | **计划/任务合并为右上角悬浮面板**：合并规则（计划就是任务）、按钮徽标与自动展开时机、组件分工 |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |

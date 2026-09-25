@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **373** / Web **128**，全绿；spike 30 项断言 + eval 11 个用例全过 |
+| 测试基线   | Node 后端 **399** / Web **149**，全绿；spike 全绿（含新增 `spike/08-preset-capabilities.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -504,6 +504,54 @@ Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
 
 ---
 
+### 3.15 计划/任务合并为右上角悬浮面板（已完成，`docs/web-task-plan-panel.md`）
+
+**问题**：`PlanProgress.vue` 与 `TaskPanel.vue` 都钉在输入框上方（同一条 `composer-dock` strip），
+最多占半屏；而且 M4 起「计划就是任务」，模型提交计划后同一条任务会被两个面板渲染两遍。
+
+**修法**：
+
+1. 合并成一个面板：**计划活跃时以计划视角展示它自己的那条任务**，任务区只在会话里还有
+   「不是这条计划」的任务时才出现（`planActive` / `taskSection` 两个 computed 决定，结构上不会重复渲染）。
+2. 从对话框上方挪到聊天头部右上角：按钮「计划/任务」+ 完成计数，点开是**不可拖动**的悬浮面板
+   （锚在头部下方，`z-index: 50`，高于分支条、低于各类弹窗），`Esc` / 点面板外 / 再点按钮收起。
+3. 需要用户动手时按钮点亮；**只有一个自动展开时机**：计划进入 `proposed`（等「确认并执行」）。
+4. 步骤行渲染抽到 `TaskStepList.vue`（`mode: 'plan' | 'task'`），两套视角共用一份副标题与阻塞/删除确认逻辑。
+
+**顺带修掉的缺陷**：旧 `PlanProgress` 在「执行中/已暂停」分支里渲染了「按我的要求调整」按钮
+却没有输入框，`refineText` 恒为空 → 按钮永远 disabled；合并后补上了输入框（提交要求）。
+
+**证据**：Web 140 用例全绿（`TaskPlanPanel.test.ts` 26 例）、`npm run typecheck` / `lint` / `build` 通过。
+
+---
+
+### 3.16 预设能力清单 + 「极简（原版 pi）」模式（已完成，`docs/node-preset-capabilities.md`）
+
+**问题**：预设只能配提示词/工具/压缩/模型/MCP，平台侧的能力（Plan、审批、`ask_user`、`subagent`、
+任务面板、观测钩子、用户文件扩展）**一律无条件开启**；而用户还想要一个「和原版 pi 一模一样、
+什么都不加」的会话。
+
+**修法（已冻结的决策）**：
+
+1. 预设新增 `capabilities`（7 个布尔：`plan` / `approval` / `questions` / `subagent` / `tasks` /
+   `observability` / `fileExtensions`），**未指定 = 开启**（旧预设零迁移）；`POST /api/agent/new`
+   透传为 `extensions` 并在响应里回 `capabilities` 能力位（前端据此隐藏面板）。
+2. `toolNames` 支持 `null`（不限制白名单，SDK 自己发现）、`compaction` 支持 `null`（不覆盖设置）——
+   这两档是「极简」的必要条件；`plan=true` 且 `tasks=false` 直接 422（Plan 是 Task 的视图）。
+3. 新增内置预设 **`minimal`「极简（原版 pi）」**：能力全关 + 工具不限 + 不覆盖压缩 + 禁用 MCP +
+   不加载用户文件扩展（`noExtensions`），只剩 SDK 原生行为；与 `coding-agent` 一样不可改删。
+4. 能力位**不持久化**：它只在创建会话时决定装什么（不需要额外存储）；前端的内存记忆只为少一个
+   空面板，刷新后按「显示」处理。
+
+**顺带修掉的两个既有缺陷**：① `withInlineTools` 漏并 `subagent`，导致带工具白名单的预设会话里
+该工具直接 `not found`；② 同名文件扩展过滤过宽（无论开关都 drop `plan-mode`/`subagent`），
+现在只 drop **本次真的注册了内联实现**的目录。
+
+**证据**：Node 399 用例 / Web 149 用例全绿，新增 `spike/08-preset-capabilities.mjs`（15 项断言，
+真实 SDK + faux provider）；详见 `docs/node-preset-capabilities.md` §8。
+
+---
+
 ## 4. 硬约束速查：与原版 pi 的边界
 
 ```
@@ -823,6 +871,18 @@ web/src/components/ToolCallBlock.vue                分流到委派卡片
 web/src/types/index.ts                              SubagentToolDetails
 ```
 
+### 计划/任务悬浮面板合并（2026-09-11）
+
+```
+web/src/components/TaskPlanPanel.vue   新增：面板内容体（计划区/任务区/恢复块/空态）
+web/src/components/TaskStepList.vue    新增：步骤列表（mode: plan | task 共用行渲染）
+web/src/components/ChatWindow.vue      入口按钮 + 悬浮面板 host + 自动展开/Esc/点外关闭
+web/src/components/PlanProgress.vue    删除（并入 TaskPlanPanel）
+web/src/components/TaskPanel.vue       删除（并入 TaskPlanPanel）
+web/test/components/TaskPlanPanel.test.ts  新增：26 例（替换 PlanProgress/TaskPanel 两份旧测试）
+docs/web-task-plan-panel.md            合并规则与交互契约
+```
+
 ### 长会话修复（分支树扁平化，2026-09-10）
 
 ```
@@ -845,7 +905,38 @@ web/src/types/index.ts        PlanView/PlanStepView/PromptMode、TaskRecoveryIte
 web/src/lib/api.ts            REST 封装（统一解析 ApiError）
 web/src/lib/agent-events.ts   reduceAgentEvent（SSE → 状态规约）
 web/src/composables/useAgentSession.ts   plan/task/recovery 三个独立 ref
-web/src/components/{PlanProgress,TaskPanel,ChatWindow,ChatInput,AgentControls}.vue
+web/src/components/{TaskPlanPanel,TaskStepList,ChatWindow,ChatInput,AgentControls}.vue
+```
+
+---
+
+### 预设能力清单（2026-08-22）
+
+```
+node-pi/server/src/services/preset-service.ts   capabilities / toolNames|null / compaction|null / 内置 minimal
+node-pi/server/src/services/agent-registry.ts   SessionExtensions + inlineCapabilities() + 定向 drop + 广播能力过滤
+node-pi/server/src/routes/agent.ts              extensions 透传 + 响应 capabilities + null 语义
+node-pi/server/spike/08-preset-capabilities.mjs 能力开关端到端（真实 SDK + 临时目录）
+web/src/lib/preset-capabilities.ts              能力映射 + 表单文案 + shouldShowWorkPanel
+docs/node-preset-capabilities.md               契约 / 极简模式定义 / 与 CLI 的边界 / 证据
+```
+
+---
+
+### 移动端适配（2026-08-22）
+
+```
+web/index.html                                 viewport-fit=cover（安全区 env() 生效前提）
+web/src/globals.css                            弹窗铺满 + dvh + config-header/footer 紧凑
+web/src/components/ChatWindow.vue              头部/分支条/消息区/输入区收紧，头部按钮可滚动
+web/src/components/ChatInput.vue               输入区按钮换行，不再被挤压变形
+web/src/components/AgentControls.vue           控制条窄屏尺寸收紧
+web/src/components/MessageView.vue             行间距/正文行高收紧
+web/src/components/MarkdownContent.vue         代码块与表格窄屏紧凑
+web/src/components/TaskPlanPanel.vue           面板头部换行 + 按钮 nowrap
+web/src/components/QuestionDialog.vue          贴底抽屉 + 底部安全区
+web/src/components/AppShell.vue                侧栏底部安全区
+docs/web-mobile-adaptation.md                  三条规则 / 高度预算表 / 已知限制
 ```
 
 ---

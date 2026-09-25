@@ -365,4 +365,42 @@ function submit(): void {
   cursor: not-allowed;
   opacity: 0.5;
 }
+
+@media (max-width: 760px) {
+  /* 窄屏：贴底抽屉式弹窗，四周留白收紧（内容区更高） */
+  .dialog-backdrop {
+    align-items: flex-end;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .question-dialog {
+    width: 100%;
+    gap: 8px;
+    max-height: min(86vh, 86dvh);
+    padding: 12px 13px;
+    border-radius: 10px;
+  }
+
+  /* 选项按钮抬高触摸目标，长选项能正常换行 */
+  .question-option {
+    padding: 8px 9px;
+  }
+
+  /* 底部操作条：警示文字独占一行，按钮不被挤扁也不换行 */
+  .question-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .question-warn {
+    flex: 1 1 100%;
+  }
+
+  .question-cancel,
+  .question-submit {
+    flex: 0 0 auto;
+    min-height: 32px;
+    white-space: nowrap;
+  }
+}
 </style>

@@ -59,7 +59,7 @@ check(
 );
 check(
   '规划期工具列表没变（不因开关计划而失效缓存）',
-  JSON.stringify([...session.getActiveToolNames?.() ?? []].sort()) ===
+  JSON.stringify([...(session.getActiveToolNames?.() ?? [])].sort()) ===
     JSON.stringify([...activeBeforePlan].sort()),
   session.getActiveToolNames?.().join(','),
 );
@@ -108,7 +108,8 @@ check(
   '执行期写工具已放行',
   activeDuringExecution.includes('edit') && activeDuringExecution.includes('write'),
   activeDuringExecution.join(','),
-);check(
+);
+check(
   '执行器取得租约（防双跑）',
   tasks.get(plan.taskId).execution.lease !== undefined,
   `owner=${tasks.get(plan.taskId).execution.lease?.owner}`,
@@ -241,7 +242,11 @@ h.questions.answer(sessionId, pendingQuestion.questionId, {
 });
 await prompted;
 const proposed = plans.state(sessionId);
-check('用户同意后真的开了计划（drafting）', proposed.status === 'drafting', `status=${proposed.status}`);
+check(
+  '用户同意后真的开了计划（drafting）',
+  proposed.status === 'drafting',
+  `status=${proposed.status}`,
+);
 check(
   '计划目标来自工具参数',
   proposed.goal === '把缓存前缀失效的问题修掉',

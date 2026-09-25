@@ -137,6 +137,8 @@ const emit = defineEmits<{
     width: min(86vw, 310px);
     transform: translateX(-102%);
     transition: transform 190ms ease;
+    /* 底部安全区：列表最后一项不被 home 指示条压住 */
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .sidebar--open {

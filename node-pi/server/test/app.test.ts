@@ -137,7 +137,21 @@ describe('Fastify application', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ success: true, sessionId: 'node-test-session' });
+    // 响应新增 capabilities（会话能力位）：前端据此决定计划/任务面板是否出现。
+    expect(response.json()).toEqual({
+      success: true,
+      sessionId: 'node-test-session',
+      capabilities: {
+        plan: true,
+        approval: true,
+        questions: true,
+        subagent: true,
+        tasks: true,
+        observability: true,
+        fileExtensions: true,
+        mcp: true,
+      },
+    });
     expect(registry.state('node-test-session')).toMatchObject({ isStreaming: false });
 
     const [sessions, detail] = await Promise.all([
@@ -291,7 +305,63 @@ describe('Fastify application', () => {
       },
     });
     expect(ok.statusCode).toBe(202);
-    expect(ok.json()).toEqual({ success: true, sessionId: 'node-test-session' });
+    expect(ok.json()).toMatchObject({ success: true, sessionId: 'node-test-session' });
+  });
+
+  it('accepts capability switches and null tool/compaction (= SDK default)', async () => {
+    const app = createApp({ registry: new AgentRegistry(new FakePiSessionFactory()) });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: {
+        cwd: process.cwd(),
+        message: 'hello',
+        // null = 不限制工具白名单 / 不覆盖压缩设置（极简预设）。
+        toolNames: null,
+        compaction: null,
+        mcpServers: [],
+        extensions: {
+          planMode: false,
+          approval: false,
+          questions: false,
+          subagents: false,
+          tasks: false,
+          observability: false,
+          fileExtensions: false,
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      success: true,
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+        mcp: false,
+      },
+    });
+  });
+
+  it('rejects a non-boolean capability switch', async () => {
+    const app = createApp({ registry: new AgentRegistry(new FakePiSessionFactory()) });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: { cwd: process.cwd(), message: 'hello', extensions: { planMode: 'yes' } },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({ error: { code: 'validation_error' } });
   });
 });
 

@@ -21,6 +21,8 @@ import type {
   ObservabilitySummary,
   PresetCompaction,
   SessionDetail,
+  SessionCapabilities,
+  SessionExtensions,
   SessionInfo,
   SessionPreset,
   SessionPresetInput,
@@ -192,18 +194,26 @@ export async function createAgent(input: {
   provider?: string;
   modelId?: string;
   thinkingLevel?: string;
-  toolNames?: string[];
+  /** null = 不限制白名单（SDK 默认发现）；缺省同义。 */
+  toolNames?: string[] | null;
   images?: Array<{ type: 'image'; data: string; mimeType: string }>;
   systemPrompt?: string;
-  compaction?: PresetCompaction;
+  /** null = 不覆盖设置（极简预设）；缺省同义。 */
+  compaction?: PresetCompaction | null;
   mcpServers?: string[] | null;
-}): Promise<string> {
-  // 创建新 Agent 会话并发送首条消息，返回 sessionId
-  const result = await request<{ success: true; sessionId: string }>('/api/agent/new', {
+  /** 会话能力开关（预设 capabilities 的映射结果）。 */
+  extensions?: SessionExtensions;
+}): Promise<{ sessionId: string; capabilities: SessionCapabilities }> {
+  // 创建新 Agent 会话并发送首条消息；响应带回会话能力位（供面板显示）。
+  const result = await request<{
+    success: true;
+    sessionId: string;
+    capabilities: SessionCapabilities;
+  }>('/api/agent/new', {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return result.sessionId;
+  return { sessionId: result.sessionId, capabilities: result.capabilities };
 }
 
 export async function sendAgentCommand(

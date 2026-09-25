@@ -8,7 +8,7 @@ const props = defineProps<{
   catalog: ModelCatalog | null;
   model: ModelRef | null;
   thinkingLevel: string;
-  activeTools: string[];
+  activeTools: string[] | null;
   presets: SessionPreset[];
   selectedPreset: string;
   isNew: boolean;
@@ -21,7 +21,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   modelChange: [model: ModelRef];
   thinkingChange: [level: string];
-  toolsChange: [toolNames: string[]];
+  toolsChange: [toolNames: string[] | null];
   presetChange: [preset: SessionPreset];
   compact: [];
 }>();
@@ -42,7 +42,9 @@ const contextTitle = computed(() => {
   const tokens = props.contextUsage?.tokens;
   const label = contextPercentLabel.value;
   if (!tokens) return '上下文占用未知';
-  return label ? `${tokens.toLocaleString()} tokens · ${label}` : `${tokens.toLocaleString()} tokens`;
+  return label
+    ? `${tokens.toLocaleString()} tokens · ${label}`
+    : `${tokens.toLocaleString()} tokens`;
 });
 const availableThinkingLevels = computed(() =>
   // 当前模型支持的思考档位（来自模型目录）
@@ -51,12 +53,12 @@ const availableThinkingLevels = computed(() =>
     : ['off'],
 );
 const toolPreset = computed(() => {
-  // 由当前激活工具集合推导预设：空=none，全部=full，否则=default
-  if (props.activeTools.length === 0) return 'none';
+  // 由当前激活工具集合推导预设：null=全部（SDK 默认发现），空=none，完整=full，其余=default
+  const tools = props.activeTools;
+  if (tools === null) return 'all';
+  if (tools.length === 0) return 'none';
   if (
-    ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'].every((name) =>
-      props.activeTools.includes(name),
-    )
+    ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'].every((name) => tools.includes(name))
   ) {
     return 'full';
   }
@@ -71,9 +73,10 @@ function changeModel(event: Event): void {
 }
 
 function changeTools(event: Event): void {
-  // 按预设切换工具集合
+  // 按预设切换工具集合；null = 不限制白名单（仅新会话可选）
   const preset = (event.target as HTMLSelectElement).value;
-  if (preset === 'none') emit('toolsChange', []);
+  if (preset === 'all') emit('toolsChange', null);
+  else if (preset === 'none') emit('toolsChange', []);
   else if (preset === 'full') {
     emit('toolsChange', ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']);
   } else {
@@ -129,9 +132,10 @@ function changePreset(event: Event): void {
     <label class="control-field">
       <span>工具</span>
       <select :value="toolPreset" :disabled="running" @change="changeTools">
-        <option value="none">关闭</option>
-        <option value="default">默认</option>
+        <option value="all" :disabled="!isNew">全部（SDK 默认）</option>
         <option value="full">完整</option>
+        <option value="default">默认</option>
+        <option value="none">关闭</option>
       </select>
     </label>
 
@@ -298,5 +302,36 @@ function changePreset(event: Event): void {
   color: var(--muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  /*
+   * 窄屏控制条：本类已是 flex + overflow-x:auto + 子项 flex:0 0 auto，
+   * 天生不会被挤压变形；这里只把尺寸收紧，让同一屏能看到更多控件。
+   */
+  .agent-controls {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .control-field > span {
+    padding-left: 6px;
+    font-size: 8px;
+  }
+
+  .control-field select {
+    max-width: 108px;
+    padding: 5px 6px 5px 4px;
+  }
+
+  .compact-button {
+    min-height: 28px;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+
+  .context-meter {
+    width: 40px;
+  }
 }
 </style>

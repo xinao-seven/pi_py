@@ -10,7 +10,18 @@ import {
   getPresets,
   updatePreset,
 } from '@/lib/api';
-import type { ModelCatalog, PresetCompaction, SessionPreset, SessionPresetInput } from '@/types';
+import type {
+  ModelCatalog,
+  PresetCapabilities,
+  PresetCompaction,
+  SessionPreset,
+  SessionPresetInput,
+} from '@/types';
+import {
+  CAPABILITY_FIELDS,
+  DEFAULT_CAPABILITIES,
+  summarizeCapabilities,
+} from '@/lib/preset-capabilities';
 
 const props = withDefaults(defineProps<{ embedded?: boolean; cwd?: string | null }>(), {
   embedded: false,
@@ -18,15 +29,17 @@ const props = withDefaults(defineProps<{ embedded?: boolean; cwd?: string | null
 });
 const emit = defineEmits<{ close: [] }>();
 
-// 压缩策略档位 → 具体 token 数值（与后端 SDK 的 CompactionSettings 语义一致）。
-type CompactionStrategy = 'auto' | 'off' | 'aggressive' | 'conservative';
-const COMPACTION_STRATEGIES: Record<CompactionStrategy, PresetCompaction> = {
+// 压缩策略档位 → 具体 token 数值（与后端 SDK 的 CompactionSettings 语义一致）；
+// follow = 不覆盖设置（后端 compaction: null），即用 SDK/设置里的值。
+type CompactionStrategy = 'follow' | 'auto' | 'off' | 'aggressive' | 'conservative';
+const COMPACTION_STRATEGIES: Record<Exclude<CompactionStrategy, 'follow'>, PresetCompaction> = {
   auto: { enabled: true, keepRecentTokens: 20000, reserveTokens: 16384 },
   off: { enabled: false, keepRecentTokens: 20000, reserveTokens: 16384 },
   aggressive: { enabled: true, keepRecentTokens: 8000, reserveTokens: 16384 },
   conservative: { enabled: true, keepRecentTokens: 40000, reserveTokens: 16384 },
 };
 const STRATEGY_LABELS: Record<CompactionStrategy, string> = {
+  follow: '跟随设置（不覆盖）',
   auto: '自动（保留 20000 tokens）',
   off: '关闭',
   aggressive: '激进（保留 8000 tokens）',
@@ -38,17 +51,23 @@ const BUILTIN_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 // MCP 服务选择模式：all = 全部（后端默认）；none = 禁用；custom = 按名单勾选。
 type McpMode = 'all' | 'none' | 'custom';
 
+// 工具选择模式：all = 不限制白名单（SDK 默认发现，仅新会话生效）；
+// list = 自选清单；none = 无工具。
+type ToolMode = 'all' | 'list' | 'none';
+
 interface PresetDraft {
   id: string | null; // null = 新建
   name: string;
   systemPrompt: string;
-  toolNames: string[];
+  toolMode: ToolMode;
+  toolNames: string[]; // toolMode = 'list' 时生效
   strategy: CompactionStrategy;
   provider: string; // '' = 默认模型
   modelId: string;
   thinkingLevel: string; // '' = 默认思考等级
   mcpMode: McpMode;
   mcpServers: string[]; // mode = custom 时生效
+  capabilities: PresetCapabilities; // 会话能力开关
 }
 
 const presets = ref<SessionPreset[]>([]);
@@ -81,16 +100,23 @@ async function load(): Promise<void> {
 }
 
 function strategyOf(preset: SessionPreset): CompactionStrategy {
+  if (preset.compaction === null) return 'follow';
   return (
-    (Object.keys(COMPACTION_STRATEGIES) as CompactionStrategy[]).find((key) => {
+    (Object.keys(COMPACTION_STRATEGIES) as Exclude<CompactionStrategy, 'follow'>[]).find((key) => {
       const value = COMPACTION_STRATEGIES[key];
       return (
-        value.enabled === preset.compaction.enabled &&
-        value.keepRecentTokens === preset.compaction.keepRecentTokens &&
-        value.reserveTokens === preset.compaction.reserveTokens
+        value.enabled === preset.compaction?.enabled &&
+        value.keepRecentTokens === preset.compaction?.keepRecentTokens &&
+        value.reserveTokens === preset.compaction?.reserveTokens
       );
-    }) ?? 'auto'
+    }) ?? 'follow'
   );
+}
+
+/** 预设的 toolNames → UI 模式：null = 全部；[] = 关闭；非空数组 = 自选。 */
+function toolModeOf(preset: SessionPreset): ToolMode {
+  if (preset.toolNames === null) return 'all';
+  return preset.toolNames.length === 0 ? 'none' : 'list';
 }
 
 function toDraft(preset: SessionPreset): PresetDraft {
@@ -98,13 +124,15 @@ function toDraft(preset: SessionPreset): PresetDraft {
     id: preset.id,
     name: preset.name,
     systemPrompt: preset.systemPrompt,
-    toolNames: [...preset.toolNames],
+    toolMode: toolModeOf(preset),
+    toolNames: preset.toolNames ? [...preset.toolNames] : [],
     strategy: strategyOf(preset),
     provider: preset.provider ?? '',
     modelId: preset.modelId ?? '',
     thinkingLevel: preset.thinkingLevel ?? '',
     mcpMode: mcpModeOf(preset),
     mcpServers: preset.mcpServers ? [...preset.mcpServers] : [],
+    capabilities: { ...preset.capabilities },
   };
 }
 
@@ -119,6 +147,7 @@ function addPreset(): void {
     id: null,
     name: '',
     systemPrompt: '',
+    toolMode: 'list',
     toolNames: ['read', 'bash', 'edit', 'write'],
     strategy: 'auto',
     provider: '',
@@ -126,6 +155,7 @@ function addPreset(): void {
     thinkingLevel: '',
     mcpMode: 'all',
     mcpServers: [],
+    capabilities: { ...DEFAULT_CAPABILITIES },
   };
   formOpen.value = true;
   error.value = null;
@@ -153,8 +183,17 @@ async function save(): Promise<void> {
   const input: SessionPresetInput = {
     name,
     systemPrompt: draft.value.systemPrompt,
-    toolNames: draft.value.toolNames,
-    compaction: COMPACTION_STRATEGIES[draft.value.strategy],
+    // null = 不限制白名单（SDK 默认发现）；[] = 无工具；数组 = 白名单。
+    toolNames:
+      draft.value.toolMode === 'all'
+        ? null
+        : draft.value.toolMode === 'none'
+          ? []
+          : draft.value.toolNames,
+    // follow = 不覆盖设置（后端 compaction: null）。
+    compaction:
+      draft.value.strategy === 'follow' ? null : COMPACTION_STRATEGIES[draft.value.strategy],
+    capabilities: { ...draft.value.capabilities },
     provider: draft.value.provider,
     modelId: draft.value.modelId,
     thinkingLevel: draft.value.thinkingLevel,
@@ -231,6 +270,12 @@ function modelName(preset: SessionPreset): string {
   return item ? `${item.name} · ${item.provider}` : `${preset.provider}/${preset.modelId}`;
 }
 
+/** 预设的工具摘要（列表视图展示用）。 */
+function toolLabel(preset: SessionPreset): string {
+  if (preset.toolNames === null) return '全部（SDK 默认）';
+  return preset.toolNames.length ? preset.toolNames.join(', ') : '无';
+}
+
 /** 预设的 MCP 服务摘要（列表视图展示用）。 */
 function mcpLabel(preset: SessionPreset): string {
   if (preset.mcpServers === null || preset.mcpServers === undefined) return '全部';
@@ -296,13 +341,55 @@ function messageOf(cause: unknown): string {
 
           <div class="preset-field">
             <span class="preset-field-label"
-              >可用工具<span class="preset-field-hint">默认勾选 = SDK 默认工具集</span></span
+              >可用工具<span class="preset-field-hint"
+                >「全部」= 不限制白名单（SDK 自己发现，极简模式用）</span
+              ></span
             >
             <div class="preset-chip-row">
+              <label class="preset-chip">
+                <input v-model="draft.toolMode" type="radio" name="toolMode" value="all" />全部（SDK
+                默认）
+              </label>
+              <label class="preset-chip">
+                <input v-model="draft.toolMode" type="radio" name="toolMode" value="list" />自选
+              </label>
+              <label class="preset-chip">
+                <input v-model="draft.toolMode" type="radio" name="toolMode" value="none" />关闭
+              </label>
+            </div>
+            <div v-if="draft.toolMode === 'list'" class="preset-chip-row preset-chip-row--nested">
               <label v-for="tool in BUILTIN_TOOLS" :key="tool" class="preset-chip">
                 <input v-model="draft.toolNames" type="checkbox" :value="tool" />{{ tool }}
               </label>
             </div>
+          </div>
+
+          <div class="preset-field">
+            <span class="preset-field-label"
+              >平台能力<span class="preset-field-hint"
+                >关闭的能力会在会话创建时就不装配（工具/扩展/面板一起）</span
+              ></span
+            >
+            <div class="preset-chip-row">
+              <label
+                v-for="field in CAPABILITY_FIELDS"
+                :key="field.key"
+                class="preset-chip"
+                :title="field.hint"
+              >
+                <input
+                  v-model="draft.capabilities[field.key]"
+                  type="checkbox"
+                  :name="`capability-${field.key}`"
+                />{{ field.label }}
+              </label>
+            </div>
+            <span
+              v-if="draft.capabilities.plan && !draft.capabilities.tasks"
+              class="preset-mcp-empty"
+            >
+              Plan 依赖任务面板：请先把「任务面板」打开，否则保存会被拒绝。
+            </span>
           </div>
 
           <div class="preset-field">
@@ -313,13 +400,13 @@ function messageOf(cause: unknown): string {
             >
             <div class="preset-chip-row">
               <label class="preset-chip">
-                <input v-model="draft.mcpMode" type="radio" value="all" />全部
+                <input v-model="draft.mcpMode" type="radio" name="mcpMode" value="all" />全部
               </label>
               <label class="preset-chip">
-                <input v-model="draft.mcpMode" type="radio" value="none" />禁用
+                <input v-model="draft.mcpMode" type="radio" name="mcpMode" value="none" />禁用
               </label>
               <label class="preset-chip">
-                <input v-model="draft.mcpMode" type="radio" value="custom" />自选
+                <input v-model="draft.mcpMode" type="radio" name="mcpMode" value="custom" />自选
               </label>
             </div>
             <div v-if="draft.mcpMode === 'custom'" class="preset-chip-row preset-chip-row--nested">
@@ -379,13 +466,12 @@ function messageOf(cause: unknown): string {
               提示词：{{ preset.systemPrompt }}
             </p>
             <div class="preset-meta">
-              <span class="preset-meta-item">
-                工具：{{ preset.toolNames.length ? preset.toolNames.join(', ') : '无' }}
-              </span>
+              <span class="preset-meta-item">工具：{{ toolLabel(preset) }}</span>
               <span class="preset-meta-item">压缩：{{ STRATEGY_LABELS[strategyOf(preset)] }}</span>
               <span class="preset-meta-item">模型：{{ modelName(preset) }}</span>
               <span class="preset-meta-item">思考：{{ preset.thinkingLevel || '默认' }}</span>
               <span class="preset-meta-item">MCP：{{ mcpLabel(preset) }}</span>
+              <span class="preset-meta-item">{{ summarizeCapabilities(preset.capabilities) }}</span>
             </div>
           </div>
           <div v-if="!preset.builtin" class="preset-actions">

@@ -154,7 +154,9 @@ class PlanSession {
    */
   registerTools(): void {
     for (const tool of buildPlanTools(this.toolbox)) this.pi.registerTool(tool);
-    this.pi.registerTool(buildProposePlanTool((params, context) => this.proposePlan(params, context)));
+    this.pi.registerTool(
+      buildProposePlanTool((params, context) => this.proposePlan(params, context)),
+    );
   }
 
   /** session_start：绑定会话、采纳未结束的计划、按状态恢复权限并广播视图。 */
@@ -360,7 +362,10 @@ class PlanSession {
   }
 
   /** 历史里最后一条同类注入的正文（用于去抖；拿不到历史时返回 undefined＝照旧注入）。 */
-  private lastInjectedContent(ctx: SessionContext | undefined, customType: string): string | undefined {
+  private lastInjectedContent(
+    ctx: SessionContext | undefined,
+    customType: string,
+  ): string | undefined {
     let entries: unknown[];
     try {
       entries = ctx?.sessionManager.getEntries() ?? [];
@@ -423,24 +428,27 @@ class PlanSession {
         })
       ).outcome;
     } catch (error) {
-      return planToolResult(`提议失败：${messageOf(error as Error)}。请直接完成任务或等用户手动开启。`, {
-        status: 'unavailable',
-        goal,
-      });
+      return planToolResult(
+        `提议失败：${messageOf(error as Error)}。请直接完成任务或等用户手动开启。`,
+        {
+          status: 'unavailable',
+          goal,
+        },
+      );
     }
 
     const agreed =
       outcome.answered &&
       (outcome.answers[0]?.selected ?? []).some((item) => item === PROPOSE_PLAN_OPTION);
     if (!agreed) {
-      const why =
-        outcome.answered
-          ? '用户选择先直接做'
-          : `用户没有回答（${outcome.reason}），按「不规划」处理`;
-      return planToolResult(
-        `${why}：继续直接完成任务，不要再调用计划工具，也不要反复提议。`,
-        { status: 'declined', reason: outcome.reason, goal },
-      );
+      const why = outcome.answered
+        ? '用户选择先直接做'
+        : `用户没有回答（${outcome.reason}），按「不规划」处理`;
+      return planToolResult(`${why}：继续直接完成任务，不要再调用计划工具，也不要反复提议。`, {
+        status: 'declined',
+        reason: outcome.reason,
+        goal,
+      });
     }
 
     const started = this.startPlanning(goal);
