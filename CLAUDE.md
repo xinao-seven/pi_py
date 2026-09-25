@@ -175,6 +175,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/web-observability-panel-scroll.md` | 前端修复：设置 →「用量」面板的高度与滚动契约（滚不动的根因与回归防线） |
 | `docs/web-chat-render-fixes.md` | 前端修复：上下文占用条对比度、Markdown 表格边框/横向滚动、用户消息块内左对齐 |
 | `docs/web-stream-coalescing.md` | **前端卡死修复**：流式增量按帧合并渲染 + SSE 重放合并与写缓冲上限（`message_update` 全量快照的 O(n²) 问题） |
+| `docs/sse-streaming-render-pipeline.md` | **SSE 流式渲染全链路**：核心发事件 → 后端 SSE 转发 → 前端规约 → 虚拟列表 → Markdown 上屏 |
 | `docs/three-layer-architecture.md` | Python 三层包结构与依赖规则 |
 | `docs/node-extension-system.md` | 扩展发现与接入 |
 | `docs/node-command-approval.md` | 命令风险分级与审批链路 |
