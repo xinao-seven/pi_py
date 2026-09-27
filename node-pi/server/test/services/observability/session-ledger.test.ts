@@ -567,6 +567,379 @@ describe('cost fallback for models shadowed by models.json', () => {
       harness.close();
     }
   });
+
+  // ---- P0：人机等待与运行期计数 -------------------------------------------
+
+  it('splits human wait (question + approval) out of the run duration', () => {
+    const harness = makeLedger();
+    const { ledger, tick } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      tick(100);
+      ledger.noteQuestionStart({
+        sessionId: 'session-1',
+        questionId: 'question-1',
+        toolCallId: 'call-q',
+        questionCount: 2,
+      });
+      tick(3_000);
+      ledger.noteQuestionDecision({
+        sessionId: 'session-1',
+        questionId: 'question-1',
+        reason: 'user',
+        answers: 2,
+      });
+      tick(50);
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const detail = harness.store.traces.getRun('run-1');
+      // durationMs 仍然是总时长，但人等的那 3 秒单独记，activeMs 才是机器干活的时间。
+      expect(detail?.run).toMatchObject({
+        durationMs: 3_150,
+        waitMs: 3_000,
+        activeMs: 150,
+      });
+      const question = detail?.steps.find((step) => step.kind === 'question');
+      expect(question).toMatchObject({
+        durationMs: 3_000,
+        isError: false,
+        meta: { reason: 'user', questions: 2, answers: 2 },
+      });
+      expect(harness.store.traces.summary({}).totals).toMatchObject({
+        humanWaitMs: 3_000,
+        activeSamples: [150],
+        waitSamples: [3_000],
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('adds approval wait to the run wait total as well', () => {
+    const harness = makeLedger();
+    const { ledger, tick } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.noteApprovalStart({
+        sessionId: 'session-1',
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        rule: 'recursive-delete',
+        risk: 'critical',
+      });
+      tick(900);
+      ledger.noteApprovalDecision({
+        sessionId: 'session-1',
+        toolCallId: 'call-1',
+        decision: 'approved',
+        decidedBy: 'user',
+      });
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      expect(harness.store.traces.getRun('run-1')?.run).toMatchObject({
+        durationMs: 900,
+        waitMs: 900,
+        activeMs: 0,
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('collects the P0 run counters into runs.meta and drops the zero ones', () => {
+    const harness = makeLedger();
+    const { ledger, tick } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.record(context, event({ type: 'turn_start' }));
+      ledger.record(context, event({ type: 'message_start', message: { role: 'user' } }));
+      ledger.record(context, event({ type: 'message_start', message: { role: 'assistant' } }));
+      ledger.record(context, event({ type: 'turn_end', toolResults: [{}, {}] }));
+      ledger.record(context, event({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 }));
+      ledger.record(context, event({ type: 'auto_retry_end', success: true, attempt: 1 }));
+      ledger.record(context, event({ type: 'summarization_retry_scheduled', attempt: 1 }));
+      ledger.record(
+        context,
+        event({ type: 'queue_update', steering: ['stop'], followUp: ['a', 'b'] }),
+      );
+      ledger.record(context, event({ type: 'entry_appended', entry: { type: 'message' } }));
+      ledger.record(context, event({ type: 'entry_appended', entry: { type: 'message' } }));
+      ledger.record(context, event({ type: 'agent_end', messages: [], willRetry: true }));
+      ledger.record(
+        context,
+        event({ type: 'thinking_level_changed', level: 'high', previousLevel: 'medium' }),
+      );
+      tick(10);
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const detail = harness.store.traces.getRun('run-1');
+      expect(detail?.run.meta).toMatchObject({
+        retries: 1,
+        retriesSucceeded: 1,
+        summaryRetries: 1,
+        userMessages: 1,
+        assistantMessages: 1,
+        toolResults: 2,
+        maxSteerQueue: 1,
+        maxFollowUpQueue: 2,
+        entries: 2,
+        agentEnds: 1,
+      });
+      // 0 的计数不落库（meta 里不堆零）。
+      expect(detail?.run.meta).not.toHaveProperty('retriesFailed');
+      // 中途改思考级别记一条 config_change，不影响 run 行本身的归属。
+      expect(detail?.steps.filter((step) => step.kind === 'config_change')).toHaveLength(1);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('records retry failures and a mid-run model switch', () => {
+    const harness = makeLedger();
+    const { ledger } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.record(context, event({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 }));
+      ledger.record(context, event({ type: 'auto_retry_end', success: false, attempt: 1 }));
+      ledger.noteModelSelect({
+        sessionId: 'session-1',
+        model: 'deepseek-v4-pro',
+        previousModel: 'deepseek-chat',
+        source: 'set',
+      });
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const detail = harness.store.traces.getRun('run-1');
+      expect(detail?.run.meta).toMatchObject({ retries: 1, retriesFailed: 1 });
+      const change = detail?.steps.find((step) => step.kind === 'config_change');
+      expect(change?.meta).toMatchObject({
+        field: 'model',
+        from: 'deepseek-chat',
+        to: 'deepseek-v4-pro',
+        source: 'set',
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('ignores config changes and context injections that arrive outside a run', () => {
+    const harness = makeLedger();
+    try {
+      // 没有进行中的 run：不应凭空造出 run 或步骤。
+      harness.ledger.noteModelSelect({ sessionId: 'session-1', model: 'x', source: 'restore' });
+      harness.ledger.noteContextMessages('session-1', [
+        { customType: 'task-resume', content: 'resume' },
+      ]);
+      harness.ledger.noteQuestionDecision({
+        sessionId: 'session-1',
+        questionId: 'question-x',
+        reason: 'timeout',
+      });
+
+      expect(harness.store.traces.listRuns({ limit: 10 }).runs).toHaveLength(0);
+      // sink 抛错/无 run 时静默降级，不产生告警噪声（只有真正的异常才 warn）。
+      expect(harness.warnings).toEqual([]);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('records tool first-output latency from streaming progress', () => {
+    const harness = makeLedger();
+    const { ledger, tick } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.record(
+        context,
+        event({
+          type: 'tool_execution_start',
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          args: { command: 'npm test' },
+        }),
+      );
+      tick(250);
+      ledger.record(
+        context,
+        event({ type: 'tool_execution_update', toolCallId: 'call-1', partialResult: {} }),
+      );
+      tick(250);
+      ledger.record(
+        context,
+        event({ type: 'tool_execution_update', toolCallId: 'call-1', partialResult: {} }),
+      );
+      tick(500);
+      ledger.record(
+        context,
+        event({ type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'bash', result: 'ok' }),
+      );
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const tool = harness.store.traces
+        .getRun('run-1')
+        ?.steps.find((step) => step.kind === 'tool_call');
+      expect(tool?.meta).toMatchObject({ firstOutputMs: 250, progressUpdates: 2 });
+    } finally {
+      harness.close();
+    }
+  });
+
+  // ---- P1：请求形状与上下文注入 -------------------------------------------
+
+  it('attributes the provider request shape and the cache hit rate to each turn', () => {
+    const harness = makeLedger();
+    const { ledger } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.record(context, event({ type: 'turn_start' }));
+      ledger.noteProviderPayload('session-1', {
+        messages: [{}, {}],
+        tools: [{ name: 'write' }, { name: 'bash' }],
+        system: 'system prompt',
+      });
+      ledger.record(
+        context,
+        event({
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            provider: 'deepseek',
+            model: 'deepseek-chat',
+            stopReason: 'stop',
+            usage: { input: 750, output: 10, cacheRead: 250 },
+          },
+        }),
+      );
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const llm = harness.store.traces
+        .getRun('run-1')
+        ?.steps.find((step) => step.kind === 'llm_call');
+      expect(llm?.meta).toMatchObject({
+        promptMessages: 2,
+        promptTools: 2,
+        promptToolNames: ['bash', 'write'],
+        promptSystemChars: 'system prompt'.length,
+        // 第一次调用没有可比对象，不算「变化」。
+        toolsChanged: false,
+        systemChanged: false,
+        cacheHitRate: 0.25,
+      });
+      expect(harness.store.traces.getRun('run-1')?.run.meta).toBeUndefined();
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('flags a tool-set change between turns (prefix cache invalidation)', () => {
+    const harness = makeLedger();
+    const { ledger } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      ledger.record(context, event({ type: 'turn_start' }));
+      ledger.noteProviderPayload('session-1', {
+        messages: [{}],
+        tools: [{ name: 'read' }],
+        system: 's',
+      });
+      ledger.record(
+        context,
+        event({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse' } }),
+      );
+      ledger.record(context, event({ type: 'turn_start' }));
+      ledger.noteProviderPayload('session-1', {
+        messages: [{}, {}, {}],
+        tools: [{ name: 'read' }, { name: 'submit_plan' }],
+        system: 's',
+      });
+      ledger.record(
+        context,
+        event({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }),
+      );
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const steps = harness.store.traces
+        .getRun('run-1')
+        ?.steps.filter((step) => step.kind === 'llm_call');
+      expect(steps?.[0].meta).toMatchObject({ toolsChanged: false });
+      expect(steps?.[1].meta).toMatchObject({
+        toolsChanged: true,
+        systemChanged: false,
+        promptTools: 2,
+      });
+      expect(harness.store.traces.getRun('run-1')?.run.meta).toMatchObject({
+        promptShapeChanges: 1,
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('records context injections once and re-records them only when the content changes', () => {
+    const harness = makeLedger();
+    const { ledger } = harness;
+    try {
+      ledger.record(context, event({ type: 'agent_start' }));
+      const messages = [
+        { role: 'user', content: 'do it' },
+        { customType: 'web-plan-context', content: 'plan rev 1' },
+      ];
+      ledger.noteContextMessages('session-1', messages);
+      // 同一条注入会随历史一直存在：内容没变就不重复记账。
+      ledger.noteContextMessages('session-1', messages);
+      ledger.noteContextMessages('session-1', [
+        { role: 'user', content: 'do it' },
+        { customType: 'web-plan-context', content: 'plan rev 2' },
+        { customType: 'task-resume', content: 'resume summary' },
+      ]);
+      ledger.record(context, event({ type: 'agent_settled' }));
+
+      const injections = harness.store.traces
+        .getRun('run-1')
+        ?.steps.filter((step) => step.kind === 'context_injection');
+      expect(injections?.map((step) => step.meta?.customType)).toEqual([
+        'web-plan-context',
+        'web-plan-context',
+        'task-resume',
+      ]);
+      expect(injections?.[2].meta).toMatchObject({
+        chars: 'resume summary'.length,
+      });
+      expect(harness.store.traces.getRun('run-1')?.run.meta).toMatchObject({
+        contextInjections: 3,
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('never throws when the new observation sinks are fed junk', () => {
+    const harness = makeLedger();
+    try {
+      harness.ledger.record(context, event({ type: 'agent_start' }));
+      harness.ledger.noteProviderPayload('session-1', null);
+      harness.ledger.noteProviderPayload('session-1', 'not a payload');
+      harness.ledger.noteContextMessages('session-1', 'not messages');
+      harness.ledger.noteQuestionDecision({
+        sessionId: 'session-1',
+        questionId: 'unknown-question',
+        reason: 'timeout',
+      });
+      harness.ledger.record(
+        context,
+        event({ type: 'queue_update', steering: undefined, followUp: undefined }),
+      );
+      harness.ledger.record(context, event({ type: 'turn_end' }));
+      harness.ledger.record(context, event({ type: 'agent_settled' }));
+
+      // 拿不到的信息一律跳过，会计继续（run 仍然结算）。
+      expect(harness.store.traces.getRun('run-1')?.run.status).toBe('completed');
+      expect(harness.warnings).toEqual([]);
+    } finally {
+      harness.close();
+    }
+  });
 });
 
 /**

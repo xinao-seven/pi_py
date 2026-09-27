@@ -36,6 +36,12 @@ export interface RunTotals {
   costUsd: number;
   durationSamples: number[];
   ttftSamples: number[];
+  /** 机器真正干活的耗时样本（duration - 人机等待，旧数据缺失则不计入）。 */
+  activeSamples: number[];
+  /** 等人（审批 + 提问）的耗时样本。 */
+  waitSamples: number[];
+  /** 累计人工等待（预聚合表来源，明细清理后仍完整）。 */
+  humanWaitMs: number;
 }
 
 export interface ModelAggregate {
@@ -333,6 +339,9 @@ export function emptySummary(): SummaryData {
       costUsd: 0,
       durationSamples: [],
       ttftSamples: [],
+      activeSamples: [],
+      waitSamples: [],
+      humanWaitMs: 0,
     },
     byModel: [],
     byTool: [],

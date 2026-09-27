@@ -590,6 +590,11 @@ export interface ObservabilitySummary {
     p50DurationMs: number;
     p95DurationMs: number;
     p50TtftMs: number;
+    /** 纯机器耗时 p95（排除等真人）；旧记录没有这个字段，样本为空时为 0。 */
+    p95ActiveDurationMs: number;
+    /** 等人（审批 + 提问）的 p50 与累计。 */
+    p50WaitMs: number;
+    humanWaitMs: number;
     errorRate: number;
   };
   byModel: Array<{
@@ -649,6 +654,10 @@ export interface ObservabilityRun {
   costUsd: number;
   ttftMs: number | null;
   durationMs: number | null;
+  /** 人机等待（审批 + 提问）；老记录为 null。 */
+  waitMs: number | null;
+  /** 机器耗时 = durationMs - waitMs；老记录为 null。 */
+  activeMs: number | null;
   stopReason: string | null;
   errorType: string | null;
   errorMessage: string | null;
@@ -656,7 +665,16 @@ export interface ObservabilityRun {
 }
 
 export interface ObservabilityStep {
-  kind: 'llm_call' | 'tool_call' | 'approval' | 'compaction' | 'branch_summary' | 'memory_write';
+  kind:
+    | 'llm_call'
+    | 'tool_call'
+    | 'approval'
+    | 'compaction'
+    | 'branch_summary'
+    | 'memory_write'
+    | 'question'
+    | 'context_injection'
+    | 'config_change';
   turnIndex: number;
   toolName: string | null;
   toolCallId: string | null;

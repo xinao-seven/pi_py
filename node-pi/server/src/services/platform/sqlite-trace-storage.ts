@@ -183,7 +183,8 @@ export class SqliteTraceStorage implements TraceStorage {
               SUM(input_tokens) AS inputTokens,
               SUM(output_tokens) AS outputTokens,
               SUM(cache_read_tokens) AS cacheReadTokens,
-              SUM(cost_usd) AS costUsd
+              SUM(cost_usd) AS costUsd,
+              SUM(wait_ms) AS humanWaitMs
        FROM run_rollups ${rollups.sql}`,
     ).get(...rollups.params);
     const totals = {
@@ -194,9 +195,12 @@ export class SqliteTraceStorage implements TraceStorage {
       outputTokens: toNumber(totalsRow?.outputTokens),
       cacheReadTokens: toNumber(totalsRow?.cacheReadTokens),
       costUsd: toNumber(totalsRow?.costUsd),
+      humanWaitMs: toNumber(totalsRow?.humanWaitMs),
       // 分位数是唯一走明细表的部分：范围内最近 N 条样本（有界索引扫描）。
       durationSamples: this.sampleRuns('duration_ms', filter, sample),
       ttftSamples: this.sampleRuns('ttft_ms', filter, sample),
+      activeSamples: this.sampleRuns('active_ms', filter, sample),
+      waitSamples: this.sampleRuns('wait_ms', filter, sample),
     };
     return {
       totals,
@@ -283,11 +287,11 @@ export class SqliteTraceStorage implements TraceStorage {
       `INSERT INTO runs (id, session_id, parent_run_id, task_id, cwd, provider, model,
           thinking_level, started_at, ended_at, status, stop_reason, error_type, error_message,
           turns, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
-          ttft_ms, duration_ms, meta, day)
+          ttft_ms, duration_ms, wait_ms, active_ms, meta, day)
        VALUES (:id, :sessionId, :parentRunId, :taskId, :cwd, :provider, :model,
           :thinkingLevel, :startedAt, :endedAt, :status, :stopReason, :errorType, :errorMessage,
           :turns, :inputTokens, :outputTokens, :cacheReadTokens, :cacheWriteTokens, :costUsd,
-          :ttftMs, :durationMs, :meta, :day)
+          :ttftMs, :durationMs, :waitMs, :activeMs, :meta, :day)
        ON CONFLICT(id) DO NOTHING`,
     ).run({
       id: run.id,
@@ -312,6 +316,8 @@ export class SqliteTraceStorage implements TraceStorage {
       costUsd: run.costUsd,
       ttftMs: bind(run.ttftMs),
       durationMs: bind(run.durationMs),
+      waitMs: bind(run.waitMs),
+      activeMs: bind(run.activeMs),
       meta: run.meta === undefined ? null : JSON.stringify(run.meta),
       day: dayOf(run.startedAt),
     });
@@ -330,6 +336,7 @@ export class SqliteTraceStorage implements TraceStorage {
           input_tokens = :inputTokens, output_tokens = :outputTokens,
           cache_read_tokens = :cacheReadTokens, cache_write_tokens = :cacheWriteTokens,
           cost_usd = :costUsd, ttft_ms = :ttftMs, duration_ms = :durationMs,
+          wait_ms = :waitMs, active_ms = :activeMs,
           -- meta 是「run 开始时的元信息（如子会话的 preset/depth）+ 结束时追加的元信息」，
           -- 本语句未提供 meta 时必须保留原值，否则开始时的元信息会被这次收尾抹掉（M5 实际踩到）。
           meta = CASE WHEN :meta IS NULL THEN meta ELSE :meta END
@@ -349,6 +356,8 @@ export class SqliteTraceStorage implements TraceStorage {
       costUsd: patch.costUsd,
       ttftMs: bind(patch.ttftMs),
       durationMs: bind(patch.durationMs),
+      waitMs: bind(patch.waitMs),
+      activeMs: bind(patch.activeMs),
       meta: patch.meta === undefined ? null : JSON.stringify(patch.meta),
     });
     // run 只在第一次进入终态时计入聚合，避免重复 finish 造成重复计数。
@@ -360,9 +369,9 @@ export class SqliteTraceStorage implements TraceStorage {
     // 直接存 NULL 会让 ON CONFLICT 匹配不上而写成多行。
     this.statement(
       `INSERT INTO run_rollups (day, cwd, provider, model, runs, turns, input_tokens,
-          output_tokens, cache_read_tokens, cost_usd, errors)
+          output_tokens, cache_read_tokens, cost_usd, errors, wait_ms)
        VALUES (:day, :cwd, :provider, :model, 1, :turns, :inputTokens, :outputTokens,
-          :cacheReadTokens, :costUsd, :errors)
+          :cacheReadTokens, :costUsd, :errors, :waitMs)
        ON CONFLICT(day, cwd, provider, model) DO UPDATE SET
           runs = runs + 1,
           turns = turns + excluded.turns,
@@ -370,6 +379,7 @@ export class SqliteTraceStorage implements TraceStorage {
           output_tokens = output_tokens + excluded.output_tokens,
           cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
           cost_usd = cost_usd + excluded.cost_usd,
+          wait_ms = wait_ms + excluded.wait_ms,
           errors = errors + excluded.errors`,
     ).run({
       day: dayOf(startedAt),
@@ -381,6 +391,7 @@ export class SqliteTraceStorage implements TraceStorage {
       outputTokens: patch.outputTokens,
       cacheReadTokens: patch.cacheReadTokens,
       costUsd: patch.costUsd,
+      waitMs: patch.waitMs ?? 0,
       errors: patch.status === 'error' ? 1 : 0,
     });
   }
@@ -473,7 +484,7 @@ export class SqliteTraceStorage implements TraceStorage {
   // ---- 读：有界样本 + 预聚合 ----
 
   private sampleRuns(
-    column: 'duration_ms' | 'ttft_ms',
+    column: 'duration_ms' | 'ttft_ms' | 'active_ms' | 'wait_ms',
     filter: { sql: string; params: BindValue[] },
     limit: number,
   ): number[] {
@@ -636,6 +647,8 @@ export class SqliteTraceStorage implements TraceStorage {
       costUsd: toNumber(row.cost_usd),
       ttftMs: optionalNumber(row.ttft_ms),
       durationMs: optionalNumber(row.duration_ms),
+      waitMs: optionalNumber(row.wait_ms),
+      activeMs: optionalNumber(row.active_ms),
       stopReason: optionalString(row.stop_reason),
       errorType: optionalString(row.error_type),
       errorMessage: optionalString(row.error_message),

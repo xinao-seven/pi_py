@@ -19,9 +19,11 @@ import type { AgentSessionEvent, InlineExtension } from '@earendil-works/pi-codi
 
 import type { ServiceLogger } from '../service-logger.js';
 import type { TraceRepository } from '../platform/trace-repository.js';
-import type { BlockedBy, RunRow, StepRow } from '../platform/trace-model.js';
+import type { BlockedBy, RunRow, StepKind, StepRow } from '../platform/trace-model.js';
+import type { QuestionReason, QuestionTraceSink } from '../user-question.js';
 import { builtinCostUsd } from './model-cost.js';
-import { buildObservabilityExtension, type ProviderObserver } from './observability-extension.js';
+import { buildObservabilityExtension, type RuntimeObserver } from './observability-extension.js';
+import { collectInjections, promptShapeOf, type PromptShape } from './prompt-shape.js';
 import { summarize, type ContentSummary } from './redact.js';
 
 /** 记账所需的会话上下文（由注册表从 RegistryEntry 提取）。 */
@@ -111,20 +113,93 @@ interface RunState {
   cacheWriteTokens: number;
   costUsd: number;
   ttftMs?: number;
+  /** 人机等待累计（审批 + 提问）；收尾时与 durationMs 一起拆出 activeMs。 */
+  waitMs: number;
   stopReason?: string;
   errorType?: string;
   errorMessage?: string;
   retries: number;
   /** 当前 llm_call 步骤（turn_start 开、message_end 关）。 */
-  llm?: { startedAt: number; httpStatus?: number; httpLatencyMs?: number };
+  llm?: LlmStepState;
   /** provider HTTP 请求发出时刻（before_provider_headers）。 */
   providerStartedAt?: number;
-  tools: Map<string, { startedAt: number; toolName: string; args?: ContentSummary }>;
+  /** 上一次请求的形状（与本次比较，判断前缀缓存是否被打断）。 */
+  lastPromptShape?: PromptShape;
+  /** customType → 最近一次注入正文的指纹（去抖：内容没变就不重复记账）。 */
+  injections: Map<string, string>;
+  tools: Map<string, ToolStepState>;
   blocks: Map<string, { blockedBy: BlockedBy; reason?: string }>;
   approvals: Map<string, { startedAt: number; rule: string; risk: string; toolName: string }>;
+  questions: Map<string, { startedAt: number; questionCount: number }>;
   compaction?: { startedAt: number; reason: string };
+  /** run 运行期计数器（收尾时写进 runs.meta，为 0 的不落库）。 */
+  counters: RunCounters;
   /** run 开始时写入的元信息（子会话的 preset/depth）：收尾时合并而不是覆盖。 */
   meta?: Record<string, unknown>;
+}
+
+/** 当前 llm_call 步骤的进行中状态。 */
+interface LlmStepState {
+  startedAt: number;
+  httpStatus?: number;
+  httpLatencyMs?: number;
+  /** 本次请求的形状（`before_provider_request`）。 */
+  promptShape?: PromptShape;
+  /** 相对上一次请求，工具集（前缀缓存最敏感的部分）是否变化。 */
+  toolsChanged?: boolean;
+  /** 相对上一次请求，系统提示词是否变化。 */
+  systemChanged?: boolean;
+}
+
+/** 一次工具调用的进行中状态。 */
+interface ToolStepState {
+  startedAt: number;
+  toolName: string;
+  args?: ContentSummary;
+  /** 首次流式进度输出的耗时（`tool_execution_update`）——相当于工具的「首字节」。 */
+  firstOutputMs?: number;
+  /** 进度更新次数。 */
+  updates: number;
+}
+
+/**
+ * run 运行期计数器（P0）。
+ * 中文说明：这些都是「事件来了顺手加一」的廉价信号，合并在收尾时写进 `runs.meta`，
+ * 不需要为每一项加列；为 0 的项不写，避免 meta 里堆一堆 0。
+ */
+interface RunCounters {
+  assistantMessages: number;
+  userMessages: number;
+  toolResults: number;
+  agentEnds: number;
+  retriesSucceeded: number;
+  retriesFailed: number;
+  summaryRetries: number;
+  maxSteerQueue: number;
+  maxFollowUpQueue: number;
+  /** run 期间追加的会话条目数（会话 JSONL 的膨胀速度）。 */
+  entries: number;
+  /** 请求形状（工具集/系统提示词）发生变化的次数。 */
+  promptShapeChanges: number;
+  /** 上下文注入次数（去抖后）。 */
+  contextInjections: number;
+}
+
+function emptyCounters(): RunCounters {
+  return {
+    assistantMessages: 0,
+    userMessages: 0,
+    toolResults: 0,
+    agentEnds: 0,
+    retriesSucceeded: 0,
+    retriesFailed: 0,
+    summaryRetries: 0,
+    maxSteerQueue: 0,
+    maxFollowUpQueue: 0,
+    entries: 0,
+    promptShapeChanges: 0,
+    contextInjections: 0,
+  };
 }
 
 /** 已知的策略阻断文案（无法从事件本身区分拦截与失败时的兜底识别）。 */
@@ -134,12 +209,26 @@ const BLOCK_REASON_MARKERS = ['Tool execution was not approved', 'Plan mode is r
 const MAX_LAST_RUN_IDS = 500;
 
 /**
- * 收尾时写入的 meta = 开始时的 meta + 收尾才知道的信息（重试次数）。
+ * 收尾时写入的 meta = 开始时的 meta + 收尾才知道的信息（重试次数、运行期计数）。
  * 中文说明：必须合并，否则 `{ retries }` 会把子会话的 preset/depth 覆盖掉。
  */
 function finishMeta(state: RunState): Record<string, unknown> | undefined {
-  if (state.meta === undefined && state.retries === 0) return undefined;
-  return { ...(state.meta ?? {}), ...(state.retries > 0 ? { retries: state.retries } : {}) };
+  const counters = countersMeta(state.counters);
+  const extra: Record<string, unknown> = {
+    ...(state.retries > 0 ? { retries: state.retries } : {}),
+    ...(counters ?? {}),
+  };
+  if (state.meta === undefined) return Object.keys(extra).length === 0 ? undefined : extra;
+  return { ...state.meta, ...extra };
+}
+
+/** 运行期计数器 → meta（为 0 的不写，键名固定便于查询）。 */
+function countersMeta(counters: RunCounters): Record<string, number> | undefined {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(counters)) {
+    if (value > 0) out[key] = value;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /** 子会话的 run 在 meta 里带上预设与深度：执行树能看出「这是谁派出来的、第几层」。 */
@@ -157,7 +246,7 @@ function subagentMeta(context: LedgerSessionContext): Record<string, unknown> | 
  * 会话账本：把一个会话的事件流沉淀成 runs / steps。
  * 中文说明：同时对 `ProviderObserver` 契约负责（provider 层 HTTP 观测）。
  */
-export class SessionLedger implements ProviderObserver {
+export class SessionLedger implements RuntimeObserver, QuestionTraceSink {
   private readonly runs = new Map<string, RunState>();
   /** 会话 → 最近一次 run id（run 结束后仍保留，供子任务回报 runId 用）。 */
   private readonly lastRunIds = new Map<string, string>();
@@ -218,6 +307,8 @@ export class SessionLedger implements ProviderObserver {
       const endedAt = this.now();
       const startedAt = pending?.startedAt ?? endedAt;
       const waitMs = Math.max(0, endedAt - startedAt);
+      // 等真人的时间计入 run 的人机等待（与 activeMs 拆分）。
+      state.waitMs += waitMs;
       const rule = pending?.rule ?? 'unknown';
       const risk = pending?.risk ?? 'unknown';
       this.repository.addStep({
@@ -263,6 +354,63 @@ export class SessionLedger implements ProviderObserver {
     });
   }
 
+  /**
+   * 提问挂起（`QuestionBroker` 的 QuestionTraceSink）。
+   * 中文说明：与审批对称——两条人机通道都必须计「等了多久」，否则 run 耗时里会
+   * 混进用户读上下文、想答案的时间（提问超时默认 10 分钟，污染得很厉害）。
+   */
+  noteQuestionStart(input: {
+    sessionId: string;
+    questionId: string;
+    toolCallId: string;
+    questionCount: number;
+  }): void {
+    this.guard('question_start', () => {
+      const state = this.runs.get(input.sessionId);
+      if (!state) return;
+      state.questions.set(input.questionId, {
+        startedAt: this.now(),
+        questionCount: input.questionCount,
+      });
+    });
+  }
+
+  /** 提问结算：落一条 `question` 步骤，并把等待时长计入 run 的人机等待。 */
+  noteQuestionDecision(input: {
+    sessionId: string;
+    questionId: string;
+    reason: QuestionReason;
+    answers?: number;
+  }): void {
+    this.guard('question_decision', () => {
+      const state = this.runs.get(input.sessionId);
+      if (!state) return;
+      const pending = state.questions.get(input.questionId);
+      state.questions.delete(input.questionId);
+      const endedAt = this.now();
+      const startedAt = pending?.startedAt ?? endedAt;
+      const waitMs = Math.max(0, endedAt - startedAt);
+      state.waitMs += waitMs;
+      this.repository.addStep({
+        runId: state.runId,
+        sessionId: state.sessionId,
+        turnIndex: state.turnIndex,
+        kind: 'question',
+        startedAt,
+        endedAt,
+        durationMs: waitMs,
+        // 「未被回答」不是错误（超时/中止都有确定归宿），只有异常原因才算失败。
+        isError: false,
+        meta: {
+          reason: input.reason,
+          questions: pending?.questionCount ?? 0,
+          answers: input.answers ?? 0,
+          ...(pending === undefined ? { unmatched: true } : {}),
+        },
+      });
+    });
+  }
+
   /** 命令级失败（prompt() 直接 reject，例如模型校验失败）：无 run 时补一条失败 run。 */
   noteCommandFailure(context: LedgerSessionContext, error: unknown): void {
     this.guard('command_failure', () => {
@@ -287,7 +435,7 @@ export class SessionLedger implements ProviderObserver {
     });
   }
 
-  // ---- ProviderObserver ----
+  // ---- 运行期观测（RuntimeObserver） ----
 
   noteProviderRequestStart(sessionId: string): void {
     this.guard('provider_request', () => {
@@ -305,6 +453,85 @@ export class SessionLedger implements ProviderObserver {
         state.llm.httpLatencyMs = Math.max(0, this.now() - state.providerStartedAt);
       }
       state.providerStartedAt = undefined;
+    });
+  }
+
+  /**
+   * 本次请求的载荷 → 请求形状（`before_provider_request`）。
+   * 中文说明：工具集与系统提示词是前缀缓存的命门：任何一次「工具增删 / 系统提示词改写」
+   * 都会让 provider 缓存从那里开始失效（见 docs/node-plan-cache-stability.md），
+   * 所以这里把「变化过」这件事记在本次 llm_call 步骤上，并计数到 run.meta。
+   */
+  noteProviderPayload(sessionId: string, payload: unknown): void {
+    this.guard('provider_payload', () => {
+      const state = this.runs.get(sessionId);
+      if (!state || !state.llm) return;
+      const shape = promptShapeOf(payload);
+      if (shape === undefined) return;
+      const previous = state.lastPromptShape;
+      state.llm.promptShape = shape;
+      state.llm.toolsChanged =
+        previous !== undefined && previous.toolsFingerprint !== shape.toolsFingerprint;
+      state.llm.systemChanged =
+        previous !== undefined && previous.systemDigest !== shape.systemDigest;
+      if (state.llm.toolsChanged) state.counters.promptShapeChanges += 1;
+      state.lastPromptShape = shape;
+    });
+  }
+
+  /**
+   * 每次调用前的消息数组 → 上下文注入审计（`context` 钩子）。
+   * 中文说明：plan 状态、`[TASK RESUME]` 都是以隐藏自定义消息注入的（`display: false`），
+   * 在会话里看不见、在 prompt 里占位，以前完全无法观测。按正文指纹去抖：同一条注入
+   * 会随历史一直存在，内容没变就不重复记账。
+   */
+  noteContextMessages(sessionId: string, messages: unknown): void {
+    this.guard('context_messages', () => {
+      const state = this.runs.get(sessionId);
+      if (!state) return;
+      for (const injection of collectInjections(messages)) {
+        if (state.injections.get(injection.customType) === injection.digest) continue;
+        state.injections.set(injection.customType, injection.digest);
+        state.counters.contextInjections += 1;
+        const now = this.now();
+        this.repository.addStep({
+          runId: state.runId,
+          sessionId: state.sessionId,
+          turnIndex: state.turnIndex,
+          kind: 'context_injection',
+          startedAt: now,
+          endedAt: now,
+          durationMs: 0,
+          isError: false,
+          meta: {
+            customType: injection.customType,
+            chars: injection.chars,
+            digest: injection.digest,
+          },
+        });
+      }
+    });
+  }
+
+  /** run 中途切模型（`model_select`）：记一条 `config_change`，run 行本身的归属不变。 */
+  noteModelSelect(input: {
+    sessionId: string;
+    model?: string;
+    previousModel?: string;
+    source: string;
+  }): void {
+    this.guard('model_select', () => {
+      const state = this.runs.get(input.sessionId);
+      // 没有进行中的 run 就跳过：`restore`/启动时的选择不属于任何一次用户请求。
+      if (!state) return;
+      this.recordConfigChange(state, {
+        field: 'model',
+        from: input.previousModel,
+        to: input.model,
+        source: input.source,
+      });
+      // 后续轮次确实用了新模型：让「按调用归属」的账保持真实（run 行仍是开始时的模型）。
+      if (input.model !== undefined) state.model = input.model;
     });
   }
 
@@ -334,14 +561,23 @@ export class SessionLedger implements ProviderObserver {
       case 'turn_start':
         this.onTurnStart(context);
         break;
+      case 'message_start':
+        this.onMessageStart(context, event.message);
+        break;
       case 'message_update':
         this.onMessageUpdate(context, event.message as AssistantMessageMeta);
         break;
       case 'message_end':
         this.onMessageEnd(context, event.message as AssistantMessageMeta);
         break;
+      case 'turn_end':
+        this.onTurnEnd(context, event as { toolResults?: unknown[] });
+        break;
       case 'tool_execution_start':
         this.onToolStart(context, event.toolCallId, event.toolName, event.args);
+        break;
+      case 'tool_execution_update':
+        this.onToolUpdate(context, event.toolCallId);
         break;
       case 'tool_execution_end':
         this.onToolEnd(context, event.toolCallId, event.toolName, event.result, event.isError);
@@ -354,6 +590,27 @@ export class SessionLedger implements ProviderObserver {
         break;
       case 'auto_retry_start':
         this.onRetry(context);
+        break;
+      case 'auto_retry_end':
+        this.onRetryEnd(context, event as { success?: boolean });
+        break;
+      case 'summarization_retry_scheduled':
+        this.onSummarizationRetry(context);
+        break;
+      case 'queue_update':
+        this.onQueueUpdate(
+          context,
+          event as { steering?: readonly string[]; followUp?: readonly string[] },
+        );
+        break;
+      case 'entry_appended':
+        this.onEntryAppended(context);
+        break;
+      case 'thinking_level_changed':
+        this.onThinkingLevelChanged(context, event);
+        break;
+      case 'agent_end':
+        this.onAgentEnd(context);
         break;
       default:
         break;
@@ -375,6 +632,20 @@ export class SessionLedger implements ProviderObserver {
     // TTFT＝本轮请求发出到首个流式增量；现有代码从未统计过，是 M1 最有价值的指标。
     if (!state || !state.llm || state.ttftMs !== undefined) return;
     state.ttftMs = Math.max(0, this.now() - state.llm.startedAt);
+  }
+
+  /**
+   * 消息开始：只管计数（用户/助手各多少条）。
+   * 中文说明：一次 run 里「1 条用户消息 vs 20 条 steer 消息」是很不同的形态，
+   * 而 `runs.turns` 只反映模型轮次。这里只加计数，不做任何调度判断。
+   */
+  private onMessageStart(context: LedgerSessionContext, message: unknown): void {
+    const role = (message as { role?: unknown } | null)?.role;
+    if (role !== 'assistant' && role !== 'user') return;
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    if (role === 'assistant') state.counters.assistantMessages += 1;
+    else state.counters.userMessages += 1;
   }
 
   private onMessageEnd(context: LedgerSessionContext, message: AssistantMessageMeta): void {
@@ -406,6 +677,17 @@ export class SessionLedger implements ProviderObserver {
     }
   }
 
+  /**
+   * 轮次结束：只记「本轮产生了多少条工具结果」。
+   * 中文说明：模型的「空转」表现为连续多轮不带工具结果，`turns` 看不出来，
+   * 把 toolResults 累计到 run.meta 后能与 turns 对比着看。
+   */
+  private onTurnEnd(context: LedgerSessionContext, event: { toolResults?: unknown[] }): void {
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    state.counters.toolResults += Array.isArray(event.toolResults) ? event.toolResults.length : 0;
+  }
+
   private onToolStart(
     context: LedgerSessionContext,
     toolCallId: string,
@@ -416,8 +698,26 @@ export class SessionLedger implements ProviderObserver {
     state.tools.set(toolCallId, {
       startedAt: this.now(),
       toolName,
+      updates: 0,
       args: summarize(args, { content: this.options.content }),
     });
+  }
+
+  /**
+   * 工具流式进度：记首次输出耗时（工具的「首字节」）。
+   * 中文说明：一条跑 30 秒的 bash 与一条卡住 30 秒才出错的 bash 在总耗时上无法区分；
+   * `firstOutputMs` 把「启动慢」与「执行慢」分开，与 LLM 的 TTFT 对称。
+   * 这个事件在长命令上会高频触发，所以除了第一次之外只累加计数（不做任何字符串处理）。
+   */
+  private onToolUpdate(context: LedgerSessionContext, toolCallId: string): void {
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    const tool = state.tools.get(toolCallId);
+    if (!tool) return;
+    tool.updates += 1;
+    if (tool.firstOutputMs === undefined) {
+      tool.firstOutputMs = Math.max(0, this.now() - tool.startedAt);
+    }
   }
 
   private onToolEnd(
@@ -467,6 +767,9 @@ export class SessionLedger implements ProviderObserver {
         ...(started?.args?.text ? { argsText: started.args.text } : {}),
         ...(resultSummary.text ? { resultText: resultSummary.text } : {}),
         ...(note?.reason ? { blockedReason: note.reason } : {}),
+        ...(started?.firstOutputMs === undefined
+          ? {}
+          : { firstOutputMs: started.firstOutputMs, progressUpdates: started.updates }),
       },
     });
   }
@@ -505,6 +808,87 @@ export class SessionLedger implements ProviderObserver {
   private onRetry(context: LedgerSessionContext): void {
     const state = this.runs.get(context.sessionId);
     if (state) state.retries += 1;
+  }
+
+  /** 自动重试结束：终于能回答「重试有没有救回来」。 */
+  private onRetryEnd(context: LedgerSessionContext, event: { success?: boolean }): void {
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    if (event.success === true) state.counters.retriesSucceeded += 1;
+    else state.counters.retriesFailed += 1;
+  }
+
+  /** 摘要（压缩/分支摘要）重试：长会话崩溃的主要来源，以前完全不可见。 */
+  private onSummarizationRetry(context: LedgerSessionContext): void {
+    const state = this.runs.get(context.sessionId);
+    if (state) state.counters.summaryRetries += 1;
+  }
+
+  /** 排队深度：用户 steer（打断当前走向）与 followUp 的最大堆积量。 */
+  private onQueueUpdate(
+    context: LedgerSessionContext,
+    event: { steering?: readonly string[]; followUp?: readonly string[] },
+  ): void {
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    const steer = event.steering?.length ?? 0;
+    const followUp = event.followUp?.length ?? 0;
+    if (steer > state.counters.maxSteerQueue) state.counters.maxSteerQueue = steer;
+    if (followUp > state.counters.maxFollowUpQueue) state.counters.maxFollowUpQueue = followUp;
+  }
+
+  /** 会话条目落盘：run 期间追加了多少条（JSONL 膨胀速度）。 */
+  private onEntryAppended(context: LedgerSessionContext): void {
+    const state = this.runs.get(context.sessionId);
+    if (state) state.counters.entries += 1;
+  }
+
+  /** run 中途改思考级别：与 `model_select` 同一条 `config_change` 路径。 */
+  private onThinkingLevelChanged(
+    context: LedgerSessionContext,
+    event: { level?: unknown; previousLevel?: unknown },
+  ): void {
+    const state = this.runs.get(context.sessionId);
+    if (!state) return;
+    const to = typeof event.level === 'string' ? event.level : undefined;
+    const from = typeof event.previousLevel === 'string' ? event.previousLevel : undefined;
+    this.recordConfigChange(state, { field: 'thinkingLevel', from, to, source: 'set' });
+    if (to !== undefined) state.thinkingLevel = to;
+  }
+
+  /**
+   * agent loop 结束（非终态：后面可能还有重试/压缩后的续跑）。
+   * 中文说明：run 的边界仍然是 `agent_settled`；这里只计数，用于交叉核对「一次 run 里
+   * 到底跑了几次 agent loop」——多次说明发生了自动恢复，是排障线索。
+   */
+  private onAgentEnd(context: LedgerSessionContext): void {
+    const state = this.runs.get(context.sessionId);
+    if (state) state.counters.agentEnds += 1;
+  }
+
+  /** 记录一次配置变更（模型/思考级别）：只在有进行中 run 时执行。 */
+  private recordConfigChange(
+    state: RunState,
+    change: { field: string; from?: string; to?: string; source: string },
+  ): void {
+    if (change.from === change.to) return;
+    const now = this.now();
+    this.repository.addStep({
+      runId: state.runId,
+      sessionId: state.sessionId,
+      turnIndex: state.turnIndex,
+      kind: 'config_change' as StepKind,
+      startedAt: now,
+      endedAt: now,
+      durationMs: 0,
+      isError: false,
+      meta: {
+        field: change.field,
+        ...(change.from === undefined ? {} : { from: change.from }),
+        ...(change.to === undefined ? {} : { to: change.to }),
+        source: change.source,
+      },
+    });
   }
 
   // ---- run 生命周期 ----
@@ -559,10 +943,14 @@ export class SessionLedger implements ProviderObserver {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       costUsd: 0,
+      waitMs: 0,
       retries: 0,
+      injections: new Map(),
       tools: new Map(),
       blocks: new Map(),
       approvals: new Map(),
+      questions: new Map(),
+      counters: emptyCounters(),
     };
     this.runs.set(context.sessionId, state);
     return state;
@@ -571,6 +959,8 @@ export class SessionLedger implements ProviderObserver {
   /** 结算并移除一个 run（重复调用是安全的：状态已移除即不再写）。 */
   private finishRun(state: RunState, status: RunRow['status']): void {
     const endedAt = this.now();
+    const durationMs = Math.max(0, endedAt - state.startedAt);
+    const waitMs = Math.min(state.waitMs, durationMs);
     this.repository.finishRun(state.runId, {
       endedAt,
       status,
@@ -581,7 +971,10 @@ export class SessionLedger implements ProviderObserver {
       cacheWriteTokens: state.cacheWriteTokens,
       costUsd: state.costUsd,
       ...(state.ttftMs === undefined ? {} : { ttftMs: state.ttftMs }),
-      durationMs: Math.max(0, endedAt - state.startedAt),
+      durationMs,
+      // 人机等待与机器耗时分开记：p95 不该被「等人点确认」的时间污染。
+      waitMs,
+      activeMs: Math.max(0, durationMs - waitMs),
       ...(state.stopReason === undefined ? {} : { stopReason: state.stopReason }),
       ...(state.errorType === undefined ? {} : { errorType: state.errorType }),
       ...(state.errorMessage === undefined ? {} : { errorMessage: state.errorMessage }),
@@ -623,6 +1016,19 @@ export class SessionLedger implements ProviderObserver {
         incomplete: detail.incomplete,
         httpStatus: llm.httpStatus,
         httpLatencyMs: llm.httpLatencyMs,
+        ...(cacheHitRateOf(message?.usage) === undefined
+          ? {}
+          : { cacheHitRate: cacheHitRateOf(message?.usage) }),
+        ...(llm.promptShape === undefined
+          ? {}
+          : {
+              promptMessages: llm.promptShape.messages,
+              promptTools: llm.promptShape.tools.length,
+              promptToolNames: llm.promptShape.tools,
+              promptSystemChars: llm.promptShape.systemChars,
+              toolsChanged: llm.toolsChanged === true,
+              systemChanged: llm.systemChanged === true,
+            }),
       },
     };
     this.repository.addStep(step);
@@ -660,4 +1066,17 @@ export class SessionLedger implements ProviderObserver {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 本次调用的缓存命中率 = cacheRead /（input + cacheRead）。
+ * 中文说明：与面板口径一致——provider 报的 `input` 已扣掉命中部分，所以分母是
+ * 「真实发出去的提示词总量」。取不到用量时返回 undefined（不写这个键）。
+ */
+function cacheHitRateOf(usage: AssistantMessageMeta['usage']): number | undefined {
+  if (usage === undefined) return undefined;
+  const read = usage.cacheRead ?? 0;
+  const prompt = (usage.input ?? 0) + read;
+  if (prompt === 0) return undefined;
+  return Math.round((read / prompt) * 10_000) / 10_000;
 }

@@ -34,6 +34,11 @@ export interface ObservabilitySummary {
     p50DurationMs: number;
     p95DurationMs: number;
     p50TtftMs: number;
+    /** 纯机器耗时 p95（排除等真人）。旧记录没有这个字段，样本为空时归 0。 */
+    p95ActiveDurationMs: number;
+    /** 等人（审批 + 提问）p50 / 累计。 */
+    p50WaitMs: number;
+    humanWaitMs: number;
     errorRate: number;
   };
   byModel: Array<{
@@ -92,6 +97,10 @@ export interface RunPayload {
   costUsd: number;
   ttftMs: number | null;
   durationMs: number | null;
+  /** 人机等待（审批 + 提问）；老记录为 null。 */
+  waitMs: number | null;
+  /** 机器耗时 = durationMs - waitMs；老记录为 null。 */
+  activeMs: number | null;
   stopReason: string | null;
   errorType: string | null;
   errorMessage: string | null;
@@ -161,6 +170,9 @@ export function buildSummary(data: SummaryData, store?: TraceStoreStats): Observ
       p50DurationMs: Math.round(percentile(data.totals.durationSamples, 0.5)),
       p95DurationMs: Math.round(percentile(data.totals.durationSamples, 0.95)),
       p50TtftMs: Math.round(percentile(data.totals.ttftSamples, 0.5)),
+      p95ActiveDurationMs: Math.round(percentile(data.totals.activeSamples, 0.95)),
+      p50WaitMs: Math.round(percentile(data.totals.waitSamples, 0.5)),
+      humanWaitMs: Math.round(data.totals.humanWaitMs),
       errorRate: rate(data.totals.errorRuns, data.totals.runs),
     },
     byModel: data.byModel.map((item: ModelAggregate) => ({
@@ -233,6 +245,8 @@ export function serializeRun(run: RunRow): RunPayload {
     costUsd: round(run.costUsd, 6),
     ttftMs: run.ttftMs ?? null,
     durationMs: run.durationMs ?? null,
+    waitMs: run.waitMs ?? null,
+    activeMs: run.activeMs ?? null,
     stopReason: run.stopReason ?? null,
     errorType: run.errorType ?? null,
     errorMessage: run.errorMessage ?? null,

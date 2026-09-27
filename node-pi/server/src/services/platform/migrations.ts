@@ -25,7 +25,7 @@ export interface Migration {
 }
 
 /** 当前目标版本（新增迁移时同步递增）。 */
-export const TARGET_SCHEMA_VERSION = 3;
+export const TARGET_SCHEMA_VERSION = 4;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -193,6 +193,19 @@ export const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (task_id, id)
       )`,
       `CREATE INDEX IF NOT EXISTS idx_task_steps_order ON task_steps(task_id, position)`,
+    ],
+  },
+  {
+    // P0/P1 可观测性扩容：把「人机等待」从 run 耗时里拆出来。
+    // 中文说明：`runs.duration_ms` 里混着审批/提问等待，p95 会被等人时间污染；
+    // `wait_ms`（等真人）与 `active_ms`（机器干活）分开记，同一列的旧数据保持 NULL
+    // （历史 run 无法回溯拆分，面板按「无此数据」处理）。
+    // `run_rollups.wait_ms` 只服务「累计人工等待」这一个指标；ALTER 加列对已有行取默认 0。
+    version: 4,
+    statements: [
+      `ALTER TABLE runs ADD COLUMN wait_ms INTEGER`,
+      `ALTER TABLE runs ADD COLUMN active_ms INTEGER`,
+      `ALTER TABLE run_rollups ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0`,
     ],
   },
 ];

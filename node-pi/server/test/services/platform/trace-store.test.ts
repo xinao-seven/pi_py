@@ -200,6 +200,9 @@ function sampleOps(): TraceOp[] {
         costUsd: 0.003,
         durationMs: 9_000,
         ttftMs: 800,
+        // 人机等待单独记：durationMs 含等人时间，activeMs 才是机器耗时。
+        waitMs: 4_000,
+        activeMs: 5_000,
         errorType: 'provider_error',
         errorMessage: 'rate limited',
       }),
@@ -289,6 +292,10 @@ describe.each([
     expect(summary.totals.costUsd).toBeCloseTo(0.015, 6);
     expect(summary.totals.durationSamples).toEqual([9_000, 5_000]);
     expect(summary.totals.ttftSamples).toEqual([800, 320]);
+    // 只有 run-2 拆过 wait/active：样本口径是「有的才算」，累计值来自预聚合表。
+    expect(summary.totals.waitSamples).toEqual([4_000]);
+    expect(summary.totals.activeSamples).toEqual([5_000]);
+    expect(summary.totals.humanWaitMs).toBe(4_000);
 
     // bash: 2 次调用（1 次正常 + 1 次被审批拦下）。被拦下不算 error。
     const bash = summary.byTool.find((tool) => tool.toolName === 'bash');
@@ -314,6 +321,27 @@ describe.each([
     const model = summary.byModel.find((item) => item.model === 'deepseek-chat');
     expect(model).toMatchObject({ provider: 'deepseek', runs: 1, tokens: 1_200 });
     expect(model?.durationSamples).toEqual([5_000]);
+    storage.close();
+  });
+
+  it('round-trips waitMs/activeMs and keeps them out of the duration samples', () => {
+    const storage = applyTo(create(), [
+      { op: 'run_start', run: makeRun() },
+      {
+        op: 'run_finish',
+        runId: 'run-1',
+        patch: makeFinish({ waitMs: 1_500, activeMs: 3_500 }),
+      },
+    ] satisfies TraceOp[]);
+
+    const run = storage.listRuns({ limit: 1 }).runs[0];
+    expect(run).toMatchObject({ durationMs: 5_000, waitMs: 1_500, activeMs: 3_500 });
+    expect(storage.getRun('run-1')?.run).toMatchObject({ waitMs: 1_500, activeMs: 3_500 });
+    const summary = storage.summary({});
+    expect(summary.totals.durationSamples).toEqual([5_000]);
+    expect(summary.totals.waitSamples).toEqual([1_500]);
+    expect(summary.totals.activeSamples).toEqual([3_500]);
+    expect(summary.totals.humanWaitMs).toBe(1_500);
     storage.close();
   });
 

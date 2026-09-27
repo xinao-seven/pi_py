@@ -3,7 +3,12 @@
 import { computed, onMounted, ref, watch } from 'vue';
 
 import { getObservabilityRun, getObservabilitySummary, listObservabilityRuns } from '@/lib/api';
-import type { ObservabilityRun, ObservabilityRunDetail, ObservabilitySummary } from '@/types';
+import type {
+  ObservabilityRun,
+  ObservabilityRunDetail,
+  ObservabilityStep,
+  ObservabilitySummary,
+} from '@/types';
 
 const props = defineProps<{
   /** 当前工作区（cwd 过滤是可选项，默认跟随）。 */
@@ -100,6 +105,20 @@ function formatRate(rate: number): string {
 function stepResultLabel(step: { blockedBy: string | null; isError: boolean }): string {
   if (step.blockedBy) return `已拦截（${step.blockedBy}）`;
   return step.isError ? '失败' : 'ok';
+}
+
+/**
+ * 步骤的「名称」列。
+ * 中文说明：非工具类步骤（上下文注入、配置变更）没有 toolName，它们的看点全在 meta 里，
+ * 所以从 meta 里取一个有意义的标签（注入类型 / 改了哪个字段），而不是一律显示「—」。
+ */
+function stepLabel(step: ObservabilityStep): string {
+  if (step.toolName) return step.toolName;
+  const meta = step.meta ?? {};
+  if (typeof meta.customType === 'string') return meta.customType;
+  if (typeof meta.field === 'string') return `${meta.field}: ${String(meta.to ?? '—')}`;
+  if (typeof meta.reason === 'string') return meta.reason;
+  return '—';
 }
 
 function formatTime(iso: string): string {
@@ -199,6 +218,14 @@ const cacheHitRate = computed<number | null>(() => {
         <span class="kpi-hint">p50 {{ formatDuration(totals?.p50DurationMs ?? null) }}</span>
       </article>
       <article class="kpi">
+        <span class="kpi-label">机器耗时 p95</span>
+        <strong>{{ formatDuration(totals?.p95ActiveDurationMs ?? null) }}</strong>
+        <span class="kpi-hint">
+          等人 p50 {{ formatDuration(totals?.p50WaitMs ?? null) }} / 累计
+          {{ formatDuration(totals?.humanWaitMs ?? null) }}
+        </span>
+      </article>
+      <article class="kpi">
         <span class="kpi-label">首 token p50</span>
         <strong>{{ formatDuration(totals?.p50TtftMs ?? null) }}</strong>
         <span class="kpi-hint">轮次 {{ totals?.turns ?? 0 }}</span>
@@ -208,6 +235,11 @@ const cacheHitRate = computed<number | null>(() => {
     <p class="observability-footnote">
       缓存命中率＝cacheRead /（输入 + cacheRead）。工具列表或系统提示词一变，整段前缀失配，
       命中率会当场掉下去——用它验证「改工具集」一类优化的效果。
+    </p>
+
+    <p class="observability-footnote">
+      「运行耗时」是总时长（含等真人），「机器耗时」扣掉了审批与提问的等待：
+      两者差得越大，说明瓶颈在人在回路而不是模型。
     </p>
 
     <section class="observability-section">
@@ -335,7 +367,7 @@ const cacheHitRate = computed<number | null>(() => {
               <tbody>
                 <tr v-for="(step, index) in detail.steps" :key="index">
                   <td class="mono">{{ step.kind }}</td>
-                  <td class="mono">{{ step.toolName ?? '—' }}</td>
+                  <td class="mono">{{ stepLabel(step) }}</td>
                   <td>{{ formatDuration(step.durationMs) }}</td>
                   <td>
                     <span v-if="step.blockedBy" class="step-blocked">

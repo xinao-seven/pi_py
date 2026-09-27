@@ -10,9 +10,21 @@
 /** run 的状态机：running 是唯一非终态。 */
 export type RunStatus = 'running' | 'completed' | 'aborted' | 'error';
 
-/** 步骤类型（与规划文档 §4.1.1 的 kind 取值一致）。 */
+/**
+ * 步骤类型（与规划文档 §4.1.1 的 kind 取值一致，P0/P1 追加了后三项）。
+ * 中文说明：后三项是 M1 之后补的——`question` 记「等用户回答」，
+ * `context_injection` 记「谁往上下文里塞了东西」，`config_change` 记「run 中途换了模型/思考级别」。
+ */
 export type StepKind =
-  'llm_call' | 'tool_call' | 'approval' | 'compaction' | 'branch_summary' | 'memory_write';
+  | 'llm_call'
+  | 'tool_call'
+  | 'approval'
+  | 'compaction'
+  | 'branch_summary'
+  | 'memory_write'
+  | 'question'
+  | 'context_injection'
+  | 'config_change';
 
 /** 策略阻断来源：非空表示该 tool_call 是被拦下的，不是执行失败。 */
 export type BlockedBy = 'approval' | 'plan_mode' | 'policy';
@@ -38,6 +50,14 @@ export interface RunRow {
   costUsd: number;
   ttftMs?: number;
   durationMs?: number;
+  /**
+   * 人机等待时长（审批 + 提问）。
+   * 中文说明：`durationMs` 里混着「等人点确认」的时间，一个跑了 8 分钟、其中 6 分钟在等人的
+   * run 会让 p95 完全失真，所以把等待单独记一列，`activeMs` 才是机器真正干活的时长。
+   */
+  waitMs?: number;
+  /** 纯机器耗时 = max(0, durationMs - waitMs)。 */
+  activeMs?: number;
   stopReason?: string;
   errorType?: string;
   errorMessage?: string;
@@ -57,6 +77,8 @@ export type RunFinish = Pick<
   | 'costUsd'
   | 'ttftMs'
   | 'durationMs'
+  | 'waitMs'
+  | 'activeMs'
   | 'stopReason'
   | 'errorType'
   | 'errorMessage'
@@ -112,6 +134,14 @@ export interface RunQuery extends TraceQuery {
   taskId?: string;
   limit: number;
   cursor?: string;
+}
+
+/** 会占用「人机等待」的步骤类型（审批与提问是仅有的两处真人阻塞点）。 */
+export type HumanWaitKind = 'approval' | 'question';
+
+/** 该步骤的耗时是否属于「等人」（用于 run 的 active/wait 拆分）。 */
+export function isHumanWaitStep(kind: StepKind): kind is HumanWaitKind {
+  return kind === 'approval' || kind === 'question';
 }
 
 /** 被策略拦下的 tool_call 不算工具失败（M0 修正 ④）。 */

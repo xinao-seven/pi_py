@@ -43,6 +43,7 @@ interface RunRollup {
   cacheReadTokens: number;
   costUsd: number;
   errors: number;
+  waitMs: number;
 }
 
 interface ToolRollup {
@@ -115,6 +116,7 @@ export class MemoryTraceStorage implements TraceStorage {
       outputTokens: sum(rollups, (rollup) => rollup.outputTokens),
       cacheReadTokens: sum(rollups, (rollup) => rollup.cacheReadTokens),
       costUsd: sum(rollups, (rollup) => rollup.costUsd),
+      humanWaitMs: sum(rollups, (rollup) => rollup.waitMs),
       // 分位数是唯一走明细的部分（范围内最近 N 条样本）。
       durationSamples: samples(
         runs.filter((run) => run.durationMs !== undefined),
@@ -124,6 +126,16 @@ export class MemoryTraceStorage implements TraceStorage {
       ttftSamples: samples(
         runs.filter((run) => run.ttftMs !== undefined),
         (run) => run.ttftMs!,
+        sampleLimit,
+      ),
+      activeSamples: samples(
+        runs.filter((run) => run.activeMs !== undefined),
+        (run) => run.activeMs!,
+        sampleLimit,
+      ),
+      waitSamples: samples(
+        runs.filter((run) => run.waitMs !== undefined),
+        (run) => run.waitMs!,
         sampleLimit,
       ),
     };
@@ -200,6 +212,7 @@ export class MemoryTraceStorage implements TraceStorage {
       cacheReadTokens: 0,
       costUsd: 0,
       errors: 0,
+      waitMs: 0,
     };
     rollup.runs += 1;
     rollup.turns += patch.turns;
@@ -207,6 +220,7 @@ export class MemoryTraceStorage implements TraceStorage {
     rollup.outputTokens += patch.outputTokens;
     rollup.cacheReadTokens += patch.cacheReadTokens;
     rollup.costUsd += patch.costUsd;
+    rollup.waitMs += patch.waitMs ?? 0;
     rollup.errors += patch.status === 'error' ? 1 : 0;
     this.runRollups.set(key, rollup);
   }

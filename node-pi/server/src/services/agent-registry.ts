@@ -789,10 +789,11 @@ export class AgentRegistry {
     questions?.setResolvedListener((sessionId, questionId) =>
       this.announceQuestionResolved(sessionId, questionId),
     );
-    // 审批与 Plan 的拦截都要让账本知道（否则会被统计成工具失败）。
+    // 审批、提问、Plan 的拦截都要让账本知道（否则会被统计成工具失败 / 丢失人机等待时长）。
     if (ledger) {
       approvals?.setTraceSink(ledger);
       plans?.setTraceSink(ledger);
+      questions?.setTraceSink(ledger);
     }
   }
 

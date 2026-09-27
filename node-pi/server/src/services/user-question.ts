@@ -75,6 +75,26 @@ export interface QuestionOutcome {
   answers: QuestionAnswer[];
 }
 
+/**
+ * 可观测性钩子（P0）。
+ * 中文说明：与 `ApprovalTraceSink` 同形——只声明「挂起」与「结算」两件事，接口留在本文件，
+ * 账本按结构实现，因此提问中枢不需要 import 账本。实现方必须自行吞掉异常。
+ */
+export interface QuestionTraceSink {
+  noteQuestionStart(input: {
+    sessionId: string;
+    questionId: string;
+    toolCallId: string;
+    questionCount: number;
+  }): void;
+  noteQuestionDecision(input: {
+    sessionId: string;
+    questionId: string;
+    reason: QuestionReason;
+    answers?: number;
+  }): void;
+}
+
 export interface UserQuestionOptions {
   /**
    * 用户未回答时的等待上限（毫秒），默认 10 分钟。
@@ -199,6 +219,7 @@ export class QuestionBroker {
   private readonly waiting = new Map<string, Waiter>();
   private onPending: ((pending: PendingQuestion) => void) | undefined;
   private onResolved: ((sessionId: string, questionId: string) => void) | undefined;
+  private trace: QuestionTraceSink | undefined;
 
   constructor(private readonly options: UserQuestionOptions = {}) {}
 
@@ -288,6 +309,15 @@ export class QuestionBroker {
         input.signal?.removeEventListener('abort', abort);
         this.waiting.delete(key);
         this.onResolved?.(pending.sessionId, pending.questionId);
+        // 观测：等待时长与结算原因（notify 内部吞异常，不影响结算）。
+        this.notify(() =>
+          this.trace?.noteQuestionDecision({
+            sessionId: pending.sessionId,
+            questionId: pending.questionId,
+            reason,
+            answers: answers.length,
+          }),
+        );
         resolve({ answered: reason === 'user', reason, answers });
       };
       const abort = (): void => settle('abort');
@@ -301,6 +331,14 @@ export class QuestionBroker {
       this.waiting.set(key, waiter);
       input.signal?.addEventListener('abort', abort, { once: true });
       this.onPending?.(pending);
+      this.notify(() =>
+        this.trace?.noteQuestionStart({
+          sessionId: pending.sessionId,
+          questionId: pending.questionId,
+          toolCallId: pending.toolCallId,
+          questionCount: pending.questions.length,
+        }),
+      );
     });
     return { pending, outcome };
   }
@@ -313,6 +351,20 @@ export class QuestionBroker {
   /** 注册「提问已结算」监听器（注册表用它发 SSE `question_resolved`）。 */
   setResolvedListener(listener: (sessionId: string, questionId: string) => void): void {
     this.onResolved = listener;
+  }
+
+  /** 注册可观测性钩子（账本用它记「等人回答」的等待时长）。 */
+  setTraceSink(sink: QuestionTraceSink): void {
+    this.trace = sink;
+  }
+
+  /** 可观测性是增量能力：抛错就静默降级，不影响提问链路。 */
+  private notify(action: () => void): void {
+    try {
+      action();
+    } catch {
+      // 静默降级
+    }
   }
 
   /**

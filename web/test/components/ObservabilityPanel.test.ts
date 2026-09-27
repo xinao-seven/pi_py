@@ -26,6 +26,9 @@ function summary(overrides: Partial<ObservabilitySummary> = {}): ObservabilitySu
       p50DurationMs: 5_100,
       p95DurationMs: 21_000,
       p50TtftMs: 320,
+      p95ActiveDurationMs: 9_000,
+      p50WaitMs: 1_200,
+      humanWaitMs: 36_000,
       errorRate: 0.25,
     },
     byModel: [
@@ -90,6 +93,8 @@ function runDetail(): ObservabilityRunDetail {
       costUsd: 0.002,
       ttftMs: 300,
       durationMs: 5_000,
+      waitMs: 1_500,
+      activeMs: 3_500,
       stopReason: 'endTurn',
       errorType: null,
       errorMessage: null,
@@ -142,6 +147,29 @@ function runDetail(): ObservabilityRunDetail {
         decidedBy: null,
         meta: null,
       },
+      {
+        kind: 'context_injection',
+        turnIndex: 1,
+        toolName: null,
+        toolCallId: null,
+        startedAt: '2026-08-20T10:00:03.000Z',
+        endedAt: '2026-08-20T10:00:03.000Z',
+        durationMs: 0,
+        isError: false,
+        blockedBy: null,
+        errorType: null,
+        errorMessage: null,
+        argsDigest: null,
+        argsBytes: null,
+        resultDigest: null,
+        resultBytes: null,
+        approvalRule: null,
+        approvalRisk: null,
+        approvalDecision: null,
+        approvalWaitMs: null,
+        decidedBy: null,
+        meta: { customType: 'web-plan-context', chars: 120 },
+      },
     ],
     children: [],
   };
@@ -167,6 +195,8 @@ describe('ObservabilityPanel', () => {
     const text = wrapper.text();
     expect(text).toContain('$0.0123'); // 累计成本
     expect(text).toContain('21.0 s'); // p95 运行耗时
+    expect(text).toContain('9.0 s'); // p95 机器耗时（扣掉等人）
+    expect(text).toContain('1.2 s'); // 等人 p50
     expect(text).toContain('320 ms'); // 首 token p50
     expect(text).toContain('25.0%'); // 失败率
     expect(text).toContain('bash');
@@ -212,6 +242,8 @@ describe('ObservabilityPanel', () => {
     expect(vi.mocked(getObservabilityRun)).toHaveBeenCalledWith('run-1');
     expect(wrapper.find('.run-detail').text()).toContain('已拦截（approval）');
     expect(wrapper.find('.run-detail').text()).toContain('llm_call');
+    // 非工具步骤（上下文注入）从 meta 里取标签，而不是一律显示「—」。
+    expect(wrapper.find('.run-detail').text()).toContain('web-plan-context');
 
     // 再次点击收起详情
     await wrapper.find('.run-row').trigger('click');

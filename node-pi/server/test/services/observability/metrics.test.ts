@@ -68,6 +68,9 @@ describe('buildSummary', () => {
         costUsd: 0.0500001,
         durationSamples: [1_000, 2_000, 3_000, 4_000],
         ttftSamples: [100, 200, 300, 400],
+        activeSamples: [800, 1_600, 2_400, 3_200],
+        waitSamples: [200, 400, 600, 800],
+        humanWaitMs: 2_000,
       },
       byModel: [
         {
@@ -115,6 +118,9 @@ describe('buildSummary', () => {
       p50DurationMs: 2_000,
       p95DurationMs: 4_000,
       p50TtftMs: 200,
+      p95ActiveDurationMs: 3_200,
+      p50WaitMs: 400,
+      humanWaitMs: 2_000,
       errorRate: 0.25,
     });
     expect(summary.byModel[0]).toMatchObject({ costUsd: 0.05, p95DurationMs: 4_000 });

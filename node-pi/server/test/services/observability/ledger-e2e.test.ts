@@ -140,6 +140,9 @@ describe('SessionLedger end to end (real SDK + fauxProvider)', () => {
     // TTFT 与 run 耗时都来自真实事件时间戳。
     expect(detail?.run.ttftMs).toBeGreaterThanOrEqual(0);
     expect(detail?.run.durationMs).toBeGreaterThanOrEqual(0);
+    // P0：人机等待拆分对每一次 run 都会写（这次没等人，所以是 0）。
+    expect(detail?.run.waitMs).toBe(0);
+    expect(detail?.run.activeMs).toBe(detail?.run.durationMs);
 
     const kinds = detail?.steps.map((step) => step.kind) ?? [];
     expect(kinds.filter((kind) => kind === 'llm_call')).toHaveLength(2);
@@ -155,6 +158,11 @@ describe('SessionLedger end to end (real SDK + fauxProvider)', () => {
     expect(tool?.toolName).toBe(toolName);
     expect(tool?.argsDigest).toBeTruthy();
     expect(tool?.isError).toBe(false);
+
+    // P1：请求形状（`before_provider_request`）需要真实 provider 的 `onPayload` 钩子，
+    // fauxProvider 直接产出响应、不经过 provider 的 payload 组装（也不发 `model_select`），
+    // 所以这里不断言它；该钩子的接线由 `observability-extension.test.ts` 与
+    // `spike/09-observability-hooks.mjs`（静态校验每个 provider 仍调用 onPayload）守门。
 
     // 聚合读路径也要有数（Dashboard 就是读这些）。
     const summary = harness.store.traces.summary({});

@@ -342,3 +342,62 @@ describe('buildExtension（ask_user 工具）', () => {
     error.mockRestore();
   });
 });
+
+describe('QuestionBroker 可观测性钩子（P0）', () => {
+  it('reports the pending question and its settlement to the trace sink', async () => {
+    const broker = makeBroker();
+    const started: unknown[] = [];
+    const decided: unknown[] = [];
+    broker.setTraceSink({
+      noteQuestionStart: (input) => started.push(input),
+      noteQuestionDecision: (input) => decided.push(input),
+    });
+
+    const asking = broker.ask({
+      sessionId: 'session-1',
+      toolCallId: 'call-1',
+      questions: QUESTIONS,
+    });
+    await Promise.resolve();
+    const pending = broker.pendingForSession('session-1')!;
+    expect(started).toEqual([
+      {
+        sessionId: 'session-1',
+        questionId: pending.questionId,
+        toolCallId: 'call-1',
+        questionCount: 2,
+      },
+    ]);
+
+    broker.answer('session-1', pending.questionId, { answers: [{ id: 'q1', selected: ['继续'] }] });
+    await asking;
+
+    expect(decided).toEqual([
+      // 两道题都会有答案条目（未填的按空处理），因此是 2 而不是 1。
+      { sessionId: 'session-1', questionId: pending.questionId, reason: 'user', answers: 2 },
+    ]);
+  });
+
+  it('reports a timeout settlement and swallows sink failures', async () => {
+    const broker = makeBroker({ timeoutMs: 5 });
+    const decided: unknown[] = [];
+    broker.setTraceSink({
+      // 观测抛错不能影响提问链路（notify 内部静默降级）。
+      noteQuestionStart: () => {
+        throw new Error('sink down');
+      },
+      noteQuestionDecision: (input) => decided.push(input),
+    });
+
+    const { outcome } = await broker.ask({
+      sessionId: 'session-1',
+      toolCallId: 'call-2',
+      questions: [{ id: 'q1', question: '在？' }],
+    });
+
+    expect(outcome).toMatchObject({ answered: false, reason: 'timeout' });
+    expect(decided).toEqual([
+      { sessionId: 'session-1', questionId: 'question-1', reason: 'timeout', answers: 0 },
+    ]);
+  });
+});
