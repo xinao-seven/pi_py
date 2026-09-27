@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **427** / Web **149**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项断言） |
+| 测试基线   | Node 后端 **427** / Web **150**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -196,8 +196,14 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 4. **`wait_ms`/`active_ms` 只对新记录生效**（迁移 v4 加列，历史 NULL 不回溯；分位数样本「有值才进」）。
 
 实测：Node 后端测试 399 → **427**（新增 `prompt-shape` / `observability-extension` 两个测试文件，并扩充
-`session-ledger` / `trace-store` / `user-question` / `ledger-e2e`），新增 `spike/09-observability-hooks.mjs`
-（15 项断言，已进 `npm run spike` 门禁）。
+`session-ledger` / `trace-store` / `user-question` / `ledger-e2e`），Web 149 → **150**，
+新增 `spike/09-observability-hooks.mjs`（15 项断言，已进 `npm run spike` 门禁）。
+
+**前端可见性已补齐**（新增观测数据必须回答“显示在哪里”）：run 详情步骤表新增「详情」列
+（llm_call 的请求形状与 `cacheHitRate`、tool_call 的首字节耗时），详情头部用 chips 显示
+`run.meta` 计数器与「总 / 机器 / 等人」拆分，运行列表行显示“+等人 x”；窄屏下改为横向滚动。
+仍仅 REST 可查的：注入 `chars`/`digest`、`config_change.from`/`source`、`question.questions`/`answers`，
+以及提问等待的独立聚合（需后端新增 `question_rollups`）。
 
 ---
 

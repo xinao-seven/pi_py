@@ -116,8 +116,29 @@ ALTER TABLE run_rollups ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;
 **run meta 追加**：§2.1 的计数器（为 0 的键不写，避免 meta 里堆零）。
 
 前端同步点：`web/src/types/index.ts`（`ObservabilitySummary.totals` / `ObservabilityRun` /
-`ObservabilityStep.kind`）、`web/src/components/ObservabilityPanel.vue`（新增 KPI、
-步骤「名称」列对非工具步骤从 meta 取标签）。
+`ObservabilityStep.kind`）、`web/src/components/ObservabilityPanel.vue`。
+
+### 4.1 前端可见性对照（“记了”是否等于“看得到”）
+
+第一版只把 3 个 KPI 与新增的步骤类型搬上了面板，大量字段「入了库但界面上看不到」
+（只能直接调 REST）。现已补齐前四项：
+
+| 数据 | 面板位置 | 状态 |
+| --- | --- | --- |
+| `p95ActiveDurationMs` / `p50WaitMs` / `humanWaitMs` | KPI「机器耗时 p95」+ 提示行 | ✅ |
+| `question` / `context_injection` / `config_change` 步骤 | 详情步骤表的 kind 列 | ✅ |
+| **`llm_call` 请求形状**（`promptMessages` / `promptTools` / `toolsChanged` / `systemChanged` / `cacheHitRate`） | 步骤表新增的「详情」列；工具名清单放进 `title` 悬浮提示 | ✅ |
+| **`runs.meta` 计数器**（重试成败 / steer 峰值 / 注入次数 / 会话条目 / `promptShapeChanges`，以及 M5 的 `preset` / `depth`） | 详情头部的 chips（只为有值的键渲染） | ✅ |
+| 每条 run 的 `waitMs` / `activeMs` | 列表行「+等人 x」+ 详情头部「总 / 机器 / 等人」拆分 | ✅ |
+| `tool_call.meta.firstOutputMs` / `progressUpdates` | 步骤表「详情」列 | ✅ |
+| `context_injection.meta.chars` / `digest`、`config_change.meta.from` / `source`、`question.meta.questions` / `answers` | — | ❌ 仍仅 REST 可查 |
+| 提问等待的**独立聚合**（按类型分开的等待分位数） | — | ❌ 需新增 `question_rollups` 表 + REST 字段（后端改动） |
+
+窄屏（≤760px，与仓库既有断点一致）下：运行行与步骤表改为**横向滚动**而不是压扁列宽
+（规则一，见 [`web-mobile-adaptation.md`](web-mobile-adaptation.md)）——等人列在窄屏下被压掉就等于没采。
+
+**教训（写下来避免重犯）**：P1 花力气采回来的数据如果界面上看不到，就等于只有我自己能用。
+新增观测字段时，除了「入库 + 类型同步」，还要明确一句：**它显示在哪里**。
 
 ---
 
@@ -160,7 +181,7 @@ ALTER TABLE run_rollups ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;
 | `test/services/user-question.test.ts` | 提问挂起/结算上报、超时原因、sink 抛错不影响提问 |
 | `test/services/observability/metrics.test.ts` | 新 totals 字段整形 |
 | `test/services/observability/ledger-e2e.test.ts` | 真实 SDK + `fauxProvider`：run 状态/turns/tokens、`waitMs=0` / `activeMs=durationMs`（注：faux 不经过 provider 的 `onPayload`，请求形状由 `spike/09` 守门） |
-| `web/test/components/ObservabilityPanel.test.ts` | 新 KPI 渲染、非工具步骤的标签来自 meta |
+| `web/test/components/ObservabilityPanel.test.ts` | 新 KPI 渲染、非工具步骤的标签来自 meta、请求形状/工具首字节的「详情」列、run.meta chips（只为有值的键渲染）、等人 vs 机器耗时拆分、老记录缺 waitMs 时的占位 |
 | `spike/09-observability-hooks.mjs`（新，15 项断言） | provider 层仍调 `onPayload`、扩展钩子接线、真实载荷形状提取、SQLite 落库与聚合 |
 
 验证命令（全绿）：
@@ -170,7 +191,7 @@ cd node-pi/server && npm run format:check && npm run typecheck && npm test && np
 cd web && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-Node 后端测试从 **399 → 427**，Web 保持 **149**（在既有用例上补断言）。
+Node 后端测试从 **399 → 427**，Web 从 **149 → 150**。
 
 ### 7.1 为什么还需要一个 spike
 
