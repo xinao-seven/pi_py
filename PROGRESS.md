@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **441** / Web **169**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
+| 测试基线   | Node 后端 **441** / Web **173**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -602,6 +602,29 @@ Web +4（归一化 4 例，含 5000 层不爆栈）→ Node 373 / Web 128。
 
 **证据**：Node 399 用例 / Web 149 用例全绿，新增 `spike/08-preset-capabilities.mjs`（15 项断言，
 真实 SDK + faux provider）；详见 `docs/node-preset-capabilities.md` §8。
+
+### 3.17 Skills 单条描述撑满弹窗 + 弹窗滚不动（已完成，`docs/web-modal-scroll-skills-entry.md`）
+
+**问题**：设置 → Skills 里一个 skill 描述很长（例如 `agent-reach` 的 900 字多段触发说明）时，
+单个条目占满面板正文，而且矮窗口下滞轮滚不动、够不到弹窗下半部分。
+
+**根因（四个叠在一起，缺一个都不会这么表现）**：
+
+1. 遮罩层 `.modal-backdrop` / `.settings-backdrop` 用 `place-items: center` 居中且**自己不可滚**：
+   弹窗高于视口时上下两端同时被推到可视区外，且 `body { overflow: hidden }` 也救不了；
+2. 弹窗 `min-height`（340px / 460px）跟视口较劲：矮窗口下 `max-height` 压不住 `min-height`；
+3. 设置页导航列 6 个按钮的 `min-content`（≈255px）撑高网格行，内容从 `overflow: hidden` 里被裁掉；
+4. `.skill-card p` 无高度上限，描述多长条目就多高。
+
+**修法**：遮罩层 `overflow-y: auto`；居中改由弹窗 `margin: auto`（溢出时归零 → 顶部可达）；
+`min-height` 改为 `min(340px/460px, calc(100vh - 48px))`；导航列 `min-height: 0 + overflow-y: auto`；
+skill 描述 3 行封顶 + 内部滚动（不做省略号，因为描述就是「什么时候用这个 skill」的判据）。
+
+**证据**：用「真实组件 dump + 构建产物 CSS + headless Chrome 量测」对比了修复前后
+（条目 261px → 129px、占正文 57% → 28%；视口 300px 时弹窗底部由“被切且 maxScroll=0”变为完整可见 +
+遮罩可滚 18px；小弹窗仍水平/垂直居中）——方法与数据见文档 §2–§3。
+新增 `web/test/components/modal-layout-contracts.test.ts`（4 条布局契约 + 反向验证）。
+基线：Web **169 → 173**。
 
 ---
 

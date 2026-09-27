@@ -147,6 +147,12 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 ## 前端要点
 
+- **弹窗（`.modal-backdrop` / `.settings-backdrop`）的滚动与居中是一对硬约束**：遮罩层必须
+  `overflow-y: auto`，居中一律用弹窗自己的 `margin: auto`——**不要用 `place-items: center`**（弹窗比视口高时
+  会把上下两端推出可视区，而遮罩层一滚不到就永远够不着）。弹窗的 `min-height` 必须用
+  `calc(100vh - 48px)` 封顶，否则它比 `max-height` 更优先、矮窗口下必定溢出。
+  单个条目的长文本（如 skill 描述）要有 `max-height` + 内部滚动，不得让它撑满整个面板。
+  契约测试在 `web/test/components/modal-layout-contracts.test.ts`，详见 `docs/web-modal-scroll-skills-entry.md`。
 - 类型集中在 `web/src/types/index.ts`；API 调用统一走 `web/src/lib/api.ts`（统一解析为 `ApiError`）；状态用 Pinia，组件间不 props 深传。
 - 后端形状差异（如分支树：Node 扁平 / Python 嵌套）在 API 层归一化（`web/src/lib/session-tree.ts`），组件只面对一种形状；**任何遍历会话结构的地方一律用显式栈，不用递归**（长会话会爆栈）。
 - SSE 事件 → 流式状态：`web/src/lib/agent-events.ts` 的 `reduceAgentEvent` 是纯函数规约，新增事件类型时同步更新。
@@ -178,6 +184,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/node-session-tree-flat.md` | 长会话读取崩溃修复：`GET /api/sessions/:id` 分支树扁平化契约与前端归一化 |
 | `docs/web-observability-panel-scroll.md` | 前端修复：设置 →「用量」面板的高度与滚动契约（滚不动的根因与回归防线） |
+| `docs/web-modal-scroll-skills-entry.md` | 前端修复：Skills 单条描述撑满弹窗 + 弹窗比视口高时滚不动（遮罩层可滚、`margin:auto` 居中、描述限高；含真浏览器量测方法与布局契约测试） |
 | `docs/web-chat-render-fixes.md` | 前端修复：上下文占用条对比度、Markdown 表格边框/横向滚动、用户消息块内左对齐 |
 | `docs/web-tool-call-summary.md` | **工具调用块折叠摘要**：bash 命令 / 文件路径 / 搜索模式提到 summary，未知工具不猜参数 |
 | `docs/web-mobile-adaptation.md` | **移动端适配**：窄屏高度预算、按钮不变形的三条规则、安全区与 `dvh` 约定 |

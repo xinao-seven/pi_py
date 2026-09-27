@@ -245,6 +245,7 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-session-tree-flat.md`](docs/node-session-tree-flat.md) | **长会话读取崩溃修复**：分支树扁平化（`tree` 契约、前端归一化、回归测试） |
 | [`docs/sse-streaming-render-pipeline.md`](docs/sse-streaming-render-pipeline.md) | **SSE 流式渲染全链路**：核心发事件 → 后端 SSE 转发 → 前端规约 → 虚拟列表 → Markdown 上屏 |
 | [`docs/web-observability-panel-scroll.md`](docs/web-observability-panel-scroll.md) | **用量页面滚不动的修复**：设置弹窗里嵌入式面板的高度/滚动契约 |
+| [`docs/web-modal-scroll-skills-entry.md`](docs/web-modal-scroll-skills-entry.md) | **Skills 单条描述撑满弹窗 + 弹窗滚不动的修复**：遮罩层可滚、`margin:auto` 居中、描述 3 行封顶 |
 | [`docs/web-task-plan-panel.md`](docs/web-task-plan-panel.md) | **计划/任务合并为右上角悬浮面板**：合并规则、交互契约、自动展开时机 |
 | [`docs/web-tool-call-summary.md`](docs/web-tool-call-summary.md) | **工具调用块折叠摘要**：bash 命令/文件路径/搜索模式提到 summary，未知工具不猜参数 |
 | [`docs/development-standards.md`](docs/development-standards.md) | 开发与提交规范 |
