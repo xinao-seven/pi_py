@@ -123,6 +123,10 @@ function messageOf(cause: unknown): string {
 /* 技能列表：卡片、开关与诊断信息；弹窗骨架在 globals.css 中共享 */
 .skills-list {
   display: grid;
+  /* 网格容器的 align-content 默认是 stretch：正文比条目总高度还高时（技能少、
+     或窗口很高），隐式行会被拉伸填满整个正文——于是「只有一条技能」时它就
+     沾满整个弹窗。列表从顶部排列，多出来的空间留白即可。 */
+  align-content: start;
   gap: 10px;
 }
 

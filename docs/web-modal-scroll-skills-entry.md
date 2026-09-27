@@ -1,7 +1,9 @@
 # 前端缺陷修复：Skills 面板单条过长撑满弹窗 + 弹窗滚不动
 
-> 类型：纯前端布局修复（无后端/契约变更）。涉及 `web/src/globals.css`、`SettingsDialog.vue`、
-> `SkillsConfig.vue`、`SessionInfoPanel.vue` 与一条布局契约测试。
+> 类型：前端布局 + 后端技能发现口径修复。涉及 `web/src/globals.css`、`SettingsDialog.vue`、
+> `SkillsConfig.vue`、`SessionInfoPanel.vue`、`node-pi/server/src/services/skill-service.ts`
+> 与两条回归测试（布局契约 / `skill-service.test.ts`）。
+> 第二次修复见 §9（「只显示一条 + 那一条沾满弹窗」）。
 
 ## 1. 现象
 
@@ -127,3 +129,72 @@
 2. 列表能一路滚到最后一条，底部「完成」按钮始终可见可达；
 3. 「会话信息」面板同样：弹窗完整落在视口内，滚轮能把内容滚到底；
 4. 正常高度的窗口下弹窗仍然**居中**（未被 `margin: auto` 改成贴顶）。
+
+---
+
+## 9. 第二次修复：为什么「只显示一条」而且那一条还占满弹窗
+
+上一轮的限高只解决了「单条描述过长」，用户复现的是另一组合症状：**面板里只有一条 skill，
+而且这一条从上到下占满整个弹窗**。根因有两个，彼此独立，缺一不可。
+
+### 9.1 根因 A：面板的发现口径比模型少一半（所以只剩一条）
+
+本机 `~/.pi/agent/skills/` 只有 1 个 skill（`tavily-search`），而 `~/.agents/skills/` 下还有
+3 个（`agent-reach` / `code-simplifier` / `frontend-design`）。同一工作区的会话信息面板
+（`GET /api/agent/:id/prompt`）显示 `skills: 4`，模型也确实能用这 4 个；只有设置里的
+Skills 面板显示 1 个。
+
+原因：`SkillService.list()` 直接调 SDK 的 `loadSkills()`，它**只**扫两处：
+`{agentDir}/skills` 与 `{cwd}/.pi/skills`。而会话用的 `DefaultResourceLoader`（经
+PackageManager）还会扫 `~/.agents/skills` 与 `{cwd}(及祖先到 git 根)/.agents/skills` ——
+这正是 CLI 与模型看到的清单。两套口径不一致，面板自然少条目。
+
+修法：`SkillService.discover()` 不再直接用 `loadSkills`，而是构造会话同款
+`DefaultResourceLoader`（`noExtensions/noPromptTemplates/noThemes/noContextFiles`，只发现技能，
+避免为「看一眼」去执行用户目录里的扩展代码），`reload()` 后取 `getSkills()`。于是面板的
+来源分组（用户/项目）、settings 里的启停、`.agents` 目录全部与模型一致。
+
+> 注意：`.agents/skills` 是**逐级祖先**收集的，所以临时工作区建在用户主目录下时，
+> 测试会顺带发现真实 `~/.agents` 里的技能；测试只断言本次造出来的条目（`arrayContaining`），
+> 不假设它是唯一的。
+
+### 9.2 根因 B：网格的隐式行被拉伸（所以那一条占满）
+
+`.skills-list` 是 `display: grid`（单列）。CSS Grid 的 `align-content` 默认值是 `normal`，
+在这里等价于 `stretch`：当**正文高度 > 内容总高度**时，auto 尺寸的隐式行会被拉伸填满容器。
+技能只有一两条时必然命中 —— 一张卡片就被拉到整个正文那么高（`align-items: center` 再把内容
+居中），看起来就是「唯一的一条沾满弹窗」。
+
+修法：`.skills-list { align-content: start; }` —— 列表从顶部排列，多出来的空间留白。
+
+### 9.3 量测证据（真 DOM + 真 CSS + headless Chrome）
+
+用真实 `SettingsDialog` 挂载后 dump 的 DOM + 构建产物 CSS（去掉 `data-v-*` 作用域标记），
+在 1280×800 下量：
+
+| 测点 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `config-body` | `h=461 client=461`，`alignContent=normal` | 同尺寸，`alignContent=start` |
+| 唯一一条 skill 卡片 | `h=417`（≈ 正文 90%） | `h=129`（内容高度） |
+| 该条描述盒 | `h=50 client=50 scroll=99`（3 行 + 内部滚动） | 不变 |
+| 4 条技能（`agent-reach` 长描述） | 卡片 `129/96/96/96`，列表 `maxScroll=66` | 完全一致 |
+
+后端口径：`npx tsx` 直接跑 `SkillService.list('D:/code/pi_py')`，修复前 1 条、修复后 4 条，
+与会话信息面板的 `overview.skills: 4` 对齐。
+
+### 9.4 回归防线
+
+| 测试 | 守的是什么 |
+| --- | --- |
+| `node-pi/server/test/services/skill-service.test.ts`（4 条） | `.pi` 与 `.agents` 四种来源都能发现、来源 scope 正确、未登记工作区 403、开关落盘 |
+| `web/test/components/modal-layout-contracts.test.ts` 新增一条 | `.skills-list` 有 `display: grid` 且有 `align-content: start`（条目再少也不被拉伸） |
+
+测试里的 `agentDir` 与 `~/.agents`（靠重定向 `process.env.HOME`）都在临时目录，
+不触碰真实 `~/.pi`。
+
+### 9.5 已知限制
+
+| 项 | 说明 |
+| --- | --- |
+| `DefaultResourceLoader` 比 `loadSkills` 重 | 每次列表/开关都会读 settings 并解析资源路径；这是 UI 级操作，可接受 |
+| 祖先 `.agents/skills` 的 scope 取决于工作区位置 | 工作区若在 `~/.agents` 之下，同一个目录可能同时以「用户」和「项目」出现；这是 SDK/CLI 的既有语义，面板只如实展示 |

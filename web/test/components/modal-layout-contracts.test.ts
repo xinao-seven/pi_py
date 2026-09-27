@@ -13,7 +13,9 @@ import { describe, expect, it } from 'vitest';
  * 2. 居中必须走 .config-dialog / .settings-dialog 的 margin: auto——place-items: center
  *    在溢出时会把上下两端都推到可视区之外，遮罩层再能滚也够不着顶部；
  * 3. 弹窗的 min-height 必须被可用高度封顶——固定 340px/460px 会把弹窗顶出屏幕；
- * 4. 单个条目的描述必须有高度上限 + 内部滚动——否则一条超长描述就能把面板正文撑满。
+ * 4. 单个条目的描述必须有高度上限 + 内部滚动——否则一条超长描述就能把面板正文撑满；
+ * 5. 技能列表（网格）必须 align-content: start——align-content 默认 stretch 会把
+ *    隐式行拉满正文，「只有一条技能」时那一条就沾满整个弹窗（条目再少也撑满）。
  *
  * 真实浏览器里的量测证据见 docs/web-modal-scroll-skills-entry.md。
  */
@@ -64,6 +66,12 @@ describe('弹窗滚动链路契约', () => {
     const skillsDesc = rule(sessionInfoPanel, '.session-info-skills .session-info-desc');
     expect(skillsDesc).toContain('max-height: 4.8em');
     expect(skillsDesc).toContain('overflow-y: auto');
+  });
+
+  it('技能列表不把网格行拉伸填满正文（技能少时单条会沾满弹窗）', () => {
+    const list = rule(skillsConfig, '.skills-list');
+    expect(list).toContain('display: grid');
+    expect(list).toContain('align-content: start');
   });
 
   it('移动端整屏分支仍然有效（=100dvh 覆盖桌面的封顶值）', () => {

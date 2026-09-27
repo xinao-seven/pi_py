@@ -5,15 +5,32 @@
  * 通过 YAML frontmatter 描述名称与描述，正文是给模型的操作指引。
  * 本服务提供：列出某工作区可见的技能；切换某个技能文件的
  * disable-model-invocation 标志（关闭后模型不再自动加载该技能）。
+ *
+ * 发现口径必须与「模型实际能加载到的技能」完全一致：技能来源不止
+ * `~/.pi/agent/skills` 与 `{cwd}/.pi/skills`，还有 `~/.agents/skills` 与
+ * `{cwd}(及其祖先)/.agents/skills`。因此这里不再直接调底层的 `loadSkills`
+ * （它只覆盖前两处），而是复用会话同款 `DefaultResourceLoader` —— 面板与
+ * CLI/模型看到的是同一份清单。列表本身不需要扩展，故关掉扩展/提示词/主题/
+ * 上下文文件的加载，避免为一次「看一眼」去执行用户目录里的扩展代码。
  */
 
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 
-import { loadSkills, type Skill } from '@earendil-works/pi-coding-agent';
+import {
+  DefaultResourceLoader,
+  type ResourceDiagnostic,
+  type Skill,
+} from '@earendil-works/pi-coding-agent';
 
 import { ApiError } from '../errors.js';
 import { WorkspaceService } from './workspace-service.js';
+
+/** 一次技能发现的结果（与 DefaultResourceLoader.getSkills() 的形状一致）。 */
+interface DiscoveredSkills {
+  skills: Skill[];
+  diagnostics: ResourceDiagnostic[];
+}
 
 export class SkillService {
   constructor(
@@ -27,10 +44,7 @@ export class SkillService {
     if (!(await this.isWorkspaceRoot(cwd))) {
       throw new ApiError(403, 'workspace_not_allowed', 'Workspace is not registered');
     }
-    // loadSkills 是 Pi SDK 的技能扫描器：扫工作区/.pi 等位置的 SKILL.md。
-    return this.serialize(
-      loadSkills({ cwd, agentDir: this.agentDir, skillPaths: [], includeDefaults: true }),
-    );
+    return this.serialize(await this.discover(cwd));
   }
 
   /**
@@ -42,12 +56,7 @@ export class SkillService {
     // 安全校验：技能文件必须属于某个已登记工作区（通过扫描所有工作区得到白名单）。
     const allowed = new Set<string>();
     for (const cwd of await this.workspaces.roots()) {
-      for (const skill of loadSkills({
-        cwd,
-        agentDir: this.agentDir,
-        skillPaths: [],
-        includeDefaults: true,
-      }).skills) {
+      for (const skill of (await this.discover(cwd)).skills) {
         allowed.add(this.key(skill.filePath));
       }
     }
@@ -88,6 +97,25 @@ export class SkillService {
     await rename(temporary, target);
   }
 
+  /**
+   * 按会话同款口径发现某工作区的技能。
+   * 中文说明：与 `AgentRegistry.loader()` 用同一个 SDK 类，技能来源（用户/项目、
+   * `~/.pi/agent/skills` 与 `~/.agents/skills`、目录级白名单）因此天然一致；
+   * 只关掉跟技能无关的资源，避免列表接口产生副作用。
+   */
+  private async discover(cwd: string): Promise<DiscoveredSkills> {
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir: this.agentDir,
+      noExtensions: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+    await loader.reload();
+    return loader.getSkills();
+  }
+
   /** cwd 是否正好是一个已登记工作区根目录。 */
   private async isWorkspaceRoot(cwd: string): Promise<boolean> {
     let candidate: string;
@@ -99,8 +127,8 @@ export class SkillService {
     return (await this.workspaces.roots()).some((root) => this.key(root) === this.key(candidate));
   }
 
-  /** 把 SDK 的 loadSkills 结果序列化成前端需要的结构（技能 + 诊断）。 */
-  private serialize(result: ReturnType<typeof loadSkills>): Record<string, unknown> {
+  /** 把发现结果序列化成前端需要的结构（技能 + 诊断）。 */
+  private serialize(result: DiscoveredSkills): Record<string, unknown> {
     return {
       skills: result.skills.map((skill) => this.skill(skill)),
       diagnostics: result.diagnostics.map((diagnostic) => ({

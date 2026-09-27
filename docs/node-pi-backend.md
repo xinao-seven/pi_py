@@ -15,7 +15,7 @@
 - 工作区：兼容 Vue 现有的 home、workspace 列表与默认工作区接口；用户可显式登记任意已有本地目录，并在 Node 服务重启后复用。新增 `POST /api/workspaces/pick`，在用户点击 UI 按钮时打开 Windows 系统目录选择器。
 - 文件面板：目录浏览、UTF-8 文本预览和图片/音频预览；仅允许已注册工作区，且屏蔽 `.env`、凭据、密钥和大型生成目录。
 - 模型配置：`GET/PUT /api/models-config` 读取和原子写入原版 Pi 的 `models.json`；密钥只能是 `$ENV_VAR` 引用，保存后刷新新建会话使用的模型运行时。
-- Skills：`GET/PATCH /api/skills` 使用原版 Pi 的 Skills 发现逻辑，并支持切换 `disable-model-invocation` 后重载活动会话资源。
+- Skills：`GET/PATCH /api/skills` 用**会话同款** `DefaultResourceLoader` 发现技能，来源覆盖 `~/.pi/agent/skills`、`{cwd}/.pi/skills`、`~/.agents/skills` 与 `{cwd}（及祖先到 git 根）/.agents/skills`，因此面板与 CLI/模型看到的是同一份清单；切换 `disable-model-invocation` 后重载活动会话资源。细节见 `docs/web-modal-scroll-skills-entry.md` §9。
 - 会话预设：`~/.pi/agent/node-server-presets.json` 存储自定义预设（系统提示词、工具、压缩策略、默认模型与思考等级，以及能力开关 `capabilities`）。
   预设支持 MCP 服务白名单 `mcpServers`：`null`/缺省 = 使用全部已配置的 MCP 服务，`[]` = 禁用，
   非空数组 = 只注入名单内 server 的工具（`POST /api/agent/new` 也可直接传 `mcpServers`）。
