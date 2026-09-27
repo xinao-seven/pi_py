@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **399** / Web **149**，全绿；spike 全绿（含新增 `spike/08-preset-capabilities.mjs` 15 项断言） |
+| 测试基线   | Node 后端 **427** / Web **149**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -175,6 +175,29 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 - 迁移规则（已写进代码注释与 M1 文档）：**已发布的 DDL 不得改写，只能追加新版本迁移**。
   过渡期 v1 建的是 `day_rollups`，重构后直接改写 v1 会让已建好的库缺 `run_rollups`
   （聚合查询直接报错）——现已追加 v2 迁移修复，并在真实 dev server 上验证过 1 → 2 自动升级。
+
+### 3.6.1 可观测性扩容 P0/P1（已完成，`docs/node-observability-p0p1.md`）
+
+在 M1 底座上补两类信号，**不改主链路、不新增 SSE 事件类型**：
+
+| 批次 | 内容 |
+| --- | --- |
+| P0（事件已在手） | `turn_end` / `message_start` / `tool_execution_update` / `auto_retry_end` / `summarization_retry_*` / `queue_update` / `entry_appended` / `thinking_level_changed` / `agent_end` 全部入账（run 级计数器写在 `runs.meta`，为 0 不写）；提问通道接上账本，落 `question` 步骤 |
+| P0（口径修正） | **人机等待拆分**：`runs.wait_ms`（审批 + 提问）与 `runs.active_ms`（= duration - wait），summary 加 `p95ActiveDurationMs` / `p50WaitMs` / `humanWaitMs`；`wait_ms` 同时进 `run_rollups`，明细 prune 后累计仍完整 |
+| P1（新钩子） | `before_provider_request` → 请求形状（消息数 / 工具集指纹 / 系统提示词指纹 / `toolsChanged` / `systemChanged` / `cacheHitRate`）；`context` → `context_injection` 步骤（`customType` + 字符数 + 指纹，去抖）；`model_select` → `config_change` 步骤 |
+
+已冻结决策：
+
+1. **消息条数不参与「形状变化」判定**（每轮都涨，参与进去等于每轮报变化）；只有工具集与系统提示词
+   指纹变化才算「前缀缓存被打断」，并把次数记进 `run.meta.promptShapeChanges`。
+2. **注入审计从尾部往前扫、同 `customType` 取最后一条**（与 SDK 侧「只留最后一条注入」的策略一致），
+   正文先脱敏再取指纹，**正文不落库**。
+3. **`config_change` 只在 run 进行中记**：两次 prompt 之间切模型没有活动 run，凭空造 run 会污染运行次数。
+4. **`wait_ms`/`active_ms` 只对新记录生效**（迁移 v4 加列，历史 NULL 不回溯；分位数样本「有值才进」）。
+
+实测：Node 后端测试 399 → **427**（新增 `prompt-shape` / `observability-extension` 两个测试文件，并扩充
+`session-ledger` / `trace-store` / `user-question` / `ledger-e2e`），新增 `spike/09-observability-hooks.mjs`
+（15 项断言，已进 `npm run spike` 门禁）。
 
 ---
 
@@ -668,6 +691,7 @@ node-pi/server/test/routes/observability-routes.test.ts
 web/src/components/ObservabilityPanel.vue
 web/test/components/ObservabilityPanel.test.ts
 docs/node-observability-m1.md                  M1 实现说明（口径/取舍/契约/DoD 对照）
+docs/node-observability-p0p1.md                可观测性扩容 P0/P1（人机等待拆分 / 请求形状 / 注入审计）
 ```
 
 ### M1 改动（关键位置）

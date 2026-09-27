@@ -126,6 +126,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - **密钥绝不外泄**：任何 API 响应不得包含真实密钥；自身配置只保存 `$ENV_VAR` 引用，按 `auth.json` 的 key 名映射解析（`$DEEPSEEK_API_KEY → auth.json["deepseek"].key`）。
 - Node 后端的本项目自有可写状态（trace / task / mcp / presets / workspaces）建议落在 `~/.pi/agent-node-server/`；Python 后端落在 `~/.pi/agent-python/`。共享态（`models.json`、`sessions/`）按上一条的红线写入。测试必须隔离 `agentDir` 到临时目录，禁止触碰真实 `~/.pi` 或网络。
 - **trace 对 agent loop 零影响（M1 已实施）**：`services/observability/session-ledger.ts` 是唯一埋点逻辑，由 `AgentRegistry.publish()` 尾部调用；所有入口 try/catch + warn，写入先入队（250ms/200 条批量落 `~/.pi/agent-node-server/platform.db`），队列超限丢最旧、连续失败进入 degraded，**任何情况都不得冒泡到 agent loop**。默认只存 digest + 120 字符预览（正文需 `PI_NODE_TRACE_CONTENT=1`），并对 `sk-`/`Bearer`/`apiKey` 等形态统一脱敏。`createApp()` 不传 trace 配置时不写盘（测试环境安全的默认值）。细节见 `docs/node-observability-m1.md`。
+- **可观测性扩容（P0/P1）**：人机等待与机器耗时分开记（`runs.wait_ms` / `runs.active_ms`，审批与提问都计入等待），请求形状（工具集 / 系统提示词指纹 + `toolsChanged` / `systemChanged` / `cacheHitRate`）与上下文注入（`context_injection` 步骤）入账。**埋点仍只有两处**：`SessionLedger`（事件流）+ `observability-extension`（钩子），新增字段一律走追加迁移与 REST 追加字段，不新增 SSE 事件类型。字段变更必须同步 `web/src/types`。细节见 `docs/node-observability-p0p1.md`。
 - **危险命令人工确认**：`bash` 命中危险规则（递归删除、格式化、关机、强制 Git 推送等）时挂起执行，向 SSE 推 `tool_call_pending`，前端弹窗，由 `approve_tool` 命令允许/拒绝。拒绝或超时（Node 30 秒 / Python 60 秒）按拒绝处理。`ToolApprovalBroker`（Node）/ `ToolApprovalGate`（Python）是唯一真相源。
 - 文件访问必须确认工作区已登记，保持路径边界与敏感文件拦截（`.env`、凭据、密钥后缀）。
 
@@ -164,6 +165,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-platform-plan.md` | Node 平台化规划（M0–M5 里程碑、契约变更、验收标准） |
 | `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
 | `docs/node-observability-m1.md` | **M1 可观测底座**：采集口径（run 边界/TTFT/策略拦截归因）、存储与聚合取舍、REST 契约、配置与降级 |
+| `docs/node-observability-p0p1.md` | **可观测性扩容 P0/P1**：白捡事件清单、人机等待（`wait_ms`/`active_ms`）拆分、请求形状（工具集/系统提示词指纹）与上下文注入审计 |
 | `docs/node-task-domain-m2.md` | **M2 任务领域**：状态聚合语义（唯一真相源＝步骤）、乐观并发、任务 REST/SSE 契约、面板 |
 | `docs/node-task-recovery-m3.md` | **M3 断点续跑**：执行租约、在飞动作与副作用分级、恢复清单与一键续跑、DoD 验证记录 |
 | `docs/node-web-plan-mode.md` | **Plan 模式对外契约**（M4 起：PlanView、五个计划工具、命令表、规划期权限） |
