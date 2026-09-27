@@ -9,6 +9,7 @@ import {
   getAuthStatus,
   getObservabilityRun,
   getObservabilitySummary,
+  getSessionPrompt,
   getTaskRecovery,
   listObservabilityRuns,
   listSessions,
@@ -373,5 +374,25 @@ describe('answer_question（M4.1 提问通道）', () => {
       answers: [{ id: 'q1', selected: ['继续'], text: '顺带也要 WSL' }],
     });
     vi.unstubAllGlobals();
+  });
+});
+
+describe('getSessionPrompt（会话信息面板）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearToken();
+  });
+
+  it('gets the prompt snapshot with an encoded session id', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ snapshot: { sessionId: 'a b' } }, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getSessionPrompt('a b/c');
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/agent/a%20b%2Fc/prompt');
+    // 只读接口：不能是 POST。
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(result.snapshot).toEqual({ sessionId: 'a b' });
   });
 });

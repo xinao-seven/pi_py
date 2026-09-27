@@ -136,6 +136,82 @@ export interface AgentStateResponse {
   state?: AgentState;
 }
 
+// ---- 会话信息面板（GET /api/agent/:sessionId/prompt）------------------------
+
+/** 工具来源分类（后端按 SDK 的 sourceInfo 与 mcp__ 前缀归一化后给出）。 */
+export type PromptToolSource =
+  'builtin' | 'sdk' | 'inline' | 'extension' | 'mcp' | 'package' | 'other';
+
+export interface PromptToolParam {
+  name: string;
+  required: boolean;
+}
+
+export interface PromptToolInfo {
+  name: string;
+  description: string;
+  params: PromptToolParam[];
+  source: PromptToolSource;
+  /** 来源路径/标记：内联扩展是 `<inline>`，文件扩展与包是真实路径。 */
+  sourcePath?: string;
+  /** 是否在当前激活的工具集里（false＝注册了但这一次不会发给模型）。 */
+  active: boolean;
+  /** MCP 工具的 server/tool 归属。 */
+  mcp?: { server: string; tool: string };
+  promptGuidelines: string[];
+}
+
+export interface PromptSkillInfo {
+  name: string;
+  description: string;
+  location: string;
+  disableModelInvocation: boolean;
+}
+
+export interface PromptTemplateInfo {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  path?: string;
+}
+
+export interface PromptContextFileInfo {
+  path: string;
+  chars: number;
+}
+
+/** 会话信息快照：当前会话「发给模型的东西」。 */
+export interface SessionPromptSnapshot {
+  sessionId: string;
+  cwd: string;
+  capturedAt: string;
+  model: { provider?: string; modelId?: string } | null;
+  thinkingLevel?: string;
+  overview: {
+    systemPromptChars: number;
+    /** 系统提示词过大被截断（只影响展示）。 */
+    systemPromptTruncated: boolean;
+    toolsRegistered: number;
+    toolsActive: number;
+    mcpTools: number;
+    skills: number;
+    promptTemplates: number;
+    contextFiles: number;
+  };
+  systemPrompt: {
+    text: string;
+    source?: string;
+    /** 额外追加的提示词段数（内容已并入 text）。 */
+    appendedPrompts: number;
+  };
+  tools: PromptToolInfo[];
+  skills: PromptSkillInfo[];
+  promptTemplates: PromptTemplateInfo[];
+  contextFiles: PromptContextFileInfo[];
+  /** 资源加载诊断（坏掉的 SKILL.md 等）。 */
+  diagnostics: string[];
+}
+
 export interface ModelListItem {
   id: string;
   name: string;

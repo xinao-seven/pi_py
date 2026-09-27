@@ -23,6 +23,7 @@ import type {
   SessionDetail,
   SessionCapabilities,
   SessionExtensions,
+  SessionPromptSnapshot,
   SessionInfo,
   SessionPreset,
   SessionPresetInput,
@@ -154,6 +155,14 @@ export function mergeSession(
 
 export function getAgentState(sessionId: string): Promise<AgentStateResponse> {
   return request(`/api/agent/${encodeURIComponent(sessionId)}`);
+}
+
+/**
+ * 当前会话「发给模型的东西」的快照（系统提示词 / 工具 / skills / 模板 / 上下文文件）。
+ * 中文说明：后端按需读 SDK 会话对象，不缓存、不落库；面板点开才调。
+ */
+export function getSessionPrompt(sessionId: string): Promise<{ snapshot: SessionPromptSnapshot }> {
+  return request(`/api/agent/${encodeURIComponent(sessionId)}/prompt`);
 }
 
 export async function createDefaultWorkspace(): Promise<string> {

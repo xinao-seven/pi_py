@@ -8,6 +8,7 @@ import BranchNavigator from '@/components/BranchNavigator.vue';
 import ChatInput from '@/components/ChatInput.vue';
 import MessageView from '@/components/MessageView.vue';
 import QuestionDialog from '@/components/QuestionDialog.vue';
+import SessionInfoPanel from '@/components/SessionInfoPanel.vue';
 import TaskPlanPanel from '@/components/TaskPlanPanel.vue';
 import ToolApprovalDialog from '@/components/ToolApprovalDialog.vue';
 import { useAgentSession } from '@/composables/useAgentSession';
@@ -550,6 +551,8 @@ defineExpose({ navigateBranch, forkBranch, mergeFrom });
         <span v-if="workspace" class="workspace-path" :title="workspace">{{ workspace }}</span>
       </div>
       <div class="header-meta">
+        <!-- 会话信息（系统提示词 / 工具 / skills / MCP）：放在「切换项目」左侧。 -->
+        <SessionInfoPanel :session-id="sessionId" />
         <button
           class="workspace-switch-button"
           type="button"
