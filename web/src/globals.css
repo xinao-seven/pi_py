@@ -149,7 +149,10 @@ select:focus-visible {
   z-index: 100;
   display: grid;
   padding: 24px;
-  place-items: center;
+  /* 弹窗比视口高时必须能滚到它：窄高窗口（开发者工具占掉一半高度、手机横屏）下
+     底部会被推到视口外。居中交给 .config-dialog 的 margin:auto——
+     place-items:center 在溢出时会把上下两端都挪到可视区之外，遮罩层再不滚动就永远够不着。 */
+  overflow-y: auto;
   background: rgba(4, 5, 7, 0.76);
   backdrop-filter: blur(8px);
 }
@@ -158,7 +161,9 @@ select:focus-visible {
   display: flex;
   width: min(680px, 100%);
   max-height: min(820px, calc(100vh - 48px));
-  min-height: 340px;
+  /* 高度上限跟视口挂钩：固定 340px 在小窗口里会把弹窗顶出可滚动范围 */
+  min-height: min(340px, calc(100vh - 48px));
+  margin: auto;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line-strong);

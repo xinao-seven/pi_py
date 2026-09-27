@@ -191,7 +191,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   z-index: 100;
   display: grid;
   padding: 24px;
-  place-items: center;
+  /* 同 .modal-backdrop：小窗口下弹窗可能高于视口，遮罩层自己得能滚 */
+  overflow-y: auto;
 }
 
 .settings-scrim {
@@ -208,7 +209,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   flex-direction: column;
   width: min(900px, 94vw);
   height: min(680px, 90vh);
-  min-height: 460px;
+  /* 下限也不能超过可用高度：460px 在矮窗口里会把弹窗底部（含「完成」）顶出可视区 */
+  min-height: min(460px, calc(100vh - 48px));
+  margin: auto;
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -267,6 +270,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   padding: 12px 9px;
   border-right: 1px solid var(--line);
   background: var(--panel-raised);
+  /* 窄高窗口下 6 个导航按钮的 min-content 高度会把整个弹窗顶出可视区，
+     让导航自己滚：它一可滚就不再撑高网格行，内容列才能真正变矮。 */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .settings-nav button {

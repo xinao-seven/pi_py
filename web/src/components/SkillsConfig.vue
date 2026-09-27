@@ -153,10 +153,17 @@ function messageOf(cause: unknown): string {
 }
 
 .skill-card p {
+  /* 描述可能极长（多段式触发说明，比如 agent-reach）：给 3 行上限 + 内部滚动，
+     否则单个条目就能把面板正文撑满，其他 skill 全被挤到看不见的地方。
+     不写 overscroll-behavior: contain——到了描述末尾要能接着滚面板。 */
+  max-height: 4.5em; /* 3 行 × line-height 1.5 */
   margin: 6px 0;
+  overflow-y: auto;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
 }
 
 .skill-card code {

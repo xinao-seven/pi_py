@@ -303,7 +303,7 @@ function toolMetaLabel(tool: PromptToolInfo): string {
 
         <details class="session-info-section">
           <summary>Skills（{{ snapshot.skills.length }}）</summary>
-          <ul class="session-info-list">
+          <ul class="session-info-list session-info-skills">
             <li v-for="skill in snapshot.skills" :key="skill.name">
               <div class="session-info-row">
                 <code>{{ skill.name }}</code>
@@ -562,6 +562,14 @@ function toolMetaLabel(tool: PromptToolInfo): string {
 .session-info-list > li {
   padding-left: 9px;
   border-left: 2px solid var(--line);
+}
+
+/* skill 描述可能很长（多段触发说明）：给 3 行上限 + 内部滚动，避免单条把面板撑满 */
+.session-info-skills .session-info-desc {
+  max-height: 4.8em; /* 3 行 × line-height 1.6（本面板字号 10px） */
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
 }
 
 .session-info-row {
