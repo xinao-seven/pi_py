@@ -45,6 +45,12 @@ import { emptyPlanView, type PlanView } from './platform/plan-model.js';
 import { SessionLedger, type LedgerSessionContext } from './observability/session-ledger.js';
 import { buildMcpExtension } from './mcp/mcp-extension.js';
 import type { McpService } from './mcp/mcp-service.js';
+import type {
+  PiPromptResourceLoader,
+  PiRegisteredTool,
+  PromptSnapshot,
+} from './session-prompt-service.js';
+import { buildPromptSnapshot } from './session-prompt-service.js';
 import type { TaskRecord } from './platform/task-model.js';
 import type { TaskRecoveryItem } from './task-recovery.js';
 import { resolveSubagentModel, type ResolvedSubagentModel } from './subagent-models.js';
@@ -289,6 +295,23 @@ export interface PiSession {
    * 这里原样透传，由前端自行决定展示方式。
    */
   getContextUsage?(): unknown;
+  /**
+   * 当前生效的系统提示词（SDK 的 `AgentSession.systemPrompt` getter）。
+   * 中文说明：只给「会话信息」面板读。SDK 侧是 **getter**（不是方法），所以这里也声明成只读属性——
+   * 工厂返回的就是 SDK 会话对象本尊，无需任何适配（包一层 Proxy/代理会让 SDK 内部的 `this`
+   * 指向代理对象，将来一旦有私有字段就会炸）。可选：假会话不提供即为未知。
+   */
+  readonly systemPrompt?: string;
+  /**
+   * 已注册工具的完整定义（SDK 的 `AgentSession.getAllTools()`）：名字、描述、参数 schema、
+   * promptGuidelines 与 sourceInfo（内置 / SDK / 内联扩展 / 文件扩展 / 包）。
+   */
+  getAllTools?(): PiRegisteredTool[];
+  /**
+   * 资源加载器（SDK 的 `AgentSession.resourceLoader` getter）：skills、提示词模板、
+   * 上下文文件（AGENTS.md / CLAUDE.md 等）。同样是 getter，所以声明成只读属性。
+   */
+  readonly resourceLoader?: PiPromptResourceLoader;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void; // 返回取消订阅函数
   /**
    * 绑定扩展运行时（SDK 的 AgentSession.bindExtensions）。
@@ -322,6 +345,13 @@ export interface PiSessionFactory {
   listPersistedSessions?(): Promise<PersistedSessionInfo[]>;
   open?(input: OpenSessionInput): Promise<PiSession>;
   reloadModelRuntime?(): void;
+  /**
+   * MCP 工具名 → server/tool（可选）。
+   * 中文说明：只有工厂知道 McpService（它负责装配 MCP 扩展），而「会话信息」面板需要把
+   * `mcp__<server>__<tool>` 还原成可读的 server/tool。注册表只借它一下；拿不到时服务会
+   * 退回按名字拆解，所以不实现也不影响功能。
+   */
+  resolveMcpTool?(cwd: string, toolName: string): { server: string; tool: string } | undefined;
   /**
    * 解析子会话预设里的 `model:`（M5）。
    * 中文说明：模型目录（`getModels` / `hasConfiguredAuth`）属于持有 ModelRuntime 的工厂，
@@ -587,6 +617,11 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
   /** 清空运行时缓存，下次 getRuntime() 时重新读取 auth/models 文件。 */
   reloadModelRuntime(): void {
     this.runtimePromise = undefined;
+  }
+
+  /** MCP 工具名 → server/tool（「会话信息」面板用；未启用 MCP 时返回 undefined）。 */
+  resolveMcpTool(cwd: string, toolName: string): { server: string; tool: string } | undefined {
+    return this.mcpService?.resolveTool(cwd, toolName);
   }
 
   /**
@@ -1172,6 +1207,34 @@ export class AgentRegistry {
             },
       plan: this.planState(sessionId),
     };
+  }
+
+  /**
+   * 当前会话「发给模型的东西」的快照：系统提示词、工具（含来源与是否激活）、skills、
+   * 提示词模板、上下文文件。
+   *
+   * 中文说明：
+   * - **只读、不缓存**：面板点开才算，因此中途 `set_tools` / 开关计划之后看到的是最新一套；
+   * - MCP 归属由注册表注入解析器（服务自己不认识 McpService）；
+   * - 会话不存在时由 `require()` 抛 404（与其它会话级接口一致）。
+   */
+  promptSnapshot(sessionId: string): PromptSnapshot {
+    const entry = this.require(sessionId);
+    const { session } = entry;
+    return buildPromptSnapshot(session, {
+      sessionId,
+      cwd: entry.cwd,
+      ...(session.model === undefined
+        ? {}
+        : { provider: session.model.provider, model: session.model.id }),
+      thinkingLevel: session.thinkingLevel,
+      ...(this.sessionFactory.resolveMcpTool === undefined
+        ? {}
+        : {
+            resolveMcpTool: (toolName: string) =>
+              this.sessionFactory.resolveMcpTool?.(entry.cwd, toolName),
+          }),
+    });
   }
 
   /** 关闭注册表：释放所有活跃会话（服务关闭钩子调用）。 */

@@ -360,6 +360,16 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
     };
   });
 
+  // GET /api/agent/:sessionId/prompt —— 当前会话「发给模型的东西」的快照。
+  //
+  // 中文说明：系统提示词 / 工具（含来源与是否激活）/ skills / 提示词模板 / 上下文文件，
+  // 全部按需从 SDK 会话对象读取（无缓存、无钩子、不影响 agent loop）。
+  // 与 GET /:sessionId 一样先 open()：磁盘上的历史会话也能看。
+  app.get<{ Params: { sessionId: string } }>('/:sessionId/prompt', async (request) => {
+    await options.registry.open(request.params.sessionId);
+    return { snapshot: options.registry.promptSnapshot(request.params.sessionId) };
+  });
+
   // GET /api/agent/:sessionId/events —— SSE 实时事件流。
   //
   // 中文说明：这是本后端与前端交互的核心通道。Vue 用 EventSource 连接此端点，
