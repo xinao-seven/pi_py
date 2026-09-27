@@ -98,7 +98,17 @@ function runDetail(): ObservabilityRunDetail {
       stopReason: 'endTurn',
       errorType: null,
       errorMessage: null,
-      meta: null,
+      meta: {
+        retries: 2,
+        retriesSucceeded: 1,
+        retriesFailed: 1,
+        summaryRetries: 1,
+        maxSteerQueue: 1,
+        contextInjections: 2,
+        promptShapeChanges: 1,
+        entries: 24,
+        preset: 'scout',
+      },
     },
     steps: [
       {
@@ -122,7 +132,17 @@ function runDetail(): ObservabilityRunDetail {
         approvalDecision: null,
         approvalWaitMs: null,
         decidedBy: null,
-        meta: null,
+        meta: {
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          promptMessages: 12,
+          promptTools: 3,
+          promptToolNames: ['bash', 'edit', 'read'],
+          promptSystemChars: 4_000,
+          toolsChanged: true,
+          systemChanged: false,
+          cacheHitRate: 0.25,
+        },
       },
       {
         kind: 'tool_call',
@@ -145,7 +165,7 @@ function runDetail(): ObservabilityRunDetail {
         approvalDecision: null,
         approvalWaitMs: null,
         decidedBy: null,
-        meta: null,
+        meta: { firstOutputMs: 250, progressUpdates: 3 },
       },
       {
         kind: 'context_injection',
@@ -245,9 +265,62 @@ describe('ObservabilityPanel', () => {
     // 非工具步骤（上下文注入）从 meta 里取标签，而不是一律显示「—」。
     expect(wrapper.find('.run-detail').text()).toContain('web-plan-context');
 
+    // 等真人 / 机器耗时的拆分：列表行与详情头部都要看得到。
+    expect(wrapper.find('.run-row').text()).toContain('+等人 1.5 s');
+    expect(wrapper.find('.run-split').text()).toContain('机器 3.5 s');
+    expect(wrapper.find('.run-split').text()).toContain('等人 1.5 s');
+
+    // run.meta 的运行期计数器 → 详情头部的 chips。
+    const chips = wrapper.find('.run-meta').text();
+    expect(chips).toContain('重试成功');
+    expect(chips).toContain('steer 峰值');
+    expect(chips).toContain('请求形状变');
+    expect(chips).toContain('子预设');
+    expect(chips).toContain('scout');
+    // 只渲染「有值的键」：fixture 里 run.meta 给了 9 个可展示的键。
+    expect(wrapper.findAll('.run-meta li')).toHaveLength(9);
+    // 没给的键（如 toolResults）不渲染空 chip。
+    expect(chips).not.toContain('工具结果');
+
+    // 步骤表新增「详情」列：请求形状（P1）与工具首字节。
+    const rows = wrapper.findAll('.observability-table--steps tbody tr');
+    const llmRow = rows[0];
+    expect(llmRow.text()).toContain('12 条消息 / 3 工具');
+    expect(llmRow.text()).toContain('工具集变');
+    expect(llmRow.text()).toContain('缓存命中 25.0%');
+    expect(llmRow.find('.step-detail').attributes('title')).toBe('bash, edit, read');
+    const toolRow = rows[1];
+    expect(toolRow.text()).toContain('首字节 250 ms');
+    expect(toolRow.text()).toContain('3 次进度');
+    // 没有形状/首字节信息的步骤（上下文注入）显示占位符，而不是空白。
+    expect(rows[2].text()).toContain('—');
+
     // 再次点击收起详情
     await wrapper.find('.run-row').trigger('click');
     expect(wrapper.find('.run-detail').exists()).toBe(false);
+  });
+
+  it('hides the wait split for legacy runs without waitMs', async () => {
+    vi.mocked(getObservabilitySummary).mockResolvedValue(summary());
+    vi.mocked(listObservabilityRuns).mockResolvedValue({
+      runs: [run({ waitMs: null, activeMs: null, meta: null })],
+      nextCursor: null,
+    });
+    vi.mocked(getObservabilityRun).mockResolvedValue({
+      ...runDetail(),
+      run: { ...runDetail().run, waitMs: null, activeMs: null, meta: null },
+    });
+
+    const wrapper = mount(ObservabilityPanel, { props: { cwd: null } });
+    await flushPromises();
+    await wrapper.find('.run-row').trigger('click');
+    await flushPromises();
+
+    // 老记录没有 wait/active：列表行不显示「+等人」，详情头部的拆分用占位符。
+    expect(wrapper.find('.run-row').text()).not.toContain('等人');
+    expect(wrapper.find('.run-split').text()).toContain('等人 —');
+    // 没有 run.meta 就不渲染 chips 容器。
+    expect(wrapper.find('.run-meta').exists()).toBe(false);
   });
 
   it('explains when tracing is disabled', async () => {

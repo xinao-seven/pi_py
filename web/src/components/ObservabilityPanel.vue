@@ -121,6 +121,94 @@ function stepLabel(step: ObservabilityStep): string {
   return '—';
 }
 
+/** meta 里的数字（取不到返回 null，避免把 0 和「没有这个字段」混起来）。 */
+function metaNumber(meta: Record<string, unknown> | null, key: string): number | null {
+  const value = meta?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * 步骤的「详情」列（请求形状 / 工具首字节）。
+ * 中文说明：这两类是「不看 meta 就丢了」的信号，所以单开一列：
+ * - `llm_call`：这次请求发了多少条消息/多少个工具、工具集或系统提示词是不是变了、缓存命中多少。
+ *   工具集变化是前缀缓存被打穿的直接证据（见 docs/node-plan-cache-stability.md），
+ *   而全局的「缓存命中」KPI 只会告诉你「掉了」、告诉不了你「哪一轮掉的」。
+ * - `tool_call`：首次流式输出的耗时（工具的「首字节」）与进度更新次数。
+ * 老记录 / provider 不上报时显示「—」，不显示 0。
+ */
+function stepDetail(step: ObservabilityStep): string {
+  const meta = step.meta;
+  if (step.kind === 'llm_call') {
+    const parts: string[] = [];
+    const messages = metaNumber(meta, 'promptMessages');
+    const tools = metaNumber(meta, 'promptTools');
+    if (messages !== null || tools !== null) {
+      parts.push(`${messages ?? '—'} 条消息 / ${tools ?? '—'} 工具`);
+    }
+    if (meta?.toolsChanged === true) parts.push('工具集变');
+    if (meta?.systemChanged === true) parts.push('系统提示词变');
+    const rate = metaNumber(meta, 'cacheHitRate');
+    if (rate !== null) parts.push(`缓存命中 ${formatRate(rate)}`);
+    return parts.join(' · ');
+  }
+  if (step.kind === 'tool_call') {
+    const parts: string[] = [];
+    const firstOutput = metaNumber(meta, 'firstOutputMs');
+    if (firstOutput !== null) parts.push(`首字节 ${formatDuration(firstOutput)}`);
+    const updates = metaNumber(meta, 'progressUpdates');
+    if (updates !== null) parts.push(`${updates} 次进度`);
+    return parts.join(' · ');
+  }
+  return '';
+}
+
+/** llm_call 行里工具名的悬浮提示（列表里放不下，但排障时就是想看这个）。 */
+function stepDetailTitle(step: ObservabilityStep): string | undefined {
+  const names = step.meta?.promptToolNames;
+  return Array.isArray(names) && names.length > 0 ? names.join(', ') : undefined;
+}
+
+/**
+ * run.meta 里的运行期计数器 → 详情头部的 chips。
+ * 中文说明：这些值（重试成败、steer 深度、注入次数、会话条目数…）都是「顺手加一」的廉价信号，
+ * 后端合并在一个 JSON 字段里；以前只能自己去调 REST 看，现在展开 run 就能看到。
+ * 键名固定、顺序固定，`preset` / `depth` 是 M5 子会话的标记（同样的展示位置）。
+ */
+const RUN_META_CHIPS: ReadonlyArray<readonly [string, string]> = [
+  ['retries', '自动重试'],
+  ['retriesSucceeded', '重试成功'],
+  ['retriesFailed', '重试失败'],
+  ['summaryRetries', '摘要重试'],
+  ['agentEnds', 'loop 次数'],
+  ['toolResults', '工具结果'],
+  ['userMessages', '用户消息'],
+  ['assistantMessages', '助手消息'],
+  ['maxSteerQueue', 'steer 峰值'],
+  ['maxFollowUpQueue', 'followUp 峰值'],
+  ['entries', '会话条目'],
+  ['promptShapeChanges', '请求形状变'],
+  ['contextInjections', '上下文注入'],
+  ['preset', '子预设'],
+  ['depth', '子层级'],
+];
+
+function runMetaChips(run: ObservabilityRun): Array<{ label: string; value: string }> {
+  const meta = run.meta ?? {};
+  const chips: Array<{ label: string; value: string }> = [];
+  for (const [key, label] of RUN_META_CHIPS) {
+    const value = meta[key];
+    if (typeof value === 'number' || (typeof value === 'string' && value !== '')) {
+      chips.push({ label, value: String(value) });
+    }
+  }
+  return chips;
+}
+
+/** 等人时长的展示（老记录没有 waitMs → 空串，不显示）。 */
+function waitHint(run: ObservabilityRun): string {
+  return run.waitMs !== null && run.waitMs > 0 ? `+等人 ${formatDuration(run.waitMs)}` : '';
+}
+
 function formatTime(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
@@ -350,11 +438,24 @@ const cacheHitRate = computed<number | null>(() => {
             <span class="run-model mono">{{ run.model ?? '—' }}</span>
             <span class="run-time">{{ formatTime(run.startedAt) }}</span>
             <span class="run-duration">{{ formatDuration(run.durationMs) }}</span>
+            <span class="run-wait" :title="`总时长里等真人的部分（审批 + 提问）`">
+              {{ waitHint(run) }}
+            </span>
             <span class="run-cost">{{ formatCost(run.costUsd) }}</span>
           </button>
 
           <div v-if="detail?.run.id === run.id" class="run-detail">
             <p v-if="run.errorMessage" class="run-error">{{ run.errorMessage }}</p>
+            <p class="run-split">
+              总 {{ formatDuration(run.durationMs) }} / 机器 {{ formatDuration(run.activeMs) }} /
+              等人 {{ formatDuration(run.waitMs) }}
+            </p>
+            <ul v-if="runMetaChips(run).length" class="run-meta">
+              <li v-for="chip in runMetaChips(run)" :key="chip.label">
+                <span>{{ chip.label }}</span>
+                <strong>{{ chip.value }}</strong>
+              </li>
+            </ul>
             <table class="observability-table observability-table--steps">
               <thead>
                 <tr>
@@ -362,6 +463,7 @@ const cacheHitRate = computed<number | null>(() => {
                   <th>名称</th>
                   <th>耗时</th>
                   <th>结果</th>
+                  <th>详情</th>
                 </tr>
               </thead>
               <tbody>
@@ -375,6 +477,9 @@ const cacheHitRate = computed<number | null>(() => {
                     </span>
                     <span v-else-if="step.isError" class="cell-error">失败</span>
                     <span v-else class="step-ok">ok</span>
+                  </td>
+                  <td class="step-detail" :title="stepDetailTitle(step)">
+                    {{ stepDetail(step) || '—' }}
                   </td>
                 </tr>
               </tbody>
@@ -547,6 +652,13 @@ const cacheHitRate = computed<number | null>(() => {
 
 .observability-table--steps {
   font-size: 9px;
+  /* 步骤表列多（含「详情」），允许横向压缩：窄屏下靠换行而不是撑破设置弹窗。 */
+  table-layout: auto;
+}
+
+.observability-table--steps td.step-detail {
+  max-width: 220px;
+  white-space: normal;
 }
 
 .mono {
@@ -620,9 +732,34 @@ const cacheHitRate = computed<number | null>(() => {
   list-style: none;
 }
 
+/*
+ * 窄屏（统一 760px 断点，见 docs/web-mobile-adaptation.md）：运行行是 6 列固定布局，
+ * 放不下时按「规则一」横向滚动，而不是把列宽压扁（等人在窄屏下会被压到看不见）。
+ */
+@media (max-width: 760px) {
+  .observability-runs {
+    overflow-x: auto;
+  }
+
+  .run-row {
+    min-width: 430px;
+  }
+
+  .observability-table--steps {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .observability-table--steps td.step-detail {
+    max-width: none;
+  }
+}
+
 .run-row {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr) 96px 62px 62px;
+  /* 六列：状态 / 模型 / 开始时间 / 总耗时 / 等人耗时 / 成本。
+     等人列始终占位（空串也不塌），否则有等人的行会把后面的成本列挤歪。 */
+  grid-template-columns: 68px minmax(0, 1fr) 96px 62px 70px 62px;
   gap: 8px;
   width: 100%;
   padding: 7px 9px;
@@ -658,11 +795,54 @@ const cacheHitRate = computed<number | null>(() => {
 .run-model,
 .run-time,
 .run-duration,
+.run-wait,
 .run-cost {
   overflow: hidden;
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 等人耗时：不是告警色，而是一个提示色——“这里花的是人的时间”。 */
+.run-wait {
+  color: #d8b25f;
+}
+
+.run-split {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* run.meta 的运行期计数器：紧凑的 chips，没有值的键不渲染。 */
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-meta li {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.run-meta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step-detail {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .run-detail {
