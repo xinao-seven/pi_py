@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **427** / Web **150**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
+| 测试基线   | Node 后端 **441** / Web **169**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -204,6 +204,30 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 `run.meta` 计数器与「总 / 机器 / 等人」拆分，运行列表行显示“+等人 x”；窄屏下改为横向滚动。
 仍仅 REST 可查的：注入 `chars`/`digest`、`config_change.from`/`source`、`question.questions`/`answers`，
 以及提问等待的独立聚合（需后端新增 `question_rollups`）。
+
+---
+
+### 3.6.2 会话信息面板（已完成，`docs/node-session-prompt-panel.md`）
+
+聊天头部「切换项目」左侧新增「会话信息」按钮，点开看这个会话**到底发给模型了什么**：
+系统提示词全文、工具（含来源与「已激活/未注册」标记）、skills、MCP 工具（按 server 分组）、
+提示词模板、上下文文件。
+
+已冻结决策：
+
+1. **数据源是 SDK 会话对象，不用 provider 钩子**：`session.systemPrompt`（getter）、
+   `getAllTools()`（带 `sourceInfo` / `promptGuidelines` / 参数 schema）、`resourceLoader`（skills/模板/
+   上下文文件）。钩子只在真的发出请求后才有值，而且拿不到「全量工具 + 来源」；请求形状的指纹观测仍由
+   P1 的钩子负责（两件事）。
+2. **不做适配包装**：SDK 把 `systemPrompt` / `resourceLoader` 暴露成 getter，包 Proxy/`Object.create`
+   会让 SDK 方法里的 `this` 指向包装对象（将来一有 `#` 私有字段就会炸）。所以门面把它们声明成
+   **可选只读属性**，工厂返回的 SDK 对象本尊天然满足。
+3. **只读、不缓存、不落库**：点开才算，中途 `set_tools` / 开关计划后刷新就是最新状态；
+   代价是它**不是**历史某次请求的逐字快照（写进文档的已知限制）。
+4. **计数用完整列表、只有输出截断**（工具一多数字不会静默变少）；所有来源读取都过 `safe()`，
+   缺失/抛错一律降级为空，面板不会把请求打挂。
+
+基线：Node 后端 **427 → 441**，Web **158 → 169**（新增 `session-prompt-service` / 路由 / 面板 / API 四层用例）。
 
 ---
 
@@ -698,6 +722,7 @@ web/src/components/ObservabilityPanel.vue
 web/test/components/ObservabilityPanel.test.ts
 docs/node-observability-m1.md                  M1 实现说明（口径/取舍/契约/DoD 对照）
 docs/node-observability-p0p1.md                可观测性扩容 P0/P1（人机等待拆分 / 请求形状 / 注入审计）
+docs/node-session-prompt-panel.md              会话信息面板（系统提示词 / 工具 / skills / MCP）
 ```
 
 ### M1 改动（关键位置）

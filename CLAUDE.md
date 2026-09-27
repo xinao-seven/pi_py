@@ -95,6 +95,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - MCP：协议层支持任意 server（stdio 子进程 / streamable-http 静态头），配置两层合并（`~/.pi/agent/mcp.json` 用户级 + `{cwd}/.pi/mcp.json` 工作区级，同名工作区优先），每 server 可 `approval: "required"`，预设可白名单。**凭据只能写成 `$ENV` 引用**（env / headers / **args** 三处都会在 spawn 时插值）——该配置文件与原版 CLI 共享，禁止落明文密钥。推荐清单在 `services/mcp/mcp-templates.ts`（前端配置页「模板库」，一键添加/填入表单），新增模板必须过 `assertTemplateTable()`。
 - 子任务委派（M5）：`subagent` 工具按预设（`~/.pi/agent/agents/*.md` + 项目级 `.pi/agents/`）创建**进程内子会话**，走 `AgentRegistry`，因此审批/trace/任务绑定天然生效。三条不变量：**不能递归是结构保证**（到 `maxDepth` 的子会话根本不注册该工具）、**只读预设真的只读**（子会话工具集 = 预设工具集，不并入 MCP/计划/ask_user）、**一定要收尾**（成功/失败/超预算/取消/停机都会 `remove`）。子会话落 `~/.pi/agent-node-server/subagents/`（不进 CLI 会话列表）；取消级联的五个入口见 `docs/node-subagent-m5.md` §3。官方文件扩展 `subagent` 已被内联实现**同名接管**（`INLINE_OWNED_EXTENSION_DIRS`，不动用户磁盘文件，CLI 照常）。
 - 人机交互两条通道：危险命令走 `ToolApprovalBroker`（`tool_call_pending` / `approve_tool`），提问走 `QuestionBroker`（`question_pending` / `answer_question`，见 `docs/node-question-channel.md`）。两者语义一致——工具挂起 → SSE → 用户动作 → Promise 结算；超时/中止/会话关闭都要有确定归宿。**「谁在等用户」只有一个真相源**：不要在任务/计划里再镜像一份（M4.1 移除了 `PlanView.question*`）。
+- 会话信息面板：`GET /api/agent/:sessionId/prompt`（`services/session-prompt-service.ts`）**按需读 SDK 会话对象**（`systemPrompt` / `getAllTools()` / `resourceLoader`），拿到系统提示词、工具（含来源与「已激活/已注册」）、skills、提示词模板、上下文文件。**不用 provider 钩子、不缓存、不落库**（钩子那条路是 P1 的请求形状指纹，两件事）；工具来源分组只在 `classifyToolSource` 一处定义，MCP 归属由注册表注入的 `resolveMcpTool` 解析（拿不到就拆名字）。细节见 `docs/node-session-prompt-panel.md`。
 - 版本号语义：`task.revision` 是**用户可见内容的版本**。执行期运行时写入（租约/心跳/在飞）用 `keepRevision: true` 不占版本号；`TaskService.mutate` 的 `change()` 返回原对象即「无变化」（不写库、不广播、不动版本号）。所有写入都先重读记录再改，因此不会用陈旧副本覆盖运行时字段。
 
 ### Python 三层内核（pi-python/src）
@@ -166,6 +167,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-platform-m0-spike.md` | M0 验证结论：存储选型、`~/.pi/agent` 只读边界审计与整改清单 |
 | `docs/node-observability-m1.md` | **M1 可观测底座**：采集口径（run 边界/TTFT/策略拦截归因）、存储与聚合取舍、REST 契约、配置与降级 |
 | `docs/node-observability-p0p1.md` | **可观测性扩容 P0/P1**：白捡事件清单、人机等待（`wait_ms`/`active_ms`）拆分、请求形状（工具集/系统提示词指纹）与上下文注入审计 |
+| `docs/node-session-prompt-panel.md` | **会话信息面板**（`GET /api/agent/:id/prompt`）：数据源是会话对象（不用 provider 钩子）、工具来源分组与激活标记、MCP 归属、已知限制 |
 | `docs/node-task-domain-m2.md` | **M2 任务领域**：状态聚合语义（唯一真相源＝步骤）、乐观并发、任务 REST/SSE 契约、面板 |
 | `docs/node-task-recovery-m3.md` | **M3 断点续跑**：执行租约、在飞动作与副作用分级、恢复清单与一键续跑、DoD 验证记录 |
 | `docs/node-web-plan-mode.md` | **Plan 模式对外契约**（M4 起：PlanView、五个计划工具、命令表、规划期权限） |

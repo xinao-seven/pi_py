@@ -233,6 +233,7 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-platform-m0-spike.md`](docs/node-platform-m0-spike.md) | M0 验证报告：存储选型与 `~/.pi/agent` 只读边界审计 |
 | [`docs/node-observability-m1.md`](docs/node-observability-m1.md) | M1 可观测底座：采集口径、存储与聚合取舍、REST 契约与配置 |
 | [`docs/node-observability-p0p1.md`](docs/node-observability-p0p1.md) | **可观测性扩容**：白捡事件、人机等待拆分、请求形状与上下文注入审计 |
+| [`docs/node-session-prompt-panel.md`](docs/node-session-prompt-panel.md) | **会话信息面板**：系统提示词 / 工具（含来源与激活标记）/ skills / MCP / 上下文文件 |
 | [`docs/node-task-domain-m2.md`](docs/node-task-domain-m2.md) | M2 任务领域：状态聚合语义、乐观并发、任务 REST/SSE 与面板 |
 | [`docs/node-task-recovery-m3.md`](docs/node-task-recovery-m3.md) | M3 断点续跑：执行租约、在飞动作与副作用分级、恢复清单与一键续跑 |
 | [`docs/node-web-plan-mode.md`](docs/node-web-plan-mode.md) | **Plan 模式契约**（M4 起：Plan 是 Task 的视图 + 工具驱动） |
