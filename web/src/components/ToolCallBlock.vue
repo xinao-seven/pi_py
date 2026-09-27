@@ -3,6 +3,7 @@
 import { computed } from 'vue';
 
 import { messageText } from '@/lib/agent-events';
+import { toolCallSummary } from '@/lib/tool-summary';
 import SubagentCallBlock from '@/components/SubagentCallBlock.vue';
 import type { AgentMessage, ContentBlock, SubagentToolDetails } from '@/types';
 
@@ -23,6 +24,12 @@ const subagentDetails = computed<SubagentToolDetails | undefined>(() => {
   return details && typeof details.preset === 'string' ? details : undefined;
 });
 const resultText = computed(() => (props.result ? messageText(props.result) : ''));
+/**
+ * 折叠状态下的一行摘要（bash 的命令、read/write/edit 的路径、grep 的模式…）。
+ * 中文说明：折叠时只有工具名的话，长会话里看不出这次在干什么（必须逐条展开）；
+ * 完整参数仍在展开区，所以这一行只是「提前把身份信息露出来」。
+ */
+const collapsedHint = computed(() => toolCallSummary(props.call.name, props.call.arguments));
 const status = computed(() => {
   // 状态文案：失败优先，其次完成/运行中/等待
   if (props.result?.isError) return '失败';
@@ -49,6 +56,7 @@ const status = computed(() => {
     <summary>
       <span class="tool-glyph" aria-hidden="true">›_</span>
       <span class="tool-name">{{ call.name || 'tool' }}</span>
+      <span v-if="collapsedHint" class="tool-hint" :title="collapsedHint">{{ collapsedHint }}</span>
       <span class="tool-status">{{ status }}</span>
     </summary>
     <div class="tool-section">
@@ -100,16 +108,31 @@ const status = computed(() => {
   color: var(--accent);
   font-family: 'Cascadia Code', Consolas, monospace;
   font-weight: 700;
+  /* 摘要可能很长：字形与工具名保住固有宽度，只让摘要自己收缩省略。 */
+  flex: 0 0 auto;
 }
 
 .tool-name {
   color: var(--text);
   font-family: 'Cascadia Code', Consolas, monospace;
+  flex: 0 0 auto;
+}
+
+/* 折叠摘要：单行、可收缩、超长省略（完整内容在展开区与 title 里）。 */
+.tool-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-status {
   margin-left: auto;
   color: var(--faint);
+  flex: 0 0 auto;
 }
 
 .tool-call--error .tool-status {
