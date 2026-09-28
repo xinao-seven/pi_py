@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 
-import type { PendingToolApproval, ToolApprovalBroker } from '../tool-approval.js';
+import type { PendingToolApproval, ToolApprovalBroker } from '../agent/tool-approval.js';
 import type { McpService } from './mcp-service.js';
 
 /** 审批等待时长：前端未决定时自动拒绝。 */

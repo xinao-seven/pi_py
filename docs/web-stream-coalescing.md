@@ -2,7 +2,7 @@
 
 > 类型：前端渲染节流 + 后端 SSE 重放/背压修复（无 REST 契约变更）。
 > 涉及 `web/src/composables/useAgentSession.ts`、`web/src/components/ChatWindow.vue`、
-> `node-pi/server/src/services/agent-registry.ts`、`node-pi/server/src/routes/agent.ts`
+> `node-pi/server/src/services/agent/agent-registry.ts`、`node-pi/server/src/routes/agent.ts`
 > 与三条回归测试。
 
 ## 1. 现象
@@ -84,7 +84,7 @@ await emit({ type: 'message_update', assistantMessageEvent: event, message: { ..
 |------|----------------|
 | `web/test/composables/useAgentSession.test.ts` → 合并渲染 | 同一 tick 推 3 条 `message_update` 只调度 **1 次**帧，且帧回调前状态不变、帧后是最后一条（逐条写状态就红灯） |
 | `web/test/composables/useAgentSession.test.ts` → 顺序 | 帧还没跑就来 `message_end` 时，必须先落地挂起增量、再由 `message_end` 清空，不能反过来 |
-| `node-pi/server/test/services/agent-registry-replay.test.ts` | 5 条 `message_update` 重放后只剩最后 1 条 + 全部非增量事件；实时订阅仍收到全部 |
+| `node-pi/server/test/services/agent/agent-registry-replay.test.ts` | 5 条 `message_update` 重放后只剩最后 1 条 + 全部非增量事件；实时订阅仍收到全部 |
 | `node-pi/server/test/routes/agent-sse.test.ts` | 限额内写 `id/data` 帧；超限不写且 `dropped=true`；恰好等于上限仍写 |
 
 ## 6. 已知限制与后续

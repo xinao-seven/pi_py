@@ -1,7 +1,7 @@
 # 向用户提问的交互通道（ask_user）
 
 更新日期：2026-08-21
-实现：`node-pi/server/src/services/user-question.ts` · 前端 `web/src/components/QuestionDialog.vue`
+实现：`node-pi/server/src/services/agent/user-question.ts` · 前端 `web/src/components/QuestionDialog.vue`
 
 > M4 之前的 `ask_user` 只是「在计划面板上显示一句问题」：答案要靠用户在聊天框里自由文本回复，
 > 模型得猜哪句是回答，也不支持一次问多个问题。现在它是与**危险命令审批**并列的
@@ -185,7 +185,7 @@ interface QuestionSpec {
 
 | 层 | 覆盖 |
 | --- | --- |
-| `test/services/user-question.test.ts`（18） | 参数规整（补 id/去重/上限/`allowFreeText` 语义）、挂起与结算（回答、部分回答补跳过、取消、超时、abort、会话关闭、服务关闭）、二次提问拒绝、`answers` 校验、渲染文本、扩展注册与激活、工具结果形状与校验错误 |
+| `test/services/agent/user-question.test.ts`（18） | 参数规整（补 id/去重/上限/`allowFreeText` 语义）、挂起与结算（回答、部分回答补跳过、取消、超时、abort、会话关闭、服务关闭）、二次提问拒绝、`answers` 校验、渲染文本、扩展注册与激活、工具结果形状与校验错误 |
 | `test/routes/tasks-routes.test.ts`（+2） | `question_pending` 后状态快照可见、`answer_question` 结算它；未知 questionId → 404、`answers` 非数组 → 422 |
 | `web/test/components/QuestionDialog.test.ts`（10） | 选项渲染与选中、多题（单选+多选+文本）、自由输入、未答按跳过、取消、新提问清空草稿、busy 禁用 |
 | `web/test/lib/agent-events.test.ts`（+5） | `question_pending` 进入等待外部输入状态、`question_resolved`/`agent_end` 清理、非法载荷归一化；`applyStreamState` 字段完整性（每个键都要拷）+ 提问状态写回/清除 |

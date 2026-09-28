@@ -23,10 +23,10 @@
 
 ### 源码位置
 
-- `PiSession` 门面接口：[agent-registry.ts:111-148](node-pi/server/src/services/agent-registry.ts#L111-L148)
-- `OriginalPiSessionFactory`（SDK 适配：凭据/模型组装、创建/打开会话）：[agent-registry.ts:210-369](node-pi/server/src/services/agent-registry.ts#L210-L369)
-- `AgentRegistry`（会话注册、事件订阅、缓存重放）：[agent-registry.ts:379-538](node-pi/server/src/services/agent-registry.ts#L379-L538)
-- `command()` 统一命令分发：[agent-registry.ts:545-630](node-pi/server/src/services/agent-registry.ts#L545-L630)
+- `PiSession` 门面接口：[agent-registry.ts:111-148](node-pi/server/src/services/agent/agent-registry.ts#L111-L148)
+- `OriginalPiSessionFactory`（SDK 适配：凭据/模型组装、创建/打开会话）：[agent-registry.ts:210-369](node-pi/server/src/services/agent/agent-registry.ts#L210-L369)
+- `AgentRegistry`（会话注册、事件订阅、缓存重放）：[agent-registry.ts:379-538](node-pi/server/src/services/agent/agent-registry.ts#L379-L538)
+- `command()` 统一命令分发：[agent-registry.ts:545-630](node-pi/server/src/services/agent/agent-registry.ts#L545-L630)
 - SSE 端点（`Last-Event-ID` 回放 + 15s 心跳 + 断开清理）：[routes/agent.ts:252-286](node-pi/server/src/routes/agent.ts#L252-L286)
 - 长任务 `202` 接收：[routes/agent.ts:172-206](node-pi/server/src/routes/agent.ts#L172-L206)
 - 依赖注入与生命周期：[app.ts](node-pi/server/src/app.ts)
@@ -47,8 +47,8 @@
 
 ### 源码位置
 
-- 直接组装 Pi SDK 依赖（`createAgentSession` / `ModelRuntime` / `SettingsManager`）：[agent-registry.ts:222-262](node-pi/server/src/services/agent-registry.ts#L222-L262)
-- 扩展机制作为二次开发能力的落点：工具审批 [tool-approval.ts:234-251](node-pi/server/src/services/tool-approval.ts#L234-L251)、MCP [mcp-extension.ts:23-52](node-pi/server/src/services/mcp/mcp-extension.ts#L23-L52)、Plan 模式 [plan-mode-service.ts:334-343](node-pi/server/src/services/plan-mode-service.ts#L334-L343)
+- 直接组装 Pi SDK 依赖（`createAgentSession` / `ModelRuntime` / `SettingsManager`）：[agent-registry.ts:222-262](node-pi/server/src/services/agent/agent-registry.ts#L222-L262)
+- 扩展机制作为二次开发能力的落点：工具审批 [tool-approval.ts:234-251](node-pi/server/src/services/agent/tool-approval.ts#L234-L251)、MCP [mcp-extension.ts:23-52](node-pi/server/src/services/mcp/mcp-extension.ts#L23-L52)、Plan 模式 [plan-mode-service.ts:334-343](node-pi/server/src/services/plan/plan-mode-service.ts#L334-L343)
 - 扩展发现与接入说明：[docs/node-extension-system.md](docs/node-extension-system.md)
 
 ---
@@ -100,7 +100,7 @@
 
 ### 源码位置
 
-- 后端事件缓存（每会话最多 256 条）+ `Last-Event-ID` 断点回放：`subscribe()` 先按 `afterEventId` 补发缓存，再加进订阅集合 [agent-registry.ts:527-538](node-pi/server/src/services/agent-registry.ts#L527-L538)；缓存写入与超限丢最旧在 `publish()` [agent-registry.ts:786-795](node-pi/server/src/services/agent-registry.ts#L786-L795)
+- 后端事件缓存（每会话最多 256 条）+ `Last-Event-ID` 断点回放：`subscribe()` 先按 `afterEventId` 补发缓存，再加进订阅集合 [agent-registry.ts:527-538](node-pi/server/src/services/agent/agent-registry.ts#L527-L538)；缓存写入与超限丢最旧在 `publish()` [agent-registry.ts:786-795](node-pi/server/src/services/agent/agent-registry.ts#L786-L795)
 - 后端 SSE 端点：读取 `Last-Event-ID` 请求头、`reply.hijack()`、15 秒心跳、`close` 断开清理 [routes/agent.ts:252-286](node-pi/server/src/routes/agent.ts#L252-L286)
 - ✅ **本次改造已把简历口径落地为真实代码**：前端改用 fetch + ReadableStream + TextDecoder 手写解析 SSE，并自建断线重连（指数退避 + `Last-Event-ID` 续传 + 心跳假死检测 + generation 竞态防护 + `visibilitychange` 重连）：
   - `fetchAgentEvents`（`Authorization` / `Last-Event-ID` 请求头）：[api.ts:310-329](web/src/lib/api.ts#L310-L329)
@@ -185,12 +185,12 @@
 
 **实现方式（拦截点 + 挂起队列 + 双端结算）**：
 
-- **拦截点**：用 Pi 的内联扩展注册 `tool_call` 钩子（[tool-approval.ts:234-251](node-pi/server/src/services/tool-approval.ts#L234-L251)）。每次 bash 被调用时先做危险分类；命中规则就构造 `PendingToolApproval`（会话、工具、参数、命中规则、风险等级、类别），调 `requestApproval()` 挂起等待——钩子返回 Promise，**等待期间工具执行被真正卡住**。SDK 侧这条拦截正是落在 `beforeToolCall` 钩子上（Pi 源码 `agent-session.js` 把 `beforeToolCall` 转成 `tool_call` 事件，见 `pi_design.md` 第 3 节）。
-- **挂起队列**：`ToolApprovalBroker` 是唯一真相源，用 `Map<sessionId:toolCallId, Waiter>` 维护挂起项（[tool-approval.ts:223-284](node-pi/server/src/services/tool-approval.ts#L223-L284)）。登记时触发 `onPending` 回调，注册表把它转成 `tool_call_pending` SSE 事件推给前端弹审批框。防重入：同一 `toolCallId` 重复登记直接拒绝。
-- **双端结算**：`decide(sessionId, toolCallId, approved)` 由前端 `approve_tool` 命令触达（[tool-approval.ts:292-297](node-pi/server/src/services/tool-approval.ts#L292-L297)），允许 → Promise resolve true 放行；拒绝 → resolve false、钩子返回 `{ block: true, reason }` 拦截。**所有终结路径都结算**：前端决定、30 秒决策超时、`AbortSignal` 中止、会话关闭 `cancelSession`、服务关闭 `dispose`——超时/中止/关闭一律按拒绝处理，不出现挂起项泄漏。
+- **拦截点**：用 Pi 的内联扩展注册 `tool_call` 钩子（[tool-approval.ts:234-251](node-pi/server/src/services/agent/tool-approval.ts#L234-L251)）。每次 bash 被调用时先做危险分类；命中规则就构造 `PendingToolApproval`（会话、工具、参数、命中规则、风险等级、类别），调 `requestApproval()` 挂起等待——钩子返回 Promise，**等待期间工具执行被真正卡住**。SDK 侧这条拦截正是落在 `beforeToolCall` 钩子上（Pi 源码 `agent-session.js` 把 `beforeToolCall` 转成 `tool_call` 事件，见 `pi_design.md` 第 3 节）。
+- **挂起队列**：`ToolApprovalBroker` 是唯一真相源，用 `Map<sessionId:toolCallId, Waiter>` 维护挂起项（[tool-approval.ts:223-284](node-pi/server/src/services/agent/tool-approval.ts#L223-L284)）。登记时触发 `onPending` 回调，注册表把它转成 `tool_call_pending` SSE 事件推给前端弹审批框。防重入：同一 `toolCallId` 重复登记直接拒绝。
+- **双端结算**：`decide(sessionId, toolCallId, approved)` 由前端 `approve_tool` 命令触达（[tool-approval.ts:292-297](node-pi/server/src/services/agent/tool-approval.ts#L292-L297)），允许 → Promise resolve true 放行；拒绝 → resolve false、钩子返回 `{ block: true, reason }` 拦截。**所有终结路径都结算**：前端决定、30 秒决策超时、`AbortSignal` 中止、会话关闭 `cancelSession`、服务关闭 `dispose`——超时/中止/关闭一律按拒绝处理，不出现挂起项泄漏。
 - **边界守卫**：钩子首行 `if (ctx.hasUI) return undefined`——扩展被共享到 TUI/RPC 宿主也不会绕过其自身确认 UI。
 
-**如何判定危险工具执行**——规则引擎，分两级（[tool-approval.ts:40-202](node-pi/server/src/services/tool-approval.ts#L40-L202)）：
+**如何判定危险工具执行**——规则引擎，分两级（[tool-approval.ts:40-202](node-pi/server/src/services/agent/tool-approval.ts#L40-L202)）：
 
 - **`DANGEROUS_COMMAND_RULES`**（命中 → `critical`，必须审批）：提权删除、递归/强制删除（`rm -rf` / `Remove-Item -Force`）、磁盘格式化、直接写块设备（`dd of=/dev/...`）、关机重启、Git 强制推送、批量卸载、远程脚本管道执行（`curl | sh`）、递归改根目录权限、删注册表、fork 炸弹。按「高危优先」排序，避免强制推送被普通 Git 规则降级。
 - **`SENSITIVE_COMMAND_RULES`**（命中 → `medium`/`high`，需确认）：Git 远端写操作、依赖变更、网络访问、Shell 重定向写文件。
@@ -198,9 +198,9 @@
 
 ### 源码位置
 
-- 危险/敏感规则表 + 分类函数：[tool-approval.ts:40-202](node-pi/server/src/services/tool-approval.ts#L40-L202)
-- 审批中枢 `ToolApprovalBroker`（挂起队列 / 防重入 / 超时 / 结算）：[tool-approval.ts:223-323](node-pi/server/src/services/tool-approval.ts#L223-L323)
-- 拦截点内联扩展（`tool_call` 钩子 + `hasUI` 守卫）：[tool-approval.ts:234-251](node-pi/server/src/services/tool-approval.ts#L234-L251)
+- 危险/敏感规则表 + 分类函数：[tool-approval.ts:40-202](node-pi/server/src/services/agent/tool-approval.ts#L40-L202)
+- 审批中枢 `ToolApprovalBroker`（挂起队列 / 防重入 / 超时 / 结算）：[tool-approval.ts:223-323](node-pi/server/src/services/agent/tool-approval.ts#L223-L323)
+- 拦截点内联扩展（`tool_call` 钩子 + `hasUI` 守卫）：[tool-approval.ts:234-251](node-pi/server/src/services/agent/tool-approval.ts#L234-L251)
 - 审批弹窗（风险分级 / 命令预览 / 规则说明）：[ToolApprovalDialog.vue](web/src/components/ToolApprovalDialog.vue)
 - 命令风险分级与审批链路文档：[docs/node-command-approval.md](docs/node-command-approval.md)
 - Pi 侧拦截接线（`beforeToolCall` → `tool_call`）：见 [pi_design.md](pi_design.md) 第 3 节
@@ -246,28 +246,28 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 - `provider` / `modelId`：默认模型
 - `thinkingLevel`：思考强度等级
 
-**内置 vs 自定义**：内置 `coding-agent` 预设（[preset-service.ts:60-71](node-pi/server/src/services/preset-service.ts#L60-L71)）所有字段都是「未指定」，即完全用 SDK 默认值，不可改删；自定义预设由用户增删改，持久化到 `~/.pi/agent/node-server-presets.json`（[preset-service.ts:73-144](node-pi/server/src/services/preset-service.ts#L73-L144)），原子写（临时文件 + rename），校验在写方向做（`parsePresetInput`，provider 与 modelId 必须成对、thinkingLevel 必须在合法集合内）。
+**内置 vs 自定义**：内置 `coding-agent` 预设（[preset-service.ts:60-71](node-pi/server/src/services/models/preset-service.ts#L60-L71)）所有字段都是「未指定」，即完全用 SDK 默认值，不可改删；自定义预设由用户增删改，持久化到 `~/.pi/agent/node-server-presets.json`（[preset-service.ts:73-144](node-pi/server/src/services/models/preset-service.ts#L73-L144)），原子写（临时文件 + rename），校验在写方向做（`parsePresetInput`，provider 与 modelId 必须成对、thinkingLevel 必须在合法集合内）。
 
 **不同预设如何实现不同的设置**——「前端预填 + 后端映射」两条路径：
 
 - **前端预填**：选择预设时 `applyPreset()`（[useAgentSession.ts:479-494](web/src/composables/useAgentSession.ts#L479-L494)）把预设拆开——模型/思考等级/工具直接预填到会话控件里（仍可手动改），系统提示词和压缩策略记入会话状态。创建会话时（[useAgentSession.ts:372-383](web/src/composables/useAgentSession.ts#L372-L383)）作为 `systemPrompt` / `compaction` / `provider` / `modelId` / `thinkingLevel` / `toolNames` 展开进 `POST /api/agent/new` body。
-- **后端映射**：`OriginalPiSessionFactory.create()`（[agent-registry.ts:222-262](node-pi/server/src/services/agent-registry.ts#L222-L262)）把每个字段映射到 `createAgentSession()`：
-  - `systemPrompt` → 资源加载器的 `systemPrompt`，**空串不传**（[agent-registry.ts:346-348](node-pi/server/src/services/agent-registry.ts#L346-L348)），否则会让 loader 跳过 `SYSTEM.md`/`AGENTS.md` 发现；
-  - `compaction` → 每会话独立的 `SettingsManager`，仅内存 `applyOverrides({ compaction })`（[agent-registry.ts:240-246](node-pi/server/src/services/agent-registry.ts#L240-L246)），不写 settings.json；
+- **后端映射**：`OriginalPiSessionFactory.create()`（[agent-registry.ts:222-262](node-pi/server/src/services/agent/agent-registry.ts#L222-L262)）把每个字段映射到 `createAgentSession()`：
+  - `systemPrompt` → 资源加载器的 `systemPrompt`，**空串不传**（[agent-registry.ts:346-348](node-pi/server/src/services/agent/agent-registry.ts#L346-L348)），否则会让 loader 跳过 `SYSTEM.md`/`AGENTS.md` 发现；
+  - `compaction` → 每会话独立的 `SettingsManager`，仅内存 `applyOverrides({ compaction })`（[agent-registry.ts:240-246](node-pi/server/src/services/agent/agent-registry.ts#L240-L246)），不写 settings.json；
   - `model` → `runtime.getModel(provider, modelId)`，未指定用 Pi 默认模型；
   - `thinkingLevel` → 透传给 SDK（"off" 对任何模型都接受）；
   - `toolNames` → `tools` 工具白名单。
-  - 扩展开关：`extensions.{planMode, approval}` 控制是否注入审批/Plan 扩展（[agent-registry.ts:337-342](node-pi/server/src/services/agent-registry.ts#L337-L342)）。
+  - 扩展开关：`extensions.{planMode, approval}` 控制是否注入审批/Plan 扩展（[agent-registry.ts:337-342](node-pi/server/src/services/agent/agent-registry.ts#L337-L342)）。
 
 所以不同预设的「不同」，落在**会话创建那一刻的内核参数不同**：系统提示词（loader 注入）、压缩策略（独立 SettingsManager）、模型与思考等级（createAgentSession 参数）、工具集（白名单 + 扩展开关）。预设本质是这组参数的**命名快照**。
 
 ### 源码位置
 
-- 预设持久化 + 内置合成 + 校验：[preset-service.ts:60-213](node-pi/server/src/services/preset-service.ts#L60-L213)
+- 预设持久化 + 内置合成 + 校验：[preset-service.ts:60-213](node-pi/server/src/services/models/preset-service.ts#L60-L213)
 - 预设 REST 层（CRUD）：[routes/presets.ts:17-34](node-pi/server/src/routes/presets.ts#L17-L34)
-- 后端字段映射到 `createAgentSession`：[agent-registry.ts:222-262](node-pi/server/src/services/agent-registry.ts#L222-L262)
-- 空 systemPrompt 不传（保留文件级提示词发现）：[agent-registry.ts:346-348](node-pi/server/src/services/agent-registry.ts#L346-L348)
-- 每会话独立 SettingsManager 覆盖压缩策略（不写磁盘）：[agent-registry.ts:240-246](node-pi/server/src/services/agent-registry.ts#L240-L246)
+- 后端字段映射到 `createAgentSession`：[agent-registry.ts:222-262](node-pi/server/src/services/agent/agent-registry.ts#L222-L262)
+- 空 systemPrompt 不传（保留文件级提示词发现）：[agent-registry.ts:346-348](node-pi/server/src/services/agent/agent-registry.ts#L346-L348)
+- 每会话独立 SettingsManager 覆盖压缩策略（不写磁盘）：[agent-registry.ts:240-246](node-pi/server/src/services/agent/agent-registry.ts#L240-L246)
 - 前端 applyPreset 预填 + 建会话时展开：[useAgentSession.ts:479-494](web/src/composables/useAgentSession.ts#L479-L494)、[useAgentSession.ts:372-383](web/src/composables/useAgentSession.ts#L372-L383)
 - 预设配置面板：[PresetConfig.vue](web/src/components/PresetConfig.vue)
 
@@ -289,10 +289,10 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- 预设字段定义（提示词/工具/压缩/模型/思考）：[preset-service.ts:35-50](node-pi/server/src/services/preset-service.ts#L35-L50)
-- 内置 vs 自定义（合成 + 不可改删）：[preset-service.ts:60-71](node-pi/server/src/services/preset-service.ts#L60-L71)、[preset-service.ts:81-122](node-pi/server/src/services/preset-service.ts#L81-L122)
+- 预设字段定义（提示词/工具/压缩/模型/思考）：[preset-service.ts:35-50](node-pi/server/src/services/models/preset-service.ts#L35-L50)
+- 内置 vs 自定义（合成 + 不可改删）：[preset-service.ts:60-71](node-pi/server/src/services/models/preset-service.ts#L60-L71)、[preset-service.ts:81-122](node-pi/server/src/services/models/preset-service.ts#L81-L122)
 - 前端选预设 → 预填会话控件：[useAgentSession.ts:479-494](web/src/composables/useAgentSession.ts#L479-L494)
-- 建会话时展开成内核参数：[useAgentSession.ts:372-383](web/src/composables/useAgentSession.ts#L372-L383)、[agent-registry.ts:222-262](node-pi/server/src/services/agent-registry.ts#L222-L262)
+- 建会话时展开成内核参数：[useAgentSession.ts:372-383](web/src/composables/useAgentSession.ts#L372-L383)、[agent-registry.ts:222-262](node-pi/server/src/services/agent/agent-registry.ts#L222-L262)
 - 预设配置面板：[PresetConfig.vue](web/src/components/PresetConfig.vue)
 
 ---
@@ -318,8 +318,8 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- Pi 依赖组装（`createAgentSession`/`ModelRuntime`/`SettingsManager`）：[agent-registry.ts:222-262](node-pi/server/src/services/agent-registry.ts#L222-L262)、[agent-registry.ts:317-324](node-pi/server/src/services/agent-registry.ts#L317-L324)
-- 我的服务层：审批 [tool-approval.ts](node-pi/server/src/services/tool-approval.ts)、Plan [plan-mode-service.ts](node-pi/server/src/services/plan-mode-service.ts)、MCP [mcp/](node-pi/server/src/services/mcp/)、预设 [preset-service.ts](node-pi/server/src/services/preset-service.ts)
+- Pi 依赖组装（`createAgentSession`/`ModelRuntime`/`SettingsManager`）：[agent-registry.ts:222-262](node-pi/server/src/services/agent/agent-registry.ts#L222-L262)、[agent-registry.ts:317-324](node-pi/server/src/services/agent/agent-registry.ts#L317-L324)
+- 我的服务层：审批 [tool-approval.ts](node-pi/server/src/services/agent/tool-approval.ts)、Plan [plan-mode-service.ts](node-pi/server/src/services/plan/plan-mode-service.ts)、MCP [mcp/](node-pi/server/src/services/mcp/)、预设 [preset-service.ts](node-pi/server/src/services/models/preset-service.ts)
 - 前端全部：[web/src](web/src/)
 - Python 复刻：[pi-python/src](pi-python/src/)
 - Pi SDK 内部设计参考：[pi_design.md](pi_design.md)
@@ -333,23 +333,23 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 记忆分三层，对应三种生命周期：
 
 **① 短期会话记忆 —— 会话 JSONL 持久化（可恢复）**
-每次会话的每一条消息、工具调用、分支节点都实时写进 `~/.pi/agent/sessions/<编码后cwd>/<sessionId>.jsonl`（`SessionManager` 负责）。进程重启、机器重启后，`SessionManager.open(path)` 从磁盘恢复完整上下文：消息树、分支、压缩摘要全都在。我的后端 `open()`（[agent-registry.ts:298-309](node-pi/server/src/services/agent-registry.ts#L298-L309)）把这个能力暴露成 Web 的「恢复会话」，侧栏列表靠 `listPersistedSessions` 扫描 sessions 目录。会话树还支持 `navigate_tree`/fork/merge——记忆不是一维的，是分叉的，可回到历史任一点重新展开。
+每次会话的每一条消息、工具调用、分支节点都实时写进 `~/.pi/agent/sessions/<编码后cwd>/<sessionId>.jsonl`（`SessionManager` 负责）。进程重启、机器重启后，`SessionManager.open(path)` 从磁盘恢复完整上下文：消息树、分支、压缩摘要全都在。我的后端 `open()`（[agent-registry.ts:298-309](node-pi/server/src/services/agent/agent-registry.ts#L298-L309)）把这个能力暴露成 Web 的「恢复会话」，侧栏列表靠 `listPersistedSessions` 扫描 sessions 目录。会话树还支持 `navigate_tree`/fork/merge——记忆不是一维的，是分叉的，可回到历史任一点重新展开。
 
 **② 中期记忆 —— 上下文压缩（窗口管理）**
-长期对话会撑爆模型上下文窗口。触发条件是 `shouldCompact`：`contextTokens > contextWindow - reserveTokens`，即「上下文快满、且要给模型留出回复余量」时（Pi SDK `compaction.js:160-163`，见 `pi_design.md`）。压缩时 `findCutPoint` 按 `keepRecentTokens` 找切割点，**早期轮次由模型自身归纳成摘要**（`generateSummaryWithUsage`，可把上一轮摘要滚动传入做滚动式摘要），最近窗口原样保留。Web 层呈现：`compaction_start`/`compaction_end` SSE 事件驱动前端转圈与错误提示（[useAgentSession.ts:327-332](web/src/composables/useAgentSession.ts#L327-L332)），工具栏 contextUsage 百分比实时显示窗口占用，还有手动 `compact` 按钮（[useAgentSession.ts:534-545](web/src/composables/useAgentSession.ts#L534-L545)、后端命令 [agent-registry.ts:588-589](node-pi/server/src/services/agent-registry.ts#L588-L589)）。压缩策略本身可配置，且能随预设按会话覆盖（每会话独立 SettingsManager 内存覆盖，不写磁盘）。
+长期对话会撑爆模型上下文窗口。触发条件是 `shouldCompact`：`contextTokens > contextWindow - reserveTokens`，即「上下文快满、且要给模型留出回复余量」时（Pi SDK `compaction.js:160-163`，见 `pi_design.md`）。压缩时 `findCutPoint` 按 `keepRecentTokens` 找切割点，**早期轮次由模型自身归纳成摘要**（`generateSummaryWithUsage`，可把上一轮摘要滚动传入做滚动式摘要），最近窗口原样保留。Web 层呈现：`compaction_start`/`compaction_end` SSE 事件驱动前端转圈与错误提示（[useAgentSession.ts:327-332](web/src/composables/useAgentSession.ts#L327-L332)），工具栏 contextUsage 百分比实时显示窗口占用，还有手动 `compact` 按钮（[useAgentSession.ts:534-545](web/src/composables/useAgentSession.ts#L534-L545)、后端命令 [agent-registry.ts:588-589](node-pi/server/src/services/agent/agent-registry.ts#L588-L589)）。压缩策略本身可配置，且能随预设按会话覆盖（每会话独立 SettingsManager 内存覆盖，不写磁盘）。
 
 **③ 长期记忆 —— AGENTS.md / SYSTEM.md（项目绑定）**
-这是「跨会话、绑定项目」的记忆。`DefaultResourceLoader` 从 cwd 逐级向上找 `AGENTS.md`/`CLAUDE.md`（加上全局 `agentDir` 一份），并加载项目 `.pi/SYSTEM.md` 与全局 `SYSTEM.md` 作为系统提示词（Pi SDK `resource-loader.js:27-50`、`:809-824`）——所以每次会话 Agent 都「记得」这个项目的约定、架构、命令。我的预设系统提示词与此配合的关键：`systemPrompt` 为空串时**不传入** loader（[agent-registry.ts:346-348](node-pi/server/src/services/agent-registry.ts#L346-L348)），保留文件级提示词发现；非空才覆盖，做垂类人设。
+这是「跨会话、绑定项目」的记忆。`DefaultResourceLoader` 从 cwd 逐级向上找 `AGENTS.md`/`CLAUDE.md`（加上全局 `agentDir` 一份），并加载项目 `.pi/SYSTEM.md` 与全局 `SYSTEM.md` 作为系统提示词（Pi SDK `resource-loader.js:27-50`、`:809-824`）——所以每次会话 Agent 都「记得」这个项目的约定、架构、命令。我的预设系统提示词与此配合的关键：`systemPrompt` 为空串时**不传入** loader（[agent-registry.ts:346-348](node-pi/server/src/services/agent/agent-registry.ts#L346-L348)），保留文件级提示词发现；非空才覆盖，做垂类人设。
 
 三层串起来：**短期靠 JSONL 保存对话本身，中期靠压缩保住窗口内最相关的部分，长期靠 AGENTS.md 沉淀项目级知识**。Web 层把三层都可视化（会话树、压缩进度、上下文占用、AGENTS 提示词来源）。
 
 ### 源码位置
 
-- 会话持久化（恢复/扫描）：[agent-registry.ts:265-309](node-pi/server/src/services/agent-registry.ts#L265-L309)
+- 会话持久化（恢复/扫描）：[agent-registry.ts:265-309](node-pi/server/src/services/agent/agent-registry.ts#L265-L309)
 - 压缩触发/切割/摘要（Pi SDK）：见 [pi_design.md](pi_design.md) 第 4 节
 - AGENTS.md/SYSTEM.md 发现（Pi SDK）：见 [pi_design.md](pi_design.md) 第 5.2 节
 - Web 层压缩呈现 + 手动压缩：[useAgentSession.ts:327-332](web/src/composables/useAgentSession.ts#L327-L332)、[useAgentSession.ts:534-545](web/src/composables/useAgentSession.ts#L534-L545)
-- 压缩策略随预设按会话覆盖：[agent-registry.ts:240-246](node-pi/server/src/services/agent-registry.ts#L240-L246)
+- 压缩策略随预设按会话覆盖：[agent-registry.ts:240-246](node-pi/server/src/services/agent/agent-registry.ts#L240-L246)
 
 ---
 
@@ -360,7 +360,7 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 **工具系统设计**——工具是「一等公民」的 `ToolDefinition`（Pi 的规范，我按它接入）：
 
 - **结构**：`name`（LLM 调用名）+ `label` + `description`（给 LLM 的用途说明）+ `promptGuidelines`（注入系统提示词的用法指引）+ `parameters`（TypeBox 参数 schema）+ `execute(toolCallId, params, signal, onUpdate, ctx)` 执行函数。
-- **注册与发现**：Pi 的 `DefaultResourceLoader` 发现内置工具与技能；自定义工具经 `pi.registerTool()` 注入。我的 MCP 工具就走这条路——`buildMcpExtension` 把 MCP server 的工具转成 `ToolDefinition` 批量注册（[mcp-extension.ts:29-33](node-pi/server/src/services/mcp/mcp-extension.ts#L29-L33)），工具白名单 `activeTools` 控制哪些工具对模型可见（[agent-registry.ts:581-585](node-pi/server/src/services/agent-registry.ts#L581-L585)）。
+- **注册与发现**：Pi 的 `DefaultResourceLoader` 发现内置工具与技能；自定义工具经 `pi.registerTool()` 注入。我的 MCP 工具就走这条路——`buildMcpExtension` 把 MCP server 的工具转成 `ToolDefinition` 批量注册（[mcp-extension.ts:29-33](node-pi/server/src/services/mcp/mcp-extension.ts#L29-L33)），工具白名单 `activeTools` 控制哪些工具对模型可见（[agent-registry.ts:581-585](node-pi/server/src/services/agent/agent-registry.ts#L581-L585)）。
 
 **参数校验（怎么校验工具参数）**——执行前有一套管线（`prepareToolCall`）：
 
@@ -382,7 +382,7 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 - 工具执行 + 校验管线 `prepareToolCall`（Pi SDK）：见 [pi_design.md](pi_design.md) 第 2.2 节
 - 参数校验 `validateToolArguments`（Pi SDK）：见 [pi_design.md](pi_design.md) 第 2.3 节
 - 出错包装 + 截断保护（Pi SDK）：见 [pi_design.md](pi_design.md) 第 2.4 节
-- 我的落点：审批拦截 [tool-approval.ts:234-251](node-pi/server/src/services/tool-approval.ts#L234-L251)、MCP 工具注册与审批 [mcp-extension.ts:23-52](node-pi/server/src/services/mcp/mcp-extension.ts#L23-L52)、工具白名单 [agent-registry.ts:581-585](node-pi/server/src/services/agent-registry.ts#L581-L585)
+- 我的落点：审批拦截 [tool-approval.ts:234-251](node-pi/server/src/services/agent/tool-approval.ts#L234-L251)、MCP 工具注册与审批 [mcp-extension.ts:23-52](node-pi/server/src/services/mcp/mcp-extension.ts#L23-L52)、工具白名单 [agent-registry.ts:581-585](node-pi/server/src/services/agent/agent-registry.ts#L581-L585)
 
 ---
 
@@ -434,8 +434,8 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 ### 源码位置
 
 - 领域模型与状态聚合：[task-model.ts:169](node-pi/server/src/services/platform/task-model.ts#L169)、[task-model.ts:120](node-pi/server/src/services/platform/task-model.ts#L120)
-- 用例层（乐观锁 / 广播 / keepRevision）：[task-service.ts:132](node-pi/server/src/services/task-service.ts#L132)
-- REST 与 SSE：[routes/tasks.ts:51-145](node-pi/server/src/routes/tasks.ts#L51-L145)、[agent-registry.ts:1096](node-pi/server/src/services/agent-registry.ts#L1096)
+- 用例层（乐观锁 / 广播 / keepRevision）：[task-service.ts:132](node-pi/server/src/services/task/task-service.ts#L132)
+- REST 与 SSE：[routes/tasks.ts:51-145](node-pi/server/src/routes/tasks.ts#L51-L145)、[agent-registry.ts:1096](node-pi/server/src/services/agent/agent-registry.ts#L1096)
 - 设计文档：[docs/node-task-domain-m2.md](docs/node-task-domain-m2.md)
 
 ---
@@ -463,10 +463,10 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- 租约（owner / TTL / 续期）：[task-lease.ts:29](node-pi/server/src/services/task-lease.ts#L29)、[task-lease.ts:67](node-pi/server/src/services/task-lease.ts#L67)
-- 在飞动作与副作用分级：[task-recovery-extension.ts](node-pi/server/src/services/task-recovery-extension.ts)、[task-recovery.ts:50](node-pi/server/src/services/task-recovery.ts#L50)
-- 恢复判定与清单：[task-recovery.ts:102](node-pi/server/src/services/task-recovery.ts#L102)
-- 续跑（[TASK RESUME] 注入 / 发 prompt / 续期保活）：[task-runner.ts:56](node-pi/server/src/services/task-runner.ts#L56)、[task-runner.ts:309](node-pi/server/src/services/task-runner.ts#L309)
+- 租约（owner / TTL / 续期）：[task-lease.ts:29](node-pi/server/src/services/task/task-lease.ts#L29)、[task-lease.ts:67](node-pi/server/src/services/task/task-lease.ts#L67)
+- 在飞动作与副作用分级：[task-recovery-extension.ts](node-pi/server/src/services/task/task-recovery-extension.ts)、[task-recovery.ts:50](node-pi/server/src/services/task/task-recovery.ts#L50)
+- 恢复判定与清单：[task-recovery.ts:102](node-pi/server/src/services/task/task-recovery.ts#L102)
+- 续跑（[TASK RESUME] 注入 / 发 prompt / 续期保活）：[task-runner.ts:56](node-pi/server/src/services/task/task-runner.ts#L56)、[task-runner.ts:309](node-pi/server/src/services/task/task-runner.ts#L309)
 - 接口：[routes/tasks.ts:84](node-pi/server/src/routes/tasks.ts#L84)、[routes/tasks.ts:92](node-pi/server/src/routes/tasks.ts#L92)
 - 设计文档：[docs/node-task-recovery-m3.md](docs/node-task-recovery-m3.md)
 
@@ -491,9 +491,9 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- 状态机 / 上下文注入 / 命令分发：[plan-mode-service.ts:561](node-pi/server/src/services/plan-mode-service.ts#L561)、[plan-mode-service.ts:491](node-pi/server/src/services/plan-mode-service.ts#L491)
-- 五个计划工具 + propose_plan：[plan-tools.ts:50](node-pi/server/src/services/plan-tools.ts#L50)、[plan-tools.ts:495](node-pi/server/src/services/plan-tools.ts#L495)
-- 规划期能力分类：[plan-policy.ts:29](node-pi/server/src/services/plan-policy.ts#L29)、[plan-policy.ts:378](node-pi/server/src/services/plan-policy.ts#L378)
+- 状态机 / 上下文注入 / 命令分发：[plan-mode-service.ts:561](node-pi/server/src/services/plan/plan-mode-service.ts#L561)、[plan-mode-service.ts:491](node-pi/server/src/services/plan/plan-mode-service.ts#L491)
+- 五个计划工具 + propose_plan：[plan-tools.ts:50](node-pi/server/src/services/plan/plan-tools.ts#L50)、[plan-tools.ts:495](node-pi/server/src/services/plan/plan-tools.ts#L495)
+- 规划期能力分类：[plan-policy.ts:29](node-pi/server/src/services/plan/plan-policy.ts#L29)、[plan-policy.ts:378](node-pi/server/src/services/plan/plan-policy.ts#L378)
 - 纯投影 PlanView：[plan-model.ts:39](node-pi/server/src/services/platform/plan-model.ts#L39)、[plan-model.ts:96](node-pi/server/src/services/platform/plan-model.ts#L96)
 - 证据校验分级：[step-verification.ts:53](node-pi/server/src/services/platform/step-verification.ts#L53)
 - 契约文档：[docs/node-web-plan-mode.md](docs/node-web-plan-mode.md)、实现与取舍：[docs/node-plan-mode-m4.md](docs/node-plan-mode-m4.md)、缓存稳定性：[docs/node-plan-cache-stability.md](docs/node-plan-cache-stability.md)
@@ -518,8 +518,8 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- 挂起队列 / 超时 / 结算 / 答案渲染：[user-question.ts:198](node-pi/server/src/services/user-question.ts#L198)、[user-question.ts:397](node-pi/server/src/services/user-question.ts#L397)
-- 工具与上限：[user-question.ts:26](node-pi/server/src/services/user-question.ts#L26)
+- 挂起队列 / 超时 / 结算 / 答案渲染：[user-question.ts:198](node-pi/server/src/services/agent/user-question.ts#L198)、[user-question.ts:397](node-pi/server/src/services/agent/user-question.ts#L397)
+- 工具与上限：[user-question.ts:26](node-pi/server/src/services/agent/user-question.ts#L26)
 - 弹窗：[QuestionDialog.vue](web/src/components/QuestionDialog.vue)
 - 契约文档：[docs/node-question-channel.md](docs/node-question-channel.md)
 
@@ -546,11 +546,11 @@ MCP（Model Context Protocol）本质是「给 Agent 挂外部工具服务器的
 
 ### 源码位置
 
-- 服务（创建 / 预算 / 并发闸门 / 取消级联 / 扩展）：[subagent-service.ts:195](node-pi/server/src/services/subagent-service.ts#L195)、[subagent-service.ts:55](node-pi/server/src/services/subagent-service.ts#L55)
-- 工具：[subagent-tools.ts:126](node-pi/server/src/services/subagent-tools.ts#L126)
-- 预设发现与只读判定：[subagent-presets.ts:96](node-pi/server/src/services/subagent-presets.ts#L96)、[subagent-presets.ts:38](node-pi/server/src/services/subagent-presets.ts#L38)
-- 模型解析与回退：[subagent-models.ts:37](node-pi/server/src/services/subagent-models.ts#L37)
-- 同名接管名单：[agent-registry.ts:69](node-pi/server/src/services/agent-registry.ts#L69)
+- 服务（创建 / 预算 / 并发闸门 / 取消级联 / 扩展）：[subagent-service.ts:195](node-pi/server/src/services/subagent/subagent-service.ts#L195)、[subagent-service.ts:55](node-pi/server/src/services/subagent/subagent-service.ts#L55)
+- 工具：[subagent-tools.ts:126](node-pi/server/src/services/subagent/subagent-tools.ts#L126)
+- 预设发现与只读判定：[subagent-presets.ts:96](node-pi/server/src/services/subagent/subagent-presets.ts#L96)、[subagent-presets.ts:38](node-pi/server/src/services/subagent/subagent-presets.ts#L38)
+- 模型解析与回退：[subagent-models.ts:37](node-pi/server/src/services/subagent/subagent-models.ts#L37)
+- 同名接管名单：[agent-registry.ts:69](node-pi/server/src/services/agent/agent-registry.ts#L69)
 - 前端委派卡片：[SubagentCallBlock.vue](web/src/components/SubagentCallBlock.vue)
 - 设计文档：[docs/node-subagent-m5.md](docs/node-subagent-m5.md)
 
@@ -623,7 +623,7 @@ Agent 的行为是不确定的，改了提示词或策略后很难判断是变�
 
 ### 源码位置
 
-- 共享态写入参考实现（保留未知字段 / 脱敏 / 原子写）：[model-config-service.ts](node-pi/server/src/services/model-config-service.ts)
+- 共享态写入参考实现（保留未知字段 / 脱敏 / 原子写）：[model-config-service.ts](node-pi/server/src/services/models/model-config-service.ts)
 - 边界逐文件审计与整改清单：[docs/node-platform-m0-spike.md](docs/node-platform-m0-spike.md) 第 3 节
 - 行为准则与红线：[CLAUDE.md](CLAUDE.md) 安全规范
 

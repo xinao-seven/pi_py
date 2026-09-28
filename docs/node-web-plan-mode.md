@@ -133,7 +133,7 @@ interface PlanView {
 
 ## 4. 规划期权限（能力集，而不是白名单）
 
-规划期（`drafting` / `proposed`）只读，规则按**能力分类**判定（`services/plan-policy.ts`）：
+规划期（`drafting` / `proposed`）只读，规则按**能力分类**判定（`services/plan/plan-policy.ts`）：
 
 1. 先跑审批规则：危险/敏感命令（递归删除、改依赖、联网、重定向写文件、远端 Git 操作…）
    一律不放行——同一套判定同时服务审批与 Plan，不会出现「审批说危险、Plan 说安全」。

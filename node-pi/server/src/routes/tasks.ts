@@ -26,9 +26,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { ApiError } from '../errors.js';
-import type { TaskRecoveryService, ResumeRequest } from '../services/task-recovery.js';
-import type { TaskRunner } from '../services/task-runner.js';
-import type { TaskService } from '../services/task-service.js';
+import type { TaskRecoveryService, ResumeRequest } from '../services/task/task-recovery.js';
+import type { TaskRunner } from '../services/task/task-runner.js';
+import type { TaskService } from '../services/task/task-service.js';
 
 export interface TaskRouteOptions {
   service: TaskService;

@@ -10,7 +10,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import { ApiError } from '../errors.js';
-import type { SessionService } from '../services/session-service.js';
+import type { SessionService } from '../services/agent/session-service.js';
 
 export interface AuthRouteOptions {
   enabled: boolean; // 密码锁是否启用（是否配置了访问密码）

@@ -20,7 +20,7 @@ import type { AgentSessionEvent, InlineExtension } from '@earendil-works/pi-codi
 import type { ServiceLogger } from '../service-logger.js';
 import type { TraceRepository } from '../platform/trace-repository.js';
 import type { BlockedBy, RunRow, StepKind, StepRow } from '../platform/trace-model.js';
-import type { QuestionReason, QuestionTraceSink } from '../user-question.js';
+import type { QuestionReason, QuestionTraceSink } from '../agent/user-question.js';
 import { builtinCostUsd } from './model-cost.js';
 import { buildObservabilityExtension, type RuntimeObserver } from './observability-extension.js';
 import { collectInjections, promptShapeOf, type PromptShape } from './prompt-shape.js';

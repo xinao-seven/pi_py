@@ -36,9 +36,17 @@ pi_py/
 │   │   │   ├── config.ts   # 环境变量基础设施配置（PI_NODE_*）
 │   │   │   ├── errors.ts   # 统一 API 错误
 │   │   │   ├── routes/     # HTTP/SSE 适配层（薄）：agent/auth/files/mcp/models/observability/presets/sessions/skills/tasks/workspaces
-│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配：agent-registry/tool-approval/user-question/subagent-{service,presets,models,tools}/plan-{mode-service,tools,policy}/task-{service,lease,recovery,runner}/mcp/（含模板库）...
-│   │   │       ├── platform/       # SQLite/内存存储（M1/M2）：migrations/trace-model/trace-repository/task-* /store
-│   │   │       └── observability/  # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
+│   │   │   └── services/   # 业务逻辑 + Pi SDK 适配，按领域分子目录：
+│   │   │       ├── agent/         # 会话与 agent 核心：agent-registry/session-{service,config,merge,prompt-service,tree}/compaction-policy/tool-approval/tool-output-limit/user-question
+│   │   │       ├── subagent/      # 子任务委派（M5）：subagent-{service,models,presets,tools}
+│   │   │       ├── plan/          # 计划模式（M4）：plan-{mode-service,tools,policy}
+│   │   │       ├── task/          # 任务域（M2/M3）：task-{service,runner,lease,recovery,recovery-extension}
+│   │   │       ├── workspace/     # 工作区与文件：workspace-service/file-service/directory-picker/skill-service
+│   │   │       ├── models/        # 模型与预设配置：model-catalog/model-config-service/preset-service
+│   │   │       ├── mcp/           # MCP：config/client-manager/service/tools/templates/extension（含模板库）
+│   │   │       ├── platform/      # SQLite/内存存储（M1/M2）：migrations/trace-model/trace-repository/task-* /store
+│   │   │       ├── observability/ # trace 采集与聚合（M1）：session-ledger/redact/metrics/observability-extension
+│   │   │       └── service-logger.ts  # 服务层共享日志契约（避免依赖 pino 类型）
 │   │   ├── spike/          # 能力守护脚本（离线、临时目录）；`npm run spike` 兼作 CI 门禁
 │   │   ├── eval/           # M4 评测 golden set（`npm run eval`，CI 的 eval job）
 │   │   └── test/           # Vitest（映射 src/ 结构）
@@ -84,18 +92,18 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 - 依赖方向固定：`routes → services → Pi SDK / Node 标准库`。`app.ts` 只负责组装和依赖注入，`server.ts` 只负责启动。
 - 路由不得直接创建 Pi Session、读写持久化配置或承载长生命周期状态。
-- `AgentRegistry`（`services/agent-registry.ts`）是核心：每个会话一个活跃 `AgentSession`，内存缓存 SSE 事件（每会话最多 256 条）支持 `Last-Event-ID` 回放，命令走统一的 `command()` 分发。
+- `AgentRegistry`（`services/agent/agent-registry.ts`）是核心：每个会话一个活跃 `AgentSession`，内存缓存 SSE 事件（每会话最多 256 条）支持 `Last-Event-ID` 回放，命令走统一的 `command()` 分发。
 - 会话命令类型（`POST /api/agent/:sessionId` body.type）：`prompt` / `steer` / `follow_up` / `abort` / `set_model` / `set_thinking_level` / `set_tools` / `compact` / `navigate_tree` / `reload_resources` / `approve_tool` / `plan_enable|disable|execute|refine`。
 - 会话详情（`GET /api/sessions/:id`）的 `tree` 只能是**扁平节点 + `depth`**（先序、不含 `children`）。原因：树深度等于会话条目数，嵌套结构会让 Fastify 的 `JSON.stringify` 在长会话上爆栈（`docs/node-session-tree-flat.md`）。节点只带导航字段（`id/parentId/depth/type/role/text/label/labelTimestamp`），正文一律走 `context.messages`。
 - 新能力落点：新 API → 新增 `routes/<resource>.ts` + 对应 service，在 `app.ts` 显式注册；新会话能力 → `AgentRegistry`；新工具/事件钩子 → `extensions/`（不要为加载单个扩展改 `app.ts`）。
 - 可观测性（M1）：采集只在 `AgentRegistry.publish()` 一处插桩（→ `SessionLedger`）；存储与聚合在 `services/platform/`（SQLite/内存双实现 + 写入队列）；查询走 `routes/observability.ts` → `services/observability/metrics.ts`。不要在其他地方新增 trace 写入点。
-- 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
+- 任务领域（M2）：领域模型与仓储在 `services/platform/task-*.ts`，用例在 `services/task/task-service.ts`（状态由步骤聚合、写入必须带 `ifRevision`），接口在 `routes/tasks.ts`，变更经 `AgentRegistry.announceTask()` 以 SSE `task_updated` 推送。任务写入**不走 trace 的写入队列**：它是用户可见的状态，必须同步落库、错误必须冒泡。
 - 断点续跑（M3）：`task-lease.ts`（租约，owner = pid + bootId）→ `task-recovery-extension.ts`（在飞动作与副作用分级）→ `task-recovery.ts`（恢复清单与判定）→ `task-runner.ts`（续跑：校验 → 取租约 → 注入 `[TASK RESUME]` 隐藏上下文 → 发 prompt → 续期保活）。三条不可让步的规则：**只列不跑**（恢复清单不自动执行）、**无法判定副作用必须人工确认**、**产物在就补记完成、绝不重跑**。任何执行态写入都要经 `TaskService`（乐观锁 + 广播），不要绕开它直接写库。
 - Plan 模式（M4）：**Plan 是 Task 的受控视图**（`origin='plan'`），不是第二套模型。分工：`platform/plan-model.ts`（纯投影 `PlanView`/`derivePlanStatus`）→ `plan-tools.ts`（`propose_plan`/`submit_plan`/`update_plan`/`complete_step`/`block_step`/`ask_user` + `PlanToolbox` 用例层）→ `plan-policy.ts`（规划期能力分类）→ `plan-mode-service.ts`（会话状态机：上下文注入去抖、`tool_call` 拦截、命令分发）。三条不可让步的规则：**只有用户能确认执行**、**步骤完成必须有证据且按 verification 校验**、**规划期只读（能力分类，未归类即不放行）**。**计划工具从会话创建起就常驻 `activeTools`，计划开始/结束一律不增删工具**（增删会让请求前缀缓存整段失效，见 `docs/node-plan-cache-stability.md`）；只读由 `tool_call` 拦截兑现，模型想发起规划用 `propose_plan` 征求用户同意。改 `plan_*` 命令或 SSE `plan_updated` 载荷（`PlanView`）必须同步 `web/src/types`、`web/src/lib/agent-events.ts` 与 Pinia/组件。
 - MCP：协议层支持任意 server（stdio 子进程 / streamable-http 静态头），配置两层合并（`~/.pi/agent/mcp.json` 用户级 + `{cwd}/.pi/mcp.json` 工作区级，同名工作区优先），每 server 可 `approval: "required"`，预设可白名单。**凭据只能写成 `$ENV` 引用**（env / headers / **args** 三处都会在 spawn 时插值）——该配置文件与原版 CLI 共享，禁止落明文密钥。推荐清单在 `services/mcp/mcp-templates.ts`（前端配置页「模板库」，一键添加/填入表单），新增模板必须过 `assertTemplateTable()`。
 - 子任务委派（M5）：`subagent` 工具按预设（`~/.pi/agent/agents/*.md` + 项目级 `.pi/agents/`）创建**进程内子会话**，走 `AgentRegistry`，因此审批/trace/任务绑定天然生效。三条不变量：**不能递归是结构保证**（到 `maxDepth` 的子会话根本不注册该工具）、**只读预设真的只读**（子会话工具集 = 预设工具集，不并入 MCP/计划/ask_user）、**一定要收尾**（成功/失败/超预算/取消/停机都会 `remove`）。子会话落 `~/.pi/agent-node-server/subagents/`（不进 CLI 会话列表）；取消级联的五个入口见 `docs/node-subagent-m5.md` §3。官方文件扩展 `subagent` 已被内联实现**同名接管**（`INLINE_OWNED_EXTENSION_DIRS`，不动用户磁盘文件，CLI 照常）。
 - 人机交互两条通道：危险命令走 `ToolApprovalBroker`（`tool_call_pending` / `approve_tool`），提问走 `QuestionBroker`（`question_pending` / `answer_question`，见 `docs/node-question-channel.md`）。两者语义一致——工具挂起 → SSE → 用户动作 → Promise 结算；超时/中止/会话关闭都要有确定归宿。**「谁在等用户」只有一个真相源**：不要在任务/计划里再镜像一份（M4.1 移除了 `PlanView.question*`）。
-- 会话信息面板：`GET /api/agent/:sessionId/prompt`（`services/session-prompt-service.ts`）**按需读 SDK 会话对象**（`systemPrompt` / `getAllTools()` / `resourceLoader`），拿到系统提示词、工具（含来源与「已激活/已注册」）、skills、提示词模板、上下文文件。**不用 provider 钩子、不缓存、不落库**（钩子那条路是 P1 的请求形状指纹，两件事）；工具来源分组只在 `classifyToolSource` 一处定义，MCP 归属由注册表注入的 `resolveMcpTool` 解析（拿不到就拆名字）。细节见 `docs/node-session-prompt-panel.md`。
+- 会话信息面板：`GET /api/agent/:sessionId/prompt`（`services/agent/session-prompt-service.ts`）**按需读 SDK 会话对象**（`systemPrompt` / `getAllTools()` / `resourceLoader`），拿到系统提示词、工具（含来源与「已激活/已注册」）、skills、提示词模板、上下文文件。**不用 provider 钩子、不缓存、不落库**（钩子那条路是 P1 的请求形状指纹，两件事）；工具来源分组只在 `classifyToolSource` 一处定义，MCP 归属由注册表注入的 `resolveMcpTool` 解析（拿不到就拆名字）。细节见 `docs/node-session-prompt-panel.md`。
 - 版本号语义：`task.revision` 是**用户可见内容的版本**。执行期运行时写入（租约/心跳/在飞）用 `keepRevision: true` 不占版本号；`TaskService.mutate` 的 `change()` 返回原对象即「无变化」（不写库、不广播、不动版本号）。所有写入都先重读记录再改，因此不会用陈旧副本覆盖运行时字段。
 
 ### Python 三层内核（pi-python/src）
@@ -118,7 +126,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 - **与原版 pi CLI 共享 `~/.pi/agent`（最高优先级约束）**：该目录是原版 pi CLI 的数据目录，**CLI 必须能继续以原版行为运行**。Web 与 CLI **共享会话与配置**，扩展与 trace **各自独立**。原则是：
   - **共享态的增量写入允许，破坏性写入禁止。**
   - 禁止：**删除** pi 的文件（会话 JSONL）、写入时**剥离未知字段**、写入 pi 无法解析的内容、把明文密钥写进共享配置。
-  - 允许：新增会话、向会话追加条目、向 `models.json` 新增/修改 provider。共享态写入必须满足：校验前置 + spread 保留未知字段 + 临时文件 rename 原子写。参考实现：`services/model-config-service.ts`。
+  - 允许：新增会话、向会话追加条目、向 `models.json` 新增/修改 provider。共享态写入必须满足：校验前置 + spread 保留未知字段 + 临时文件 rename 原子写。参考实现：`services/models/model-config-service.ts`。
   - `auth.json` / `settings.json` / `models-store.json` 只读（pi 自己持 `proper-lockfile` 写入）；`models.json` pi **只读**，故 web 写入无锁冲突。
   - 本项目自有文件（`mcp.json` / `node-server-presets.json` / `node-server-workspaces.json`）与 trace/task 存储**建议**落在 `~/.pi/agent-node-server/`，避免占用 pi 命名空间（无功能风险，仅卫生）。
   - **trace 必须对 CLI 零影响**：只读 SDK 内存事件、只写自己的库文件；`ledger.record()` 一律 fire-and-forget + 异常降级为 warn，**绝不能冒泡到 agent loop**。
@@ -135,8 +143,8 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 - 仓库内的工具审批、Plan 模式与 MCP 工具都是**内联扩展**：各服务类（`ToolApprovalBroker` / `PlanModeService` / `buildMcpExtension`）提供 `buildExtension(): InlineExtension`，由 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 注入每个会话（闭包直连服务单例，无事件总线桥接）。
 - 按预设开关动态启用/关闭：`CreateSessionInput.extensions` 的 7 个键（`approval` / `planMode` / `questions` / `subagents` / `tasks` / `observability` / `fileExtensions`），默认开启（未指定 = 开启，旧预设零迁移）；`loader()` 里按 `plan → approval → mcp` 顺序注册（规划期先拦，避免先弹审批框）。预设把这一组以 `capabilities` 存盘（用户概念字段名），前端 `web/src/lib/preset-capabilities.ts` 负责映射；内置「极简（原版 pi）」预设能力全关 + `noExtensions`（什么都不加），见 `docs/node-preset-capabilities.md`。同名文件扩展的过滤只针对**本次真的注册了内联实现**的目录名，不能一律 drop。
-- **预设配置随会话落盘**：创建会话时把影响装配的预设字段（`extensions` / `toolNames` / `systemPrompt` / `compaction` / `mcpServers`）写成会话 JSONL 里的自定义条目（`customType = 'pi-web/session-config'`，只增不改，CLI 忽略），`OriginalPiSessionFactory.open()` 读回并据此重建——否则会话一离开内存（重启 / 打开会话信息面板 / SSE 重连）就会被按「全开」重开（极简会话凭空长出 MCP + 用户扩展 + plan/subagent）。逻辑在 `services/session-config.ts`，不要在别处再存一份；`GET /api/agent/:id` 返回能力位供前端刷新后显示。见 `docs/node-preset-capabilities.md` §11。
-- **平台 token 策略（非预设能力，极简会话豁免）**：7 个能力全关（`InlineCapabilities.stock`）的会话保持原版行为；其余会话一律生效三件事——压缩触发点按模型 `contextWindow` 换算（工作上下文 ≤200K，`services/compaction-policy.ts`）、单次工具结果文本预算 12KB（`services/tool-output-limit.ts`，挂 `tool_result` 钩子）、系统提示词追加并行工具调用引导（`loader()` 的 `appendSystemPromptOverride`，只追加不覆盖）。计划结束态（completed/abandoned/paused）**不剥离**历史中部的 plan 注入，改由末尾的 `web-plan-ended-context` 说明对冲（避免改写历史导致缓存全失效）。见 `docs/node-token-budget.md`。
+- **预设配置随会话落盘**：创建会话时把影响装配的预设字段（`extensions` / `toolNames` / `systemPrompt` / `compaction` / `mcpServers`）写成会话 JSONL 里的自定义条目（`customType = 'pi-web/session-config'`，只增不改，CLI 忽略），`OriginalPiSessionFactory.open()` 读回并据此重建——否则会话一离开内存（重启 / 打开会话信息面板 / SSE 重连）就会被按「全开」重开（极简会话凭空长出 MCP + 用户扩展 + plan/subagent）。逻辑在 `services/agent/session-config.ts`，不要在别处再存一份；`GET /api/agent/:id` 返回能力位供前端刷新后显示。见 `docs/node-preset-capabilities.md` §11。
+- **平台 token 策略（非预设能力，极简会话豁免）**：7 个能力全关（`InlineCapabilities.stock`）的会话保持原版行为；其余会话一律生效三件事——压缩触发点按模型 `contextWindow` 换算（工作上下文 ≤200K，`services/agent/compaction-policy.ts`）、单次工具结果文本预算 12KB（`services/agent/tool-output-limit.ts`，挂 `tool_result` 钩子）、系统提示词追加并行工具调用引导（`loader()` 的 `appendSystemPromptOverride`，只追加不覆盖）。计划结束态（completed/abandoned/paused）**不剥离**历史中部的 plan 注入，改由末尾的 `web-plan-ended-context` 说明对冲（避免改写历史导致缓存全失效）。见 `docs/node-token-budget.md`。
 - 用户级 `~/.pi/agent/extensions/` 与工作区 `.pi/extensions/` 的文件扩展仍由 SDK 自动发现（jiti 隔离，协作需走 `pi.events`）；仓库不再随服务发布文件扩展。
 
 ## 代码规范

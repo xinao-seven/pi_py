@@ -12,7 +12,7 @@ Pi 的 `bash` 工具能够执行任意系统命令。原有实现仅在少数“
 
 ## 策略层级
 
-`node-pi/server/src/services/tool-approval.ts` 的 `classifyBashCommand()` 以以下顺序评估命令：
+`node-pi/server/src/services/agent/tool-approval.ts` 的 `classifyBashCommand()` 以以下顺序评估命令：
 
 | 优先级 | 例子 | 风险 | 分类 | 行为 |
 | --- | --- | --- | --- | --- |
@@ -51,5 +51,5 @@ bash tool_call（内联扩展的 tool_call 钩子）
 1. 优先判断命令是否可被安全视作只读；若是，不加规则。
 2. 危及数据或系统的规则加入 `DANGEROUS_COMMAND_RULES`；其他明确副作用加入
    `SENSITIVE_COMMAND_RULES`，并给出简明的中文原因、风险和分类。
-3. 在 `test/services/tool-approval.test.ts` 中同时测试分类、允许、拒绝、超时或中止路径。
+3. 在 `test/services/agent/tool-approval.test.ts` 中同时测试分类、允许、拒绝、超时或中止路径。
 4. 若新增分类或风险级别，更新 `PendingToolApproval`、`StreamEvent`、前端 `PendingToolCall` 和本文件。

@@ -11,7 +11,7 @@ import { stat } from 'node:fs/promises';
 
 import { ApiError } from '../errors.js';
 import { listTemplates } from '../services/mcp/mcp-templates.js';
-import { AgentRegistry } from '../services/agent-registry.js';
+import { AgentRegistry } from '../services/agent/agent-registry.js';
 import { McpService } from '../services/mcp/mcp-service.js';
 import { parseServerConfig, type McpScope } from '../services/mcp/mcp-config.js';
 

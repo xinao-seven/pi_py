@@ -30,7 +30,7 @@
 
 ## 2. 修复清单
 
-### 2.1 压缩触发点按模型窗口换算（`services/compaction-policy.ts`）
+### 2.1 压缩触发点按模型窗口换算（`services/agent/compaction-policy.ts`）
 
 新模块，纯函数 `resolveCompactionSettings(configured, contextWindow)`：
 
@@ -41,20 +41,20 @@
 - **防御**：`keepRecentTokens` 夹到 `触发点 - 16K` 以内（否则压缩在保留区里打转）；
   `enabled: false` 原样放行（尊重显式关闭）；字段缺省按 SDK/平台默认补齐。
 
-接线（`services/agent-registry.ts`）：
+接线（`services/agent/agent-registry.ts`）：
 
 - `create()`：预设显式配置优先，没给就用平台默认 `{enabled, 16384, 48K}`，按模型
   `contextWindow` 换算后经 `SettingsManager.applyOverrides` 应用（仅内存，不写 settings.json）；
 - `open()`：会话 JSONL 里落的是**解析后的值**（重开不再需要模型目录）；旧会话没有
   compaction 字段时补平台默认，模型窗口从 JSONL 的 `model_change` 条目恢复
   （`modelContextWindowOf()`，查不到就跳过换算，绝不阻断打开会话）；
-- 内置「Coding Agent（默认）」预设的 `keepRecentTokens` 提到 48K（`services/preset-service.ts`）。
+- 内置「Coding Agent（默认）」预设的 `keepRecentTokens` 提到 48K（`services/models/preset-service.ts`）。
 
 > 每次压缩的一次性成本 ≈ 一次全量总结请求；对照收益（之后每轮上下文从 30 万级回到
 > 48K+摘要 级），在长自主运行里净赚。拿 482 轮会话粗算：不设限累计 ≈ 1.09 亿，
 > 触发点 200K / 保留 48K 时 ≈ 5000 万，**省一半以上**，而模型每轮做的工作不变。
 
-### 2.2 工具结果预算 12KB（`services/tool-output-limit.ts`）
+### 2.2 工具结果预算 12KB（`services/agent/tool-output-limit.ts`）
 
 新内联扩展，挂 SDK 的 `tool_result` 钩子（`agent.afterToolCall` 的返回值会替换真正进
 上下文与 JSONL 的内容）：
@@ -74,7 +74,7 @@
 - `appendSystemPromptOverride` 只做「在现有 append 来源基础上追加」，**不覆盖**预设系统提示词
   与用户已发现的 append 文件。
 
-### 2.4 计划结束态保留注入，不再从历史中部剥离（`services/plan-mode-service.ts`）
+### 2.4 计划结束态保留注入，不再从历史中部剥离（`services/plan/plan-mode-service.ts`）
 
 - `onContext` 的 keep 集合：规划期 `{PLANNING, ENDED}`、执行期 `{EXECUTING, ENDED}`、
   **结束态（completed/abandoned/paused，计划还在）保留全部三类**（`ENDED_KEEP_TYPES`）、
@@ -101,13 +101,13 @@
 ## 4. 验证
 
 - 单元测试：
-  - `test/services/compaction-policy.test.ts`：1M 窗口换算（触发点=200K）、小窗口不动、
+  - `test/services/agent/compaction-policy.test.ts`：1M 窗口换算（触发点=200K）、小窗口不动、
     更激进配置保留、病态 keepRecent 夹取、enabled=false 放行、字段缺省补齐；
-  - `test/services/tool-output-limit.test.ts`：未超限不改写、head/tail 两方向、UTF-8 边界
+  - `test/services/agent/tool-output-limit.test.ts`：未超限不改写、head/tail 两方向、UTF-8 边界
     （不产生 U+FFFD）、图片保留、多块合并计量、扩展注册与改写；
-  - `test/services/plan-mode.test.ts`：完成/暂停后 `onContext` 不再剥离注入、ENDED 说明
+  - `test/services/plan/plan-mode.test.ts`：完成/暂停后 `onContext` 不再剥离注入、ENDED 说明
     末尾注入 + 去抖、无计划会话保持旧行为；
-  - `test/services/agent-registry-factory.test.ts`：平台默认压缩接线、1M 模型换算落盘、
+  - `test/services/agent/agent-registry-factory.test.ts`：平台默认压缩接线、1M 模型换算落盘、
     极简豁免、并行提示追加且不覆盖既有来源、旧会话 open 补默认与 `model_change` 恢复。
 - 全量：`npm run typecheck && npm test`（495 用例）+ `npm run build` + `npm run spike` +
   `npm run eval`（pass@1 100%，并行提示未破坏评测）全绿。

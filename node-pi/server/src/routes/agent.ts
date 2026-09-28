@@ -28,7 +28,7 @@ import {
   type ImageAttachment,
   type SessionExtensions,
   type StreamEvent,
-} from '../services/agent-registry.js';
+} from '../services/agent/agent-registry.js';
 import { ApiError } from '../errors.js';
 
 /** 注册 agentRoutes 插件时所需的选项（由 app.ts 传入）。 */

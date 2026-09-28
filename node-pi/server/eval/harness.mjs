@@ -9,16 +9,16 @@ import { join } from 'node:path';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 
-import { AgentRegistry, OriginalPiSessionFactory } from '../dist/services/agent-registry.js';
-import { PlanModeService } from '../dist/services/plan-mode-service.js';
-import { PLAN_TOOL_NAMES } from '../dist/services/plan-tools.js';
-import { TaskService } from '../dist/services/task-service.js';
+import { AgentRegistry, OriginalPiSessionFactory } from '../dist/services/agent/agent-registry.js';
+import { PlanModeService } from '../dist/services/plan/plan-mode-service.js';
+import { PLAN_TOOL_NAMES } from '../dist/services/plan/plan-tools.js';
+import { TaskService } from '../dist/services/task/task-service.js';
 import { MemoryTaskRepository } from '../dist/services/platform/task-repository.js';
-import { TaskRecoveryService } from '../dist/services/task-recovery.js';
-import { TaskInFlightTracker } from '../dist/services/task-recovery-extension.js';
-import { TaskRunner } from '../dist/services/task-runner.js';
-import { QuestionBroker } from '../dist/services/user-question.js';
-import { SubagentService } from '../dist/services/subagent-service.js';
+import { TaskRecoveryService } from '../dist/services/task/task-recovery.js';
+import { TaskInFlightTracker } from '../dist/services/task/task-recovery-extension.js';
+import { TaskRunner } from '../dist/services/task/task-runner.js';
+import { QuestionBroker } from '../dist/services/agent/user-question.js';
+import { SubagentService } from '../dist/services/subagent/subagent-service.js';
 import { SessionLedger } from '../dist/services/observability/session-ledger.js';
 import { openPlatformStore } from '../dist/services/platform/store.js';
 

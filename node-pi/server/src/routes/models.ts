@@ -13,9 +13,9 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 
-import { ModelCatalogService } from '../services/model-catalog.js';
-import { ModelConfigService } from '../services/model-config-service.js';
-import { AgentRegistry } from '../services/agent-registry.js';
+import { ModelCatalogService } from '../services/models/model-catalog.js';
+import { ModelConfigService } from '../services/models/model-config-service.js';
+import { AgentRegistry } from '../services/agent/agent-registry.js';
 
 /** 插件选项：三个依赖，均来自 app.ts 装配（测试可注入 mock）。 */
 export interface ModelRouteOptions {

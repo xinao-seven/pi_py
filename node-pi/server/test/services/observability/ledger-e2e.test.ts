@@ -10,7 +10,7 @@ import {
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
 
-import { AgentRegistry, type PiSession } from '../../../src/services/agent-registry.js';
+import { AgentRegistry, type PiSession } from '../../../src/services/agent/agent-registry.js';
 import { SessionLedger } from '../../../src/services/observability/session-ledger.js';
 import { openPlatformStore, type PlatformStore } from '../../../src/services/platform/store.js';
 

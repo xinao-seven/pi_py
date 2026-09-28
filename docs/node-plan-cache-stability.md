@@ -85,11 +85,11 @@ SSE / REST / 前端契约——提问弹窗与 `plan_updated` 都是现成的。
 
 新增/改写的关键断言：
 
-- `test/services/plan-mode.test.ts`：计划全生命周期 `setActiveTools` **从未被调用**；用户 `set_tools`
+- `test/services/plan/plan-mode.test.ts`：计划全生命周期 `setActiveTools` **从未被调用**；用户 `set_tools`
   的改动一字不动；`propose_plan` 的同意 / 拒绝 / 超时 / 已有计划 / 无通道五条分支；注入去抖（内容相同不注入、状态变了才注入）。
 - `spike/07-plan-tool-loop.mjs`：规划期、执行期、计划完成、放弃后四个时点的工具列表**完全一致**；
   规划期 `edit` 的 `tool_call` 确实被 block；`propose_plan` 在真实 SDK 会话里挂起 → 回答 → 开启规划。
-- `test/services/agent-registry-factory.test.ts`：白名单顺序即请求里的工具数组顺序（`propose_plan` 在最前）。
+- `test/services/agent/agent-registry-factory.test.ts`：白名单顺序即请求里的工具数组顺序（`propose_plan` 在最前）。
 
 ## 5. 怎么量化效果
 

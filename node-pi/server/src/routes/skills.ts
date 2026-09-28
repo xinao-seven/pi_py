@@ -14,8 +14,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { ApiError } from '../errors.js';
-import { AgentRegistry } from '../services/agent-registry.js';
-import { SkillService } from '../services/skill-service.js';
+import { AgentRegistry } from '../services/agent/agent-registry.js';
+import { SkillService } from '../services/workspace/skill-service.js';
 
 /** 插件选项：技能服务 + 会话注册表（改完后需要刷新 Pi 的资源加载器）。 */
 export const skillRoutes: FastifyPluginAsync<{

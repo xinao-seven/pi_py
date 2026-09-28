@@ -7,7 +7,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 
-import { PresetService } from '../services/preset-service.js';
+import { PresetService } from '../services/models/preset-service.js';
 
 /** 注册 presetRoutes 插件时所需的选项（由 app.ts 传入）。 */
 export interface PresetRouteOptions {

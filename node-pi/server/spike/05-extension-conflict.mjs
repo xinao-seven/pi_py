@@ -10,7 +10,7 @@ import { DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
 import {
   dropInlineOwnedExtensions,
   INLINE_OWNED_EXTENSION_DIRS,
-} from '../dist/services/agent-registry.js';
+} from '../dist/services/agent/agent-registry.js';
 
 const realAgentDir = join(homedir(), '.pi', 'agent');
 const root = mkdtempSync(join(tmpdir(), 'pi-spike-ext-'));

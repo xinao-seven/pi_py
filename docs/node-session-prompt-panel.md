@@ -48,8 +48,8 @@ skills 是塞进系统提示词的一段 XML、MCP 工具是内联扩展注册�
 
 | 文件 | 改动 |
 | --- | --- |
-| `services/session-prompt-service.ts`（新） | 纯函数 `buildPromptSnapshot(session, context)` → `PromptSnapshot`；导出 `classifyToolSource` / `toolParamsOf` 便于单测 |
-| `services/agent-registry.ts` | `PiSession` 新增 3 个可选只读来源；`PiSessionFactory` 新增可选 `resolveMcpTool()`；注册表新增 `promptSnapshot(sessionId)` |
+| `services/agent/session-prompt-service.ts`（新） | 纯函数 `buildPromptSnapshot(session, context)` → `PromptSnapshot`；导出 `classifyToolSource` / `toolParamsOf` 便于单测 |
+| `services/agent/agent-registry.ts` | `PiSession` 新增 3 个可选只读来源；`PiSessionFactory` 新增可选 `resolveMcpTool()`；注册表新增 `promptSnapshot(sessionId)` |
 | `routes/agent.ts` | `GET /api/agent/:sessionId/prompt` → `{ snapshot }`（先 `open()`，历史会话也能看） |
 
 **工具来源分类**（面板按它分组，未知来源不猜）：
@@ -109,8 +109,8 @@ skills 是塞进系统提示词的一段 XML、MCP 工具是内联扩展注册�
 
 | 层 | 用例 |
 | --- | --- |
-| `test/services/session-prompt-service.test.ts`（9） | 完整组装、来源分类、激活标记、MCP 解析（注入优先/拆名字）、参数与必填、skills/模板/上下文/诊断透传、**来源全缺失不抛错**、**来源抛错降级**、超长截断、无名条目丢弃、计数不被输出截断影响 |
-| `test/services/agent-registry-state.test.ts`（+3） | `promptSnapshot()` 透传会话来源与条目的模型/思考级别/工作区、使用工厂的 `resolveMcpTool`、未活跃会话抛 `ApiError` |
+| `test/services/agent/session-prompt-service.test.ts`（9） | 完整组装、来源分类、激活标记、MCP 解析（注入优先/拆名字）、参数与必填、skills/模板/上下文/诊断透传、**来源全缺失不抛错**、**来源抛错降级**、超长截断、无名条目丢弃、计数不被输出截断影响 |
+| `test/services/agent/agent-registry-state.test.ts`（+3） | `promptSnapshot()` 透传会话来源与条目的模型/思考级别/工作区、使用工厂的 `resolveMcpTool`、未活跃会话抛 `ApiError` |
 | `test/routes/agent-prompt-route.test.ts`（2） | `GET /api/agent/:id/prompt` 200 字段形状（含 MCP 归属、上下文文件字符数）；不存在的会话 404 `session_not_found` |
 | `web/test/components/SessionInfoPanel.test.ts`（10） | 点开才请求、概览 chips、来源分组与激活/未激活、必填参数、MCP 分组、skills/模板/上下文、系统提示词折叠与复制（含剪贴板被拒）、诊断与截断提示、刷新与错误、Esc/遮罩关闭、无会话禁用、切换会话重读 |
 | `web/test/lib/api.test.ts`（+1） | `getSessionPrompt` 的 URL 与编码、GET 语义 |

@@ -8,7 +8,7 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../../src/services/agent-registry.js';
+} from '../../src/services/agent/agent-registry.js';
 
 const apps: ReturnType<typeof createApp>[] = [];
 const tempDirs: string[] = [];

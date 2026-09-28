@@ -9,7 +9,7 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../../../src/services/agent-registry.js';
+} from '../../../src/services/agent/agent-registry.js';
 import { SessionLedger } from '../../../src/services/observability/session-ledger.js';
 import { openPlatformStore, type PlatformStore } from '../../../src/services/platform/store.js';
 import type { TraceConfig } from '../../../src/config.js';

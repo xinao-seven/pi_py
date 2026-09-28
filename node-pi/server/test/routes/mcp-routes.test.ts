@@ -13,7 +13,7 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../../src/services/agent-registry.js';
+} from '../../src/services/agent/agent-registry.js';
 import { McpConfig } from '../../src/services/mcp/mcp-config.js';
 import { McpService } from '../../src/services/mcp/mcp-service.js';
 

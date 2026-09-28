@@ -21,14 +21,14 @@ import {
   AgentRegistry,
   type PersistedSessionInfo,
   type RegistryEntry,
-} from '../services/agent-registry.js';
+} from '../services/agent/agent-registry.js';
 import { ApiError } from '../errors.js';
 import {
   appendMergeSummary,
   createMergeSummary,
   type MergeableSessionManager,
-} from '../services/session-merge.js';
-import { flattenSessionTree } from '../services/session-tree.js';
+} from '../services/agent/session-merge.js';
+import { flattenSessionTree } from '../services/agent/session-tree.js';
 
 /** 插件选项：会话注册表。 */
 export interface SessionRouteOptions {

@@ -61,7 +61,7 @@
 | 服务端算 `depth`                         | 前端不必再遍历/递归（同样的爆栈风险，只是搬到了浏览器）              |
 | `text` 只存摘要（≤120 字符），不存正文   | 树只用于分支下拉的一行标签；正文在 `context.messages` 里已有          |
 | 保持先序 + 兄弟时间升序                  | 与 `SessionManager.getTree()` 的渲染顺序完全一致，UI 无感             |
-| 用显式栈遍历（`services/session-tree.ts`）| 服务端自己也不能递归——否则 2395 层的树在拍平时就爆栈                  |
+| 用显式栈遍历（`services/agent/session-tree.ts`）| 服务端自己也不能递归——否则 2395 层的树在拍平时就爆栈                  |
 
 实测同一会话：`tree` 由 6.53 MB → **0.53 MB**，完整详情响应 1.9 MB，序列化正常。
 
@@ -83,7 +83,7 @@ Python 后端（`pi-python/`，只读对照实现，**不修改**）的 `session
 
 | 位置                                              | 覆盖                                                         |
 | ------------------------------------------------- | ------------------------------------------------------------ |
-| `node-pi/server/test/services/session-tree.test.ts` | 5000 层链拍平后 `JSON.stringify` 不抛；先序/深度/label；摘要截断；坏节点跳过但子树保留 |
+| `node-pi/server/test/services/agent/session-tree.test.ts` | 5000 层链拍平后 `JSON.stringify` 不抛；先序/深度/label；摘要截断；坏节点跳过但子树保留 |
 | `node-pi/server/test/routes/sessions-routes.test.ts` | **端到端回归**：3000 条目的会话 `GET /api/sessions/:id` 返回 200 + 扁平树（改动前该用例 500，已验证） |
 | `web/test/lib/session-tree.test.ts`               | 扁平原样返回；嵌套（Python）拍平；5000 层不爆栈；空输入       |
 | `web/test/components/BranchNavigator.test.ts`     | 扁平节点的标签/Fork 可用性（改用新契约的 fixture）            |

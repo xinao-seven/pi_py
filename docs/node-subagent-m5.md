@@ -36,7 +36,7 @@
 父会话（AgentRegistry 里的普通条目）
   │  模型调用 subagent 工具
   ▼
-SubagentService.run(request)                        services/subagent-service.ts
+SubagentService.run(request)                        services/subagent/subagent-service.ts
   ├─ 预设发现（~/.pi/agent/agents/*.md + {cwd}/.pi/agents/*.md）   subagent-presets.ts
   ├─ 模型解析（解析不到就回退父会话模型 + 说明原因）                subagent-models.ts
   ├─ 并发闸门（全局 3 / 每父会话 4，超限排队）
@@ -66,14 +66,14 @@ SubagentService.run(request)                        services/subagent-service.ts
 
 | 层 | 文件 | 内容 |
 | --- | --- | --- |
-| 预设 | `services/subagent-presets.ts` | `discoverSubagentPresets` / `isReadOnlyPreset`；与官方扩展同契约（frontmatter: `name`/`description`/`tools`/`model` + 正文即系统提示词）；项目级同名覆盖用户级 |
-| 模型 | `services/subagent-models.ts` | `resolveSubagentModel`：`provider/model` 要求已鉴权；裸 id 要求唯一命中且已鉴权；否则**回退父会话模型并在结果里说明** |
-| 服务 | `services/subagent-service.ts` | `SubagentService`：`run()` / `abortAll()` / `abortAllSessions()` / `listForSession()` / `listPresets()` / `isReadOnlyPreset()` / `buildExtension({ depth })` |
-| 工具 | `services/subagent-tools.ts` | `SUBAGENT_TOOL_NAME='subagent'`、参数 schema、结果渲染、`executionMode: 'parallel'` |
-| 接线 | `services/agent-registry.ts` | `CreateSessionInput.subagent`（`SubagentLink`）、`RegistryEntry.subagent`、`excludeTools`、子会话工具集特例、`ledgerContext` 带上 `parentRunId`/预设/深度、`abortSession()` 级联、`announceApproval` 挂到父会话 |
-| 接线 | `services/tool-approval.ts` | `PendingToolApproval.parentSessionId/agent`、`setParentResolver`、`decide` 的父会话回退查找、`cancelSession` 连带子会话 |
+| 预设 | `services/subagent/subagent-presets.ts` | `discoverSubagentPresets` / `isReadOnlyPreset`；与官方扩展同契约（frontmatter: `name`/`description`/`tools`/`model` + 正文即系统提示词）；项目级同名覆盖用户级 |
+| 模型 | `services/subagent/subagent-models.ts` | `resolveSubagentModel`：`provider/model` 要求已鉴权；裸 id 要求唯一命中且已鉴权；否则**回退父会话模型并在结果里说明** |
+| 服务 | `services/subagent/subagent-service.ts` | `SubagentService`：`run()` / `abortAll()` / `abortAllSessions()` / `listForSession()` / `listPresets()` / `isReadOnlyPreset()` / `buildExtension({ depth })` |
+| 工具 | `services/subagent/subagent-tools.ts` | `SUBAGENT_TOOL_NAME='subagent'`、参数 schema、结果渲染、`executionMode: 'parallel'` |
+| 接线 | `services/agent/agent-registry.ts` | `CreateSessionInput.subagent`（`SubagentLink`）、`RegistryEntry.subagent`、`excludeTools`、子会话工具集特例、`ledgerContext` 带上 `parentRunId`/预设/深度、`abortSession()` 级联、`announceApproval` 挂到父会话 |
+| 接线 | `services/agent/tool-approval.ts` | `PendingToolApproval.parentSessionId/agent`、`setParentResolver`、`decide` 的父会话回退查找、`cancelSession` 连带子会话 |
 | 接线 | `services/observability/session-ledger.ts` | `LedgerSessionContext.parentRunId` → `runs.parent_run_id`；`currentRunId` / `lastRunId` |
-| 接线 | `services/plan-mode-service.ts` + `plan-policy.ts` | 规划期委派门禁（`allowSubagentDelegation` + 只读预设判定） |
+| 接线 | `services/plan/plan-mode-service.ts` + `plan-policy.ts` | 规划期委派门禁（`allowSubagentDelegation` + 只读预设判定） |
 | 前端 | `web/src/components/SubagentCallBlock.vue` | 委派卡片（预设/深度/用量/轨迹/回退说明/摘要） |
 
 #### 工具契约
@@ -166,13 +166,13 @@ subagent({
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `test/services/subagent-presets.test.ts` | frontmatter 解析、缺 name/description 跳过、项目级覆盖用户级、向上查找、只读判定 |
-| `test/services/subagent-models.test.ts` | `provider/model` 已鉴权/未鉴权、裸 id 唯一/同名多 provider、模型不存在、无目录可校验、无父模型 |
-| `test/services/subagent-service.test.ts` | 子会话创建输入（落盘目录/扩展集/工具集/深度/parentSession）、摘要与用量、工具轨迹、**超轮数/超 token/超时中止**、模型报错、未知预设、超深度拒绝、未装配时 unavailable、并发排队（全局+每父会话）、abortAll（在跑+排队）、signal 取消、服务关闭 |
-| `test/services/tool-approval.test.ts` | 子会话审批打上父会话与预设、父会话可结算子会话挂起项、无关会话仍 404、父会话关闭连带结算 |
-| `test/services/agent-registry-subagent.test.ts` | 子会话审批发到父会话流（含字段）、顶层会话不带 parentSessionId、父取消连带拒绝、**子 run 挂到父 run + meta**、子会话继承父任务 |
-| `test/services/plan-mode.test.ts` | 规划期只放行只读预设（未注入判定器时一律拦）、策略关闭委派时拦 |
-| `test/services/task-runner.test.ts` | `stop()` 级联停子任务 |
+| `test/services/subagent/subagent-presets.test.ts` | frontmatter 解析、缺 name/description 跳过、项目级覆盖用户级、向上查找、只读判定 |
+| `test/services/subagent/subagent-models.test.ts` | `provider/model` 已鉴权/未鉴权、裸 id 唯一/同名多 provider、模型不存在、无目录可校验、无父模型 |
+| `test/services/subagent/subagent-service.test.ts` | 子会话创建输入（落盘目录/扩展集/工具集/深度/parentSession）、摘要与用量、工具轨迹、**超轮数/超 token/超时中止**、模型报错、未知预设、超深度拒绝、未装配时 unavailable、并发排队（全局+每父会话）、abortAll（在跑+排队）、signal 取消、服务关闭 |
+| `test/services/agent/tool-approval.test.ts` | 子会话审批打上父会话与预设、父会话可结算子会话挂起项、无关会话仍 404、父会话关闭连带结算 |
+| `test/services/agent/agent-registry-subagent.test.ts` | 子会话审批发到父会话流（含字段）、顶层会话不带 parentSessionId、父取消连带拒绝、**子 run 挂到父 run + meta**、子会话继承父任务 |
+| `test/services/plan/plan-mode.test.ts` | 规划期只放行只读预设（未注入判定器时一律拦）、策略关闭委派时拦 |
+| `test/services/task/task-runner.test.ts` | `stop()` 级联停子任务 |
 | `test/services/platform/trace-store.test.ts` | 回归：run 开始时写入的 meta 在收尾时不被抹掉 |
 
 ### 离线评测（`npm run eval`：11/11 + 四项门禁）

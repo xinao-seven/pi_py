@@ -49,7 +49,7 @@ MCP 连接必须**进程级共享**：同一工作区的多个会话复用同一
 统一采用内联扩展，不再使用 jiti 文件扩展：
 
 ```ts
-// src/services/agent-registry.ts  loader(cwd, systemPrompt, extensions)
+// src/services/agent/agent-registry.ts  loader(cwd, systemPrompt, extensions)
 const factories: InlineExtension[] = [];
 if (extensions?.planMode !== false && this.plans) factories.push(this.plans.buildExtension());
 if (extensions?.approval !== false && this.approvals)
@@ -204,7 +204,7 @@ rule: "mcp-approval-required", risk: "high", category: "system" }`——与既�
 - **任何变更后都调 `registry.reloadResources()`**（复用 skills 开关模式）让所有活跃会话重载；
 - `requiredCwd` 校验 `cwd` 必须是已存在目录（对齐 `POST /api/agent/new` 的 `invalid_workspace`）。
 
-### 3.7 接线：`app.ts` + `src/services/agent-registry.ts`
+### 3.7 接线：`app.ts` + `src/services/agent/agent-registry.ts`
 
 - `app.ts`：创建 `McpService(new McpConfig(agentDir))` → 注入 `OriginalPiSessionFactory(agentDir,
   eventBus, mcpService)` → 注册 `mcpRoutes`（`prefix: "/api/mcp"`，带 service + registry）→
@@ -244,10 +244,10 @@ rule: "mcp-approval-required", risk: "high", category: "system" }`——与既�
 
 | 文件 | 覆盖点 |
 |---|---|
-| `test/services/mcp-tools.test.ts` | 结果映射、截断+标记、isError 抛错 |
-| `test/services/mcp-service.test.ts` | 连接/注册/调用、状态上报、删除断连、审批联动（approval required / 放行） |
+| `test/services/mcp/mcp-tools.test.ts` | 结果映射、截断+标记、isError 抛错 |
+| `test/services/mcp/mcp-service.test.ts` | 连接/注册/调用、状态上报、删除断连、审批联动（approval required / 放行） |
 | `test/routes/mcp-routes.test.ts` | REST 嵌套形状全流程、非法配置 422 |
-| `test/services/plan-mode.test.ts` | 规划期拦截 `mcp__`、disable 后放行 |
+| `test/services/plan/plan-mode.test.ts` | 规划期拦截 `mcp__`、disable 后放行 |
 
 运行：`cd node-pi/server && npm run typecheck && npm test`。
 

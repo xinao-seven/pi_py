@@ -130,7 +130,7 @@ CLI 侧也不会解析它），新的不再写。
 ### 3.10 `ask_user` / `propose_plan` 不放在「计划专用」里（M4.1 / M4.2）
 
 提问是**通用交互**，不是计划的一部分：它已在 M4.1 拆到独立的 `QuestionBroker`
-（`services/user-question.ts`），任何会话都激活，且计划结束后依然可用。
+（`services/agent/user-question.ts`），任何会话都激活，且计划结束后依然可用。
 为此 `PlanView` 里的 `question` / `questionOptions` 被移除——「谁在等用户回答」只有一个真相源
 （挂起队列 + 会话状态快照的 `pendingQuestion`），避免两处状态互相矛盾。
 

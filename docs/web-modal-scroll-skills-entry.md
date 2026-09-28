@@ -1,7 +1,7 @@
 # 前端缺陷修复：Skills 面板单条过长撑满弹窗 + 弹窗滚不动
 
 > 类型：前端布局 + 后端技能发现口径修复。涉及 `web/src/globals.css`、`SettingsDialog.vue`、
-> `SkillsConfig.vue`、`SessionInfoPanel.vue`、`node-pi/server/src/services/skill-service.ts`
+> `SkillsConfig.vue`、`SessionInfoPanel.vue`、`node-pi/server/src/services/workspace/skill-service.ts`
 > 与两条回归测试（布局契约 / `skill-service.test.ts`）。
 > 第二次修复见 §9（「只显示一条 + 那一条沾满弹窗」）。
 
@@ -186,7 +186,7 @@ PackageManager）还会扫 `~/.agents/skills` 与 `{cwd}(及祖先到 git 根)/.
 
 | 测试 | 守的是什么 |
 | --- | --- |
-| `node-pi/server/test/services/skill-service.test.ts`（4 条） | `.pi` 与 `.agents` 四种来源都能发现、来源 scope 正确、未登记工作区 403、开关落盘 |
+| `node-pi/server/test/services/workspace/skill-service.test.ts`（4 条） | `.pi` 与 `.agents` 四种来源都能发现、来源 scope 正确、未登记工作区 403、开关落盘 |
 | `web/test/components/modal-layout-contracts.test.ts` 新增一条 | `.skills-list` 有 `display: grid` 且有 `align-content: start`（条目再少也不被拉伸） |
 
 测试里的 `agentDir` 与 `~/.agents`（靠重定向 `process.env.HOME`）都在临时目录，

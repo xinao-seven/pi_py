@@ -162,7 +162,7 @@ node-pi/server/
 
 - **[完成] P1 核心链路（无 UI）**：加依赖 `@modelcontextprotocol/sdk`（+ `zod` peer）；`McpConfig` +
   `McpClientManager` + `McpService`；`routes/mcp.ts`；`buildMcpExtension()` 注册工具。本地 stdio MCP server
-  验证工具出现且可调用（见 `test/services/mcp-service.test.ts`）。
+  验证工具出现且可调用（见 `test/services/mcp/mcp-service.test.ts`）。
 - **[完成] P2 协同**：MCP 审批 `tool_call` 处理器（直连 `ToolApprovalBroker.requestApproval()`）；
   Plan 模式拦截 `mcp__` 工具（`PlanModeService.buildExtension()`）。前端 ToolCallBlock /
   tool_call_pending 规约已确认对任意 toolName 与 risk/category 通用，无需改动。

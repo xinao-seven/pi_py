@@ -15,7 +15,7 @@ Node 后端使用原版 Pi SDK 的 `DefaultResourceLoader` 加载工具和事件
 每个会话创建/打开、`reload_resources` 或 MCP 配置变更后都会重跑这些工厂：
 
 ```ts
-// src/services/agent-registry.ts  loader(cwd, systemPrompt, inline)
+// src/services/agent/agent-registry.ts  loader(cwd, systemPrompt, inline)
 // inline = inlineCapabilities(...)：由 CreateSessionInput.extensions 解析出的开关快照
 const factories: InlineExtension[] = [];
 if (inline.planMode && this.plans) factories.push(this.plans.buildExtension());
@@ -62,9 +62,9 @@ new DefaultResourceLoader({
 `loader()` 里再叠加 `this.plans` 一类的存在判断与子会话深度判断。
 
 - `ToolApprovalBroker.buildExtension()`：注册 `tool_call` 钩子，命中危险命令规则时调用
-  `requestApproval()` 挂起等待决定（`src/services/tool-approval.ts`）。
+  `requestApproval()` 挂起等待决定（`src/services/agent/tool-approval.ts`）。
 - `PlanModeService.buildExtension()`：为每个会话注册 Plan 生命周期钩子（工具权限的最终约束点），
-  钩子委托给按会话隔离的 `PlanMachine`（`src/services/plan-mode-service.ts`）。
+  钩子委托给按会话隔离的 `PlanMachine`（`src/services/plan/plan-mode-service.ts`）。
 - `buildMcpExtension()`：按当前 cwd 注册 MCP 工具集，审批工具复用 broker（`src/services/mcp/`）。
 
 ## 文件扩展（用户级/工作区级）

@@ -15,7 +15,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { ApiError } from '../errors.js';
-import { FileService } from '../services/file-service.js';
+import { FileService } from '../services/workspace/file-service.js';
 
 /** 插件选项：文件服务实例（由 app.ts 传入，可注入 mock）。 */
 export const fileRoutes: FastifyPluginAsync<{ service: FileService }> = async (app, options) => {

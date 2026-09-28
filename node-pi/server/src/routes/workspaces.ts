@@ -12,7 +12,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { ApiError } from '../errors.js';
-import { WorkspaceService } from '../services/workspace-service.js';
+import { WorkspaceService } from '../services/workspace/workspace-service.js';
 
 /** 插件选项：工作区服务。 */
 export interface WorkspaceRouteOptions {

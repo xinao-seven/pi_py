@@ -239,7 +239,7 @@ rollup、不保留原始 step 时成立**；M4/M5 的量化指标都要 step 级
 | --- | --- |
 | 模型 | `services/platform/task-model.ts`：`TaskRecord` / `TaskStep` / `deriveTaskStatus` / `nextStepId` / `applyStepStatus` |
 | 存储 | `services/platform/task-repository.ts`：SQLite（migrations v3）+ 内存双实现，语义等价 |
-| 用例 | `services/task-service.ts`：状态聚合、`ifRevision` 乐观并发、变更广播 |
+| 用例 | `services/task/task-service.ts`：状态聚合、`ifRevision` 乐观并发、变更广播 |
 | 接口 | `routes/tasks.ts`：8 个接口（list/create/detail/patch/cancel/steps 增改删） |
 | 推送 | SSE `task_updated`（`AgentRegistry.announceTask`）+ `web/src/components/TaskPanel.vue` |
 | 关联 | `runs.task_id`（账本在 run 开始时取会话当前任务） |
@@ -283,10 +283,10 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 | 层 | 内容 |
 | --- | --- |
-| 租约 | `services/task-lease.ts`：owner = `pid-bootId`、TTL 30s、每 10s 续期、`TaskLeaseKeeper` |
-| 在飞动作 | `services/task-recovery-extension.ts`：turn/tool 钩子 → `execution.inFlight`；副作用分级在 `task-recovery.ts` |
-| 恢复判定 | `services/task-recovery.ts`：扫描、`assertResumable`、只读产物验证、`markInterrupted` |
-| 续跑 | `services/task-runner.ts`：校验 → 取租约 → 注入 `[TASK RESUME]` → 发 prompt → 续期保活 |
+| 租约 | `services/task/task-lease.ts`：owner = `pid-bootId`、TTL 30s、每 10s 续期、`TaskLeaseKeeper` |
+| 在飞动作 | `services/task/task-recovery-extension.ts`：turn/tool 钩子 → `execution.inFlight`；副作用分级在 `task-recovery.ts` |
+| 恢复判定 | `services/task/task-recovery.ts`：扫描、`assertResumable`、只读产物验证、`markInterrupted` |
+| 续跑 | `services/task/task-runner.ts`：校验 → 取租约 → 注入 `[TASK RESUME]` → 发 prompt → 续期保活 |
 | 接口 | `GET /api/tasks/recovery`、`POST /api/tasks/:id/resume`（202）、SSE `task_recovery_required` |
 | 前端 | 任务面板「上次运行被中断」+ [继续执行]/[重试当前步骤]，409 确认流 |
 
@@ -328,9 +328,9 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 | 层 | 内容 |
 | --- | --- |
 | 领域 | `platform/plan-model.ts`（`PlanView` + `derivePlanStatus`，纯投影）、`platform/step-verification.ts`（证据判定，M3 恢复也复用）、`execution.plan` 落库（无新迁移） |
-| 工具 | `services/plan-tools.ts`：`propose_plan` / `submit_plan` / `update_plan` / `complete_step` / `block_step`（TypeBox + promptSnippet/Guidelines）、`ask_user`（独立通道） |
-| 权限 | `services/plan-policy.ts`：能力分类（审批规则 → 拆段 → 程序名归类），未归类即不放行 |
-| 状态机 | `services/plan-mode-service.ts` 重写：**工具集恒定**（不再有差集；只读由 `tool_call` 拦截兑现——已冻结决策 5 于 3.14 修订）、上下文注入（规划/执行两种，内容不变不重复注入）、命令分发 |
+| 工具 | `services/plan/plan-tools.ts`：`propose_plan` / `submit_plan` / `update_plan` / `complete_step` / `block_step`（TypeBox + promptSnippet/Guidelines）、`ask_user`（独立通道） |
+| 权限 | `services/plan/plan-policy.ts`：能力分类（审批规则 → 拆段 → 程序名归类），未归类即不放行 |
+| 状态机 | `services/plan/plan-mode-service.ts` 重写：**工具集恒定**（不再有差集；只读由 `tool_call` 拦截兑现——已冻结决策 5 于 3.14 修订）、上下文注入（规划/执行两种，内容不变不重复注入）、命令分发 |
 | 执行 | `TaskRunner.start/stop`：计划执行复用 M3 的租约与任务绑定 |
 | 接口 | `plan_start/execute/pause/resume/refine/abandon`（`plan_enable/disable` 弃用别名）、`prompt.mode`、SSE `plan_updated` → `PlanView` |
 | 前端 | 计划面板（证据/验证声明/暂停/继续/改名/跳过/删除）、输入框 `[直接执行 \| 先规划]` + `/plan` 前缀、移除 Plan 预开关 |
@@ -375,7 +375,7 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 | 层 | 内容 |
 | --- | --- |
-| 后端 | `services/user-question.ts`：`QuestionBroker`（挂起队列 + 10 分钟超时 + abort/会话关闭/服务关闭结算）+ `ask_user` 工具（一次最多 8 题，选项/多选/自由输入） |
+| 后端 | `services/agent/user-question.ts`：`QuestionBroker`（挂起队列 + 10 分钟超时 + abort/会话关闭/服务关闭结算）+ `ask_user` 工具（一次最多 8 题，选项/多选/自由输入） |
 | 契约 | SSE `question_pending` / `question_resolved`；命令 `answer_question`；会话状态 `pendingQuestion`（刷新可恢复弹窗） |
 | 前端 | `QuestionDialog.vue`（多题一屏、N/M 已答、未答按跳过、「让 AI 自己决定」）+ reducer/ChatWindow 接线 |
 | 移除 | `PlanView.question*` 与 `execution.plan.question`：**「谁在等用户」只有一个真相源**（挂起队列） |
@@ -462,8 +462,8 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 
 | 层 | 内容 |
 | --- | --- |
-| 服务 | `services/subagent-service.ts`（子会话创建/预算/并发闸门/取消级联/`buildExtension`）、`subagent-presets.ts`（预设发现 + 只读判定）、`subagent-models.ts`（模型解析与回退） |
-| 工具 | `services/subagent-tools.ts`：`subagent` 工具（单任务 + 平行调用靠 `executionMode: 'parallel'`） |
+| 服务 | `services/subagent/subagent-service.ts`（子会话创建/预算/并发闸门/取消级联/`buildExtension`）、`subagent-presets.ts`（预设发现 + 只读判定）、`subagent-models.ts`（模型解析与回退） |
+| 工具 | `services/subagent/subagent-tools.ts`：`subagent` 工具（单任务 + 平行调用靠 `executionMode: 'parallel'`） |
 | 接线 | `agent-registry`（`CreateSessionInput.subagent`、子会话工具集特例、`parentRunId` 进账本、`abortSession()` 级联、审批挂父会话）、`tool-approval`（父会话回退查找）、`session-ledger`（`currentRunId`/`lastRunId`）、`plan-mode-service`+`plan-policy`（规划期委派门禁）、`task-runner`（`stop()` 级联） |
 | 前端 | `SubagentCallBlock.vue`：预设/深度/用量/轨迹/回退说明/摘要；`ToolCallBlock` 分流 |
 | 评测 | `eval/` 3 个用例 + 新门禁；**harness 改跑真实工厂**（新增 `useRuntime()` 注入口） |
@@ -520,7 +520,7 @@ create（rev1，含 verification）→ 加步骤（rev2）→ 完成 s1（任务
 1. `tree` 从嵌套数组改为**扁平数组 + `depth`**（先序，父在前）；节点不带 `children`。
 2. 节点只带导航所需字段：`id / parentId / depth / type / role / text(≤120 字符摘要) / label / labelTimestamp`；
    正文一律走 `context.messages`，**不得**再塞回 `tree`。
-3. 服务端用显式栈拍平（`services/session-tree.ts`）——服务端自己也不能递归。
+3. 服务端用显式栈拍平（`services/agent/session-tree.ts`）——服务端自己也不能递归。
 4. 前端在 **API 层**归一化（`lib/session-tree.ts`）：Node 扁平直接用，Python 嵌套用显式栈拍平；
    组件只面对扁平节点（`BranchNavigator` 不再递归、`ChatWindow` 节点数直接取长度）。
    这样冻结的 Python 后端不需要改。
@@ -635,10 +635,10 @@ skill 描述 3 行封顶 + 内部滚动（不做省略号，因为描述就是�
 
 **修复**（四项，全部带测试）：
 
-1. 压缩触发点按模型窗口换算：`services/compaction-policy.ts`（触发点 ≤200K、keepRecent 缺省 48K、
+1. 压缩触发点按模型窗口换算：`services/agent/compaction-policy.ts`（触发点 ≤200K、keepRecent 缺省 48K、
    `enabled:false` 放行、病态 keepRecent 夹取）；`create()/open()` 接线并把解析值落盘，
    旧会话从 `model_change` 条目恢复模型窗口；内置默认预设 keepRecent 提到 48K。
-2. 工具结果预算：`services/tool-output-limit.ts` 挂 `tool_result` 钩子，文本 12KB 封顶
+2. 工具结果预算：`services/agent/tool-output-limit.ts` 挂 `tool_result` 钩子，文本 12KB 封顶
    （bash 保尾部、其余保头部、图片保留、UTF-8 边界对齐）。
 3. 系统提示词追加并行工具调用引导（`loader()` 的 `appendSystemPromptOverride`，只追加不覆盖）。
 4. 计划结束态（completed/abandoned/paused）不再从历史中部剥离注入，改注入末尾
@@ -762,7 +762,7 @@ node-pi/server/src/services/observability/
 node-pi/server/src/routes/observability.ts
 node-pi/server/test/services/platform/trace-store.test.ts
 node-pi/server/test/services/observability/{session-ledger,registry-ledger,ledger-e2e,metrics}.test.ts
-node-pi/server/test/services/agent-registry-state.test.ts
+node-pi/server/test/services/agent/agent-registry-state.test.ts
 node-pi/server/test/routes/observability-routes.test.ts
 web/src/components/ObservabilityPanel.vue
 web/test/components/ObservabilityPanel.test.ts
@@ -774,13 +774,13 @@ docs/node-session-prompt-panel.md              会话信息面板（系统提示
 ### M1 改动（关键位置）
 
 ```
-node-pi/server/src/services/agent-registry.ts
+node-pi/server/src/services/agent/agent-registry.ts
   · publish() 尾部调用 ledger.record()        ← 唯一插桩点
   · close()/remove() 收尾未结算 run            · start() 上报 prompt() 失败
   · state() 透传 getContextUsage/getSessionStats（零成本修复）
-node-pi/server/src/services/tool-approval.ts
+node-pi/server/src/services/agent/tool-approval.ts
   · ApprovalTraceSink（挂起/结算上报）          · settle 区分 user/timeout/abort/session/disposed
-node-pi/server/src/services/plan-mode-service.ts
+node-pi/server/src/services/plan/plan-mode-service.ts
   · PlanTraceSink（规划期拦截上报 blocked_by）
 node-pi/server/src/app.ts
   · PlatformStore + SessionLedger 装配          · /api/observability 注册      · onClose 关存储
@@ -797,11 +797,11 @@ web/src/types/index.ts / src/lib/api.ts
 ```
 node-pi/server/src/services/platform/task-model.ts       领域模型与纯函数（状态聚合/步骤 id/状态迁移）
 node-pi/server/src/services/platform/task-repository.ts  SQLite + 内存双实现（乐观锁、步骤整批替换）
-node-pi/server/src/services/task-service.ts              用例层（聚合、ifRevision、广播）
+node-pi/server/src/services/task/task-service.ts              用例层（聚合、ifRevision、广播）
 node-pi/server/src/routes/tasks.ts                       8 个任务接口
 node-pi/server/src/services/platform/migrations.ts       v3：tasks / task_steps
 node-pi/server/test/services/platform/task-repository.test.ts
-node-pi/server/test/services/task-service.test.ts
+node-pi/server/test/services/task/task-service.test.ts
 node-pi/server/test/routes/tasks-routes.test.ts
 web/src/components/TaskPanel.vue
 web/test/components/TaskPanel.test.ts
@@ -811,7 +811,7 @@ docs/node-task-domain-m2.md                              M2 实现说明（语�
 ### M2 改动（关键位置）
 
 ```
-node-pi/server/src/services/agent-registry.ts
+node-pi/server/src/services/agent/agent-registry.ts
   · announceTask（SSE task_updated 广播）      · setActiveTask（run↔task 关联）
 node-pi/server/src/services/observability/session-ledger.ts
   · LedgerSessionContext.taskId → runs.task_id
@@ -829,13 +829,13 @@ web/src/types/index.ts / src/lib/api.ts  · 任务类型与 7 个接口封装
 ### M3 新增（断点续跑，2026-08-21）
 
 ```
-node-pi/server/src/services/task-lease.ts                租约与续期（owner = pid-bootId）
-node-pi/server/src/services/task-recovery.ts             恢复清单、副作用分级、产物验证
-node-pi/server/src/services/task-recovery-extension.ts   在飞动作内联扩展 + 隐藏恢复上下文注入
-node-pi/server/src/services/task-runner.ts               续跑执行器（校验→租约→注入→prompt→保活）
-node-pi/server/test/services/task-recovery.test.ts
-node-pi/server/test/services/task-recovery-extension.test.ts
-node-pi/server/test/services/task-runner.test.ts         重启恢复 / 防双跑 / 副作用四类分支
+node-pi/server/src/services/task/task-lease.ts                租约与续期（owner = pid-bootId）
+node-pi/server/src/services/task/task-recovery.ts             恢复清单、副作用分级、产物验证
+node-pi/server/src/services/task/task-recovery-extension.ts   在飞动作内联扩展 + 隐藏恢复上下文注入
+node-pi/server/src/services/task/task-runner.ts               续跑执行器（校验→租约→注入→prompt→保活）
+node-pi/server/test/services/task/task-recovery.test.ts
+node-pi/server/test/services/task/task-recovery-extension.test.ts
+node-pi/server/test/services/task/task-runner.test.ts         重启恢复 / 防双跑 / 副作用四类分支
 web/test/components/TaskPanel.test.ts                    （新增恢复块用例）
 docs/node-task-recovery-m3.md                            M3 实现说明 + DoD 验证记录
 ```
@@ -845,10 +845,10 @@ docs/node-task-recovery-m3.md                            M3 实现说明 + DoD �
 ```
 node-pi/server/src/services/platform/task-model.ts   · TaskLease/currentStep/isLeaseActive/isInterrupted
                                                      · execution.lastSideEffect（比规划保守的一处）
-node-pi/server/src/services/task-service.ts          · acquireLease/renewLease/releaseLease/setInFlight
+node-pi/server/src/services/task/task-service.ts          · acquireLease/renewLease/releaseLease/setInFlight
                                                      · markInterrupted/resetCurrentStep/completeStepWithEvidence
                                                      · mutate()：执行态写入也走乐观锁 + 广播
-node-pi/server/src/services/agent-registry.ts        · 工厂第 7 参（恢复扩展）· announceRecovery/hasSubscribers
+node-pi/server/src/services/agent/agent-registry.ts        · 工厂第 7 参（恢复扩展）· announceRecovery/hasSubscribers
 node-pi/server/src/routes/tasks.ts                   · GET /recovery、POST /:id/resume（202）
 node-pi/server/src/routes/agent.ts                   · SSE 首个连接补推 task_recovery_required（remindRecovery）
 node-pi/server/src/app.ts                            · 装配 owner/tracker/recovery/runner；onReady 扫描；onClose 释放租约
@@ -862,8 +862,8 @@ web/src/types/index.ts / src/lib/api.ts              · TaskRecoveryItem 等类�
 ```
 node-pi/server/src/services/platform/plan-model.ts         PlanView/PlanStatus/derivePlanStatus（纯投影）
 node-pi/server/src/services/platform/step-verification.ts  证据判定（file/command/manual，M3 恢复复用）
-node-pi/server/src/services/plan-tools.ts                  五个计划工具 + PlanToolbox 用例层
-node-pi/server/src/services/plan-policy.ts                 规划期能力分类与 PlanPolicy
+node-pi/server/src/services/plan/plan-tools.ts                  五个计划工具 + PlanToolbox 用例层
+node-pi/server/src/services/plan/plan-policy.ts                 规划期能力分类与 PlanPolicy
 node-pi/server/eval/harness.mjs                            评测/端到端共用的真实装配
 node-pi/server/eval/run.mjs                                golden set（7 用例 + 三项门禁）
 node-pi/server/spike/07-plan-tool-loop.mjs                 端到端：模型零标记走完完整旅程
@@ -875,17 +875,17 @@ docs/node-plan-mode-m4.md                                  M4 实现说明 + 验
 ### M4 改动（关键位置）
 
 ```
-node-pi/server/src/services/plan-mode-service.ts      · 删除 extractPlan/markDone/[DONE:n]
+node-pi/server/src/services/plan/plan-mode-service.ts      · 删除 extractPlan/markDone/[DONE:n]
                                                       · 工具集恒定 + 上下文注入去抖 + 能力集拦截（差集已于 3.14 删除）
                                                       · propose_plan（模型提议、用户拍板）
                                                       · 命令：plan_start/execute/pause/resume/refine/abandon
 node-pi/server/src/services/platform/task-model.ts    · execution.plan（四种意图，无新迁移）
-node-pi/server/src/services/task-service.ts           · createPlan/setPlanState/replacePlanSteps/abandonPlan
+node-pi/server/src/services/task/task-service.ts           · createPlan/setPlanState/replacePlanSteps/abandonPlan
                                                       · 版本号语义：keepRevision + 「无变化」短路
 node-pi/server/src/services/platform/task-repository.ts · save 支持 keepRevision
-node-pi/server/src/services/task-runner.ts            · start/stop（计划执行复用租约）；replan 只对 plan 任务
-node-pi/server/src/services/task-recovery.ts          · TaskRecoveryItem.origin；replan 放行条件
-node-pi/server/src/services/agent-registry.ts         · prompt.mode、plan_* 命令、PlanView 推送
+node-pi/server/src/services/task/task-runner.ts            · start/stop（计划执行复用租约）；replan 只对 plan 任务
+node-pi/server/src/services/task/task-recovery.ts          · TaskRecoveryItem.origin；replan 放行条件
+node-pi/server/src/services/agent/agent-registry.ts         · prompt.mode、plan_* 命令、PlanView 推送
                                                       · withInlineTools（预设白名单并入内联工具）
 node-pi/server/src/routes/agent.ts                    · /new 与 prompt 透传 mode
 node-pi/server/src/app.ts                             · plans.setTaskService/setExecutor；任务变更同步计划视图
@@ -898,8 +898,8 @@ web/test/components/PlanProgress.test.ts              · 重写为 14 例
 ### M4.1 新增（提问通道，2026-08-21）
 
 ```
-node-pi/server/src/services/user-question.ts           QuestionBroker + ask_user 工具 + 回答渲染
-node-pi/server/test/services/user-question.test.ts
+node-pi/server/src/services/agent/user-question.ts           QuestionBroker + ask_user 工具 + 回答渲染
+node-pi/server/test/services/agent/user-question.test.ts
 web/src/components/QuestionDialog.vue                  提问弹窗（多题/选项/自由输入/取消）
 web/test/components/QuestionDialog.test.ts
 docs/node-question-channel.md                          通道契约与行为取舍
@@ -908,10 +908,10 @@ docs/node-question-channel.md                          通道契约与行为取�
 ### M4.1 改动（关键位置）
 
 ```
-node-pi/server/src/services/agent-registry.ts   · answer_question 命令 + question_pending/resolved 推送
+node-pi/server/src/services/agent/agent-registry.ts   · answer_question 命令 + question_pending/resolved 推送
                                                 · 状态快照 pendingQuestion · tools 白名单并入 ask_user
 node-pi/server/src/app.ts                       · 装配 QuestionBroker（可注入）
-node-pi/server/src/services/plan-tools.ts       · 移除 ask_user（迁到独立通道）
+node-pi/server/src/services/plan/plan-tools.ts       · 移除 ask_user（迁到独立通道）
 node-pi/server/src/services/platform/{plan-model,task-model}.ts · 移除 question 镜像字段
 node-pi/server/eval/{harness,run}.mjs           · 注入提问通道 + ask-user-roundtrip 用例
 node-pi/server/spike/07-plan-tool-loop.mjs      · 改用共用 harness；断言 ask_user 独立于 Plan
@@ -924,7 +924,7 @@ web/src/components/ChatWindow.vue               · 挂载弹窗
 
 ```
 node-pi/server/src/services/mcp/mcp-templates.ts  18 个模板 / 7 组 + 形状自检 + fixture 路径解析
-node-pi/server/test/services/mcp-templates.test.ts
+node-pi/server/test/services/mcp/mcp-templates.test.ts
 web/test/components/McpConfig.test.ts             模板库 6 例（此前没有该组件的测试）
 ```
 
@@ -941,13 +941,13 @@ docs/node-mcp-guide.md                               §3 新增「推荐模板�
 ### M5 新增（子任务委派，2026-08-21）
 
 ```
-node-pi/server/src/services/subagent-service.ts     子会话创建/预算/并发闸门/取消级联/buildExtension
-node-pi/server/src/services/subagent-presets.ts     预设发现（用户级 agents/*.md + 项目级 .pi/agents/）+ 只读判定
-node-pi/server/src/services/subagent-models.ts      预设 model 解析与「回退父会话模型」策略
-node-pi/server/src/services/subagent-tools.ts       subagent 工具定义与结果渲染
+node-pi/server/src/services/subagent/subagent-service.ts     子会话创建/预算/并发闸门/取消级联/buildExtension
+node-pi/server/src/services/subagent/subagent-presets.ts     预设发现（用户级 agents/*.md + 项目级 .pi/agents/）+ 只读判定
+node-pi/server/src/services/subagent/subagent-models.ts      预设 model 解析与「回退父会话模型」策略
+node-pi/server/src/services/subagent/subagent-tools.ts       subagent 工具定义与结果渲染
 web/src/components/SubagentCallBlock.vue            委派卡片（预设/深度/用量/轨迹/回退说明/摘要）
 node-pi/server/test/services/subagent-{presets,models,service}.test.ts
-node-pi/server/test/services/agent-registry-subagent.test.ts
+node-pi/server/test/services/agent/agent-registry-subagent.test.ts
 web/test/components/SubagentCallBlock.test.ts
 docs/node-subagent-m5.md                            实施说明（决策/契约/缺陷/验证/DoD）
 ```
@@ -955,16 +955,16 @@ docs/node-subagent-m5.md                            实施说明（决策/契约
 ### M5 改动（关键位置）
 
 ```
-node-pi/server/src/services/agent-registry.ts       CreateSessionInput.subagent、子会话工具集特例、
+node-pi/server/src/services/agent/agent-registry.ts       CreateSessionInput.subagent、子会话工具集特例、
                                                     INLINE_OWNED_EXTENSION_DIRS += subagent、
                                                     ledgerContext.parentRunId、abortSession() 级联、
                                                     announceApproval 挂父会话、useRuntime() 注入口
-node-pi/server/src/services/tool-approval.ts        PendingToolApproval.parentSessionId/agent、setParentResolver、
+node-pi/server/src/services/agent/tool-approval.ts        PendingToolApproval.parentSessionId/agent、setParentResolver、
                                                     decide() 父会话回退、cancelSession 连带子会话
 node-pi/server/src/services/observability/session-ledger.ts  parentRunId→parent_run_id、currentRunId/lastRunId、meta 合并收尾
 node-pi/server/src/services/platform/sqlite-trace-storage.ts · run 收尾不再抹掉开始时写入的 meta
-node-pi/server/src/services/plan-mode-service.ts / plan-policy.ts  规划期委派门禁（只读预设）
-node-pi/server/src/services/task-runner.ts          stop() 级联停子任务
+node-pi/server/src/services/plan/plan-mode-service.ts / plan-policy.ts  规划期委派门禁（只读预设）
+node-pi/server/src/services/task/task-runner.ts          stop() 级联停子任务
 node-pi/server/src/app.ts                           装配 SubagentService（延迟绑定）+ 只读预设判定注入
 node-pi/server/eval/harness.mjs                     改用真实 OriginalPiSessionFactory（+ scriptedResponses）
 node-pi/server/eval/run.mjs                         direct 模式 + 3 个委派用例 + 新门禁
@@ -987,9 +987,9 @@ docs/web-task-plan-panel.md            合并规则与交互契约
 ### 长会话修复（分支树扁平化，2026-09-10）
 
 ```
-node-pi/server/src/services/session-tree.ts   flattenSessionTree()：嵌套树→扁平节点 + depth（显式栈）
+node-pi/server/src/services/agent/session-tree.ts   flattenSessionTree()：嵌套树→扁平节点 + depth（显式栈）
 node-pi/server/src/routes/sessions.ts         GET /:sessionId 的 tree 改用 flattenSessionTree()
-node-pi/server/test/services/session-tree.test.ts    单测（5000 层不爆栈 / 先序 / 摘要 / 坏节点）
+node-pi/server/test/services/agent/session-tree.test.ts    单测（5000 层不爆栈 / 先序 / 摘要 / 坏节点）
 node-pi/server/test/routes/sessions-routes.test.ts   端到端回归（3000 条目会话必须 200）
 web/src/lib/session-tree.ts                   toSessionTreeNodes()：兼容 Node 扁平与 Python 嵌套
 web/src/lib/api.ts                            getSession() 在 API 层归一化
@@ -1014,8 +1014,8 @@ web/src/components/{TaskPlanPanel,TaskStepList,ChatWindow,ChatInput,AgentControl
 ### 预设能力清单（2026-08-22）
 
 ```
-node-pi/server/src/services/preset-service.ts   capabilities / toolNames|null / compaction|null / 内置 minimal
-node-pi/server/src/services/agent-registry.ts   SessionExtensions + inlineCapabilities() + 定向 drop + 广播能力过滤
+node-pi/server/src/services/models/preset-service.ts   capabilities / toolNames|null / compaction|null / 内置 minimal
+node-pi/server/src/services/agent/agent-registry.ts   SessionExtensions + inlineCapabilities() + 定向 drop + 广播能力过滤
 node-pi/server/src/routes/agent.ts              extensions 透传 + 响应 capabilities + null 语义
 node-pi/server/spike/08-preset-capabilities.mjs 能力开关端到端（真实 SDK + 临时目录）
 web/src/lib/preset-capabilities.ts              能力映射 + 表单文案 + shouldShowWorkPanel
@@ -1027,12 +1027,12 @@ docs/node-preset-capabilities.md               契约 / 极简模式定义 / 与
 ### 会话预设配置持久化（2026-09-28）
 
 ```
-node-pi/server/src/services/session-config.ts    落盘形状 / 归一化 / 防御式解析 / 倒序查找（customType = pi-web/session-config）
-node-pi/server/src/services/agent-registry.ts    create() 追加自定义条目 · open() 读回并重建（OpenedSession）
+node-pi/server/src/services/agent/session-config.ts    落盘形状 / 归一化 / 防御式解析 / 倒序查找（customType = pi-web/session-config）
+node-pi/server/src/services/agent/agent-registry.ts    create() 追加自定义条目 · open() 读回并重建（OpenedSession）
                                                   · inlineToolNames() 共用 · openPersisted() 填 entry.capabilities
 node-pi/server/src/routes/agent.ts               GET /api/agent/:id 一并返回 capabilities
 node-pi/server/spike/08-preset-capabilities.mjs  ④⑤⑥ 重开不放大 / 自定义预设不丢 / 无条目仍全开
-node-pi/server/test/services/session-config.test.ts
+node-pi/server/test/services/agent/session-config.test.ts
 web/src/composables/useAgentSession.ts           watcher 不再清预设 · justCreatedSessionId · restorePresetForNewSession()
 web/src/types/index.ts                           AgentStateResponse.capabilities
 web/test/composables/useAgentSession.test.ts     5 条回归

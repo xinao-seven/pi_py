@@ -222,7 +222,7 @@ SDK 对两者都只发 `tool_execution_end(isError=true)`，因此账本主动�
 | `test/services/observability/ledger-e2e.test.ts` | **真实 SDK + 离线 fauxProvider** 跑完整 agent loop：run/turns/tokens、2 个 llm_call、`httpStatus=200`、tool_call 归因、summary 有数 |
 | `test/services/observability/metrics.test.ts` | 分位数边界、取整、空窗口、store 健康字段、序列化 |
 | `test/routes/observability-routes.test.ts` | 4 个接口、参数校验、分页、详情、清理语义、trace 关闭仍可用 |
-| `test/services/agent-registry-state.test.ts` | `contextUsage`/`sessionStats` 透传与兜底 |
+| `test/services/agent/agent-registry-state.test.ts` | `contextUsage`/`sessionStats` 透传与兜底 |
 | `web/test/components/ObservabilityPanel.test.ts` | 指标渲染、范围/工作区切换触发重载、按需加载详情与拦截标记、未开启提示、错误提示 |
 | `web/test/lib/api.test.ts` | 新接口的 URL 构造与方法 |
 

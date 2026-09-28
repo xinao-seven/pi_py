@@ -22,7 +22,7 @@
 > | --- | --- | --- |
 > | 核心 | `node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js` | 事件发射与订阅 |
 > | 核心 | `…/dist/core/extensions/types.d.ts` | `AgentSessionEvent` 类型定义 |
-> | 后端 | `node-pi/server/src/services/agent-registry.ts` | 事件编号、缓存、广播（`publish`） |
+> | 后端 | `node-pi/server/src/services/agent/agent-registry.ts` | 事件编号、缓存、广播（`publish`） |
 > | 后端 | `node-pi/server/src/routes/agent.ts` | SSE 路由（hijack、写帧、心跳、重放） |
 > | 前端 | `web/src/lib/api.ts` | `fetchAgentEvents`（带 `Last-Event-ID`） |
 > | 前端 | `web/src/composables/useAgentSession.ts` | SSE 解析、断线重连、流式合并 |

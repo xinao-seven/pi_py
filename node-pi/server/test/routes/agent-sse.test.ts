@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createSseWriter, MAX_SSE_PENDING_BYTES, type SseSink } from '../../src/routes/agent.js';
-import type { StreamEvent } from '../../src/services/agent-registry.js';
+import type { StreamEvent } from '../../src/services/agent/agent-registry.js';
 
 /** 假 sink：把写出的帧记下来，并模拟 Node Writable 的 writableLength。 */
 function makeSink(writableLength = 0): SseSink & { writes: string[] } {

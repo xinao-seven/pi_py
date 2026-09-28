@@ -15,9 +15,17 @@ node-pi/server/
 │   ├── server.ts               # 进程入口：读取配置并监听端口
 │   ├── config.ts / errors.ts   # 基础设施配置、统一 API 错误
 │   ├── routes/                 # HTTP/SSE 适配层；按资源拆分，保持薄
-│   └── services/               # 业务逻辑、Pi SDK 适配、状态与文件操作、内联扩展
-│       ├── platform/           # 平台存储（M1）：迁移、trace 领域模型、写入队列、SQLite/内存后端
-│       └── observability/      # trace 采集与查询（M1）：session-ledger、redact、metrics、provider 钩子
+│   └── services/               # 业务逻辑、Pi SDK 适配、状态与文件操作、内联扩展；按领域分子目录
+│       ├── agent/               # 会话与 agent 核心：agent-registry、session-*、工具审批/输出上限/提问通道
+│       ├── subagent/            # 子任务委派（M5）：subagent-*
+│       ├── plan/                # 计划模式（M4）：plan-*
+│       ├── task/                # 任务域（M2/M3）：task-*
+│       ├── workspace/           # 工作区、文件与技能发现：workspace/file-service、directory-picker、skill-service
+│       ├── models/              # 模型与预设配置：model-catalog、model-config-service、preset-service
+│       ├── mcp/                 # MCP：配置、连接池、工具桥接与模板库
+│       ├── platform/            # 平台存储（M1）：迁移、trace 领域模型、写入队列、SQLite/内存后端
+│       ├── observability/       # trace 采集与查询（M1）：session-ledger、redact、metrics、provider 钩子
+│       └── service-logger.ts    # 服务层共享日志契约（结构化满足 app.log，不依赖 pino 类型）
 ├── test/                       # Vitest；目录结构尽量映射 src/
 ├── package.json
 └── README.md                   # 启动与对外使用说明
@@ -32,7 +40,8 @@ node-pi/server/
   显式注册。
 - 新 Pi 会话能力：放在 `AgentRegistry` 或其工厂适配层，对外暴露小而可测的接口；不要把 SDK
   的未稳定内部字段扩散到路由层。
-- 新的本地持久化、工作区、模型或资源逻辑：各自一个 service，构造函数接受路径或依赖，便于测试替换。
+- 新的本地持久化、工作区、模型或资源逻辑：各自一个 service，放进对应领域子目录
+  （`services/<domain>/`，无归属就新建一个），构造函数接受路径或依赖，便于测试替换。
 - 新工具或事件钩子：以"内联扩展"实现——在 `services/` 写一个类，提供 `buildExtension()` 返回
   `InlineExtension`，并在 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 中注册。
   仓库内不再使用 jiti 文件扩展；用户级/工作区级扩展仍由 SDK 自动发现。
@@ -43,7 +52,7 @@ node-pi/server/
   agent loop，也不要写入对话正文（默认只存 digest 与预览）。详见 `docs/node-observability-m1.md`。
 - 新领域实体（M2 起的任务式）：模型放 `services/platform/<entity>-model.ts`（类型与纯函数，
   状态由函数聚合而不是散落在各处），持久化放 `services/platform/<entity>-repository.ts`
-  （SQLite + 内存双实现，语义必须一致并有等价性测试），用例放 `services/<entity>-service.ts`，
+  （SQLite + 内存双实现，语义必须一致并有等价性测试），用例放 `services/<domain>/<entity>-service.ts`，
   接口放 `routes/<entity>.ts`。需要并发保护时用「版本号 + 单语句 UPDATE 判定 changes」的
   乐观锁，不要用读写锁或多语句事务。返回给前端的结构要带上并发所需字段（如 `revision`）。
 - 涉及「长时间执行 + 可能崩溃」的新能力（M3 起的续跑、M4 的计划执行）：必须走

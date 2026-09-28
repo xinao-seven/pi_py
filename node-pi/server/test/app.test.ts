@@ -8,9 +8,9 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../src/services/agent-registry.js';
-import type { PlanModeService } from '../src/services/plan-mode-service.js';
-import { PresetService } from '../src/services/preset-service.js';
+} from '../src/services/agent/agent-registry.js';
+import type { PlanModeService } from '../src/services/plan/plan-mode-service.js';
+import { PresetService } from '../src/services/models/preset-service.js';
 
 class FakePiSession implements PiSession {
   readonly sessionId = 'node-test-session';

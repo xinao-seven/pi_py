@@ -31,10 +31,10 @@
 
 | 资产 | 位置 | 本规划如何复用 |
 | --- | --- | --- |
-| 事件汇聚点（SDK 事件 → 编号 → 缓存 → 广播） | `services/agent-registry.ts:799` `publish()` | 可观测性的唯一插桩点 |
-| 结构化会话事件日志（turn/工具/用量/耗时） | `services/agent-registry.ts:813` `logSessionEvent()` | 已经算出 `durationMs`/`usage`/`costTotal`，只需落库 |
+| 事件汇聚点（SDK 事件 → 编号 → 缓存 → 广播） | `services/agent/agent-registry.ts:799` `publish()` | 可观测性的唯一插桩点 |
+| 结构化会话事件日志（turn/工具/用量/耗时） | `services/agent/agent-registry.ts:813` `logSessionEvent()` | 已经算出 `durationMs`/`usage`/`costTotal`，只需落库 |
 | 内联扩展注入机制 | `agent-registry.ts:334` `loader()` | Plan 工具、Subagent 工具、观测钩子全部走这里 |
-| 挂起-结算审批中枢 | `services/tool-approval.ts` | Subagent 权限继承、Plan 期 `ask_user` 的通道 |
+| 挂起-结算审批中枢 | `services/agent/tool-approval.ts` | Subagent 权限继承、Plan 期 `ask_user` 的通道 |
 | 会话门面 `PiSession` | `agent-registry.ts:111` | 补齐 `getSessionStats()` / `getContextUsage()` 即可拿到现成指标 |
 | SSE 事件缓存 + `Last-Event-ID` 回放 | `routes/agent.ts:266`、`agent-registry.ts:537` | 新增事件类型直接复用通道 |
 | 会话树 / 父子会话（`parentSessionPath`） | `session-service.ts`、`types/index.ts` | Subagent 子会话的归属关系 |
@@ -105,7 +105,7 @@
 
 ### P7 计划与任务模型是两套东西（即将重复建模）
 
-`PlanTodo { step, text, completed }` 是会话内临时数据；如果按原计划新增 `TaskService`（`dist/services/task-service.d.ts` 里那份半成品设计：`TaskRecord/status/steps/blockedReason/conclusion`），两套模型会各自演化。
+`PlanTodo { step, text, completed }` 是会话内临时数据；如果按原计划新增 `TaskService`（`dist/services/task/task-service.d.ts` 里那份半成品设计：`TaskRecord/status/steps/blockedReason/conclusion`），两套模型会各自演化。
 
 ### P8 重启后计划无法被感知
 
@@ -348,7 +348,7 @@ run 的边界取 `agent_settled` 而非 `agent_start`（SDK 在重试/压缩续�
 
 **目标**：建立「任务」这个一等公民，作为 Plan 的载体与断点续跑的控制面。
 
-`dist/services/task-service.d.ts` 里有一份此前未落地的设计（`TaskRecord` / `TASK_STATUSES` / 原子串行写 / `refreshTaskStatus`），本里程碑在其基础上**扩展而非推翻**：新增 `origin`、`revision`、`verification`、`evidence`、`execution`（租约）。
+`dist/services/task/task-service.d.ts` 里有一份此前未落地的设计（`TaskRecord` / `TASK_STATUSES` / 原子串行写 / `refreshTaskStatus`），本里程碑在其基础上**扩展而非推翻**：新增 `origin`、`revision`、`verification`、`evidence`、`execution`（租约）。
 
 #### 4.2.1 数据模型
 
@@ -695,7 +695,7 @@ SSE：`plan_updated` 的载荷从 `PlanSnapshot` 换成 `PlanView`（破坏性�
   - `submit_plan` → Plan `proposed` → `plan_execute` → `complete_step`（带证据）→ 状态推进；`complete_step` 证据不符 → `isError`；
   - `plan_pause` → `plan_resume` 保持 revision；
   - `plan_abandon` 后 Task 仍可查（`status='cancelled'`）。
-- 回归：删除 `extractPlan`/`markDone` 后，原 `test/services/plan-mode.test.ts` 中依赖正则的用例必须**重写而非删除**（覆盖同样的用户旅程）。
+- 回归：删除 `extractPlan`/`markDone` 后，原 `test/services/plan/plan-mode.test.ts` 中依赖正则的用例必须**重写而非删除**（覆盖同样的用户旅程）。
 - 前端：`web/test/components/PlanProgress.test.ts` 覆盖编辑/暂停/恢复交互。
 
 **DoD**：模型不写任何特殊标记也能完成「规划 → 确认 → 执行 → 完成」全流程；执行中可改计划；退出后计划可查。
@@ -1024,18 +1024,18 @@ jobs:
 
 | 位置 | 说明 |
 | --- | --- |
-| `node-pi/server/src/services/agent-registry.ts:799` | `publish()` 事件汇聚点（M1 插桩处） |
-| `node-pi/server/src/services/agent-registry.ts:813` | `logSessionEvent()` 已解析 turn/工具/usage/cost |
-| `node-pi/server/src/services/agent-registry.ts:661-662` | `contextUsage: null, sessionStats: {}`（M1 零成本修复） |
-| `node-pi/server/src/services/agent-registry.ts:334` | `loader()` 内联扩展注入（M1/M4/M5 接入点） |
-| `node-pi/server/src/services/plan-mode-service.ts:72` | `extractPlan()` 正则解析（M4 删除） |
-| `node-pi/server/src/services/plan-mode-service.ts:100` | `markDone()` `[DONE:n]`（M4 删除） |
-| `node-pi/server/src/services/plan-mode-service.ts:111` | `isSafePlanCommand()` 白名单（M4 改为能力分类） |
-| `node-pi/server/src/services/plan-mode-service.ts:303-315` | 快照式工具限制/恢复（M4 改为差集撤销） |
-| `node-pi/server/src/services/plan-mode-service.ts:316-324` | `publish()` 每次追加完整快照（M4 改为引用指针） |
-| `node-pi/server/dist/services/task-service.d.ts` | 未落地的 TaskService 设计（M2 的起点） |
+| `node-pi/server/src/services/agent/agent-registry.ts:799` | `publish()` 事件汇聚点（M1 插桩处） |
+| `node-pi/server/src/services/agent/agent-registry.ts:813` | `logSessionEvent()` 已解析 turn/工具/usage/cost |
+| `node-pi/server/src/services/agent/agent-registry.ts:661-662` | `contextUsage: null, sessionStats: {}`（M1 零成本修复） |
+| `node-pi/server/src/services/agent/agent-registry.ts:334` | `loader()` 内联扩展注入（M1/M4/M5 接入点） |
+| `node-pi/server/src/services/plan/plan-mode-service.ts:72` | `extractPlan()` 正则解析（M4 删除） |
+| `node-pi/server/src/services/plan/plan-mode-service.ts:100` | `markDone()` `[DONE:n]`（M4 删除） |
+| `node-pi/server/src/services/plan/plan-mode-service.ts:111` | `isSafePlanCommand()` 白名单（M4 改为能力分类） |
+| `node-pi/server/src/services/plan/plan-mode-service.ts:303-315` | 快照式工具限制/恢复（M4 改为差集撤销） |
+| `node-pi/server/src/services/plan/plan-mode-service.ts:316-324` | `publish()` 每次追加完整快照（M4 改为引用指针） |
+| `node-pi/server/dist/services/task/task-service.d.ts` | 未落地的 TaskService 设计（M2 的起点） |
 | `node-pi/server/src/routes/agent.ts:266` | SSE 端点（M1/M2/M5 新事件复用） |
-| `node-pi/server/src/services/agent-registry.ts:537` | `subscribe()` 断线重放 |
+| `node-pi/server/src/services/agent/agent-registry.ts:537` | `subscribe()` 断线重放 |
 | `node-pi/server/src/app.ts:173` | `onReady` 钩子（M3 恢复扫描接入点） |
 | `web/src/components/ChatWindow.vue:193-252` | `actPlan` / `togglePlan`（M4 删除） |
 | `web/src/components/PlanProgress.vue` | Plan 面板（M4 改造为可编辑 + 证据展示） |

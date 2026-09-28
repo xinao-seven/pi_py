@@ -15,7 +15,7 @@
 | --- | --- |
 | 领域模型 | `services/platform/task-model.ts`：`TaskRecord` / `TaskStep` / 状态常量 / 纯函数 |
 | 持久化 | `services/platform/task-repository.ts`：SQLite（migrations v3）+ 内存双实现 |
-| 用例与并发 | `services/task-service.ts`：状态聚合、`ifRevision` 乐观并发、变更广播 |
+| 用例与并发 | `services/task/task-service.ts`：状态聚合、`ifRevision` 乐观并发、变更广播 |
 | 接口 | `routes/tasks.ts`：8 个接口 + 409/404/422 语义 |
 | 实时推送 | SSE `task_updated`（`AgentRegistry.announceTask`）+ `web/src/components/TaskPanel.vue` |
 | trace 关联 | `runs.task_id`（账本在 run 开始时从注册表取会话当前任务） |
@@ -166,7 +166,7 @@ WHERE id = :id AND revision = :expectedRevision
 | 测试 | 覆盖 |
 | --- | --- |
 | `test/services/platform/task-repository.test.ts` | 双后端 CRUD、嵌套字段往返、乐观锁、步骤整批替换、过滤与排序、**等价性** |
-| `test/services/task-service.test.ts` | 状态聚合与冻结规则、`ifRevision` 强制、409 细节、取消幂等、已完成步骤 force、重排、监听器失败降级 |
+| `test/services/task/task-service.test.ts` | 状态聚合与冻结规则、`ifRevision` 强制、409 细节、取消幂等、已完成步骤 force、重排、监听器失败降级 |
 | `test/routes/tasks-routes.test.ts` | 8 个接口、并发冲突、步骤管理、取消冻结、参数校验/404、**task_updated 广播规则**、**run.task_id 关联** |
 | `test/app.test.ts` | 客户端错误契约（非法 JSON → 400 `invalid_request`，不泄露请求体） |
 | `web/test/components/TaskPanel.test.ts` | 新建、渲染证据/验证、各状态动作、阻塞原因校验、加步骤/刷新、删除确认、终态只读、错误与 busy、折叠 |

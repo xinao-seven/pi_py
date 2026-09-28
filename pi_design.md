@@ -123,9 +123,9 @@ this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 - 切点（约 308-323）：`findCutPoint(entries, start, end, keepRecentTokens)`——从后往前累积 token，`>= keepRecentTokens` 处切。
 - 执行（约 583 `compact`，约 460 `generateSummaryWithUsage`）：早期轮次由**模型自身生成摘要**（预算 `min(0.8 * reserveTokens, model.maxTokens)`），可把上一轮摘要滚动传入做**滚动式摘要**；最近窗口原样保留。`generateTurnPrefixSummary` 用更小预算（0.5）处理 turn 前缀。
 - 本项目的落点：
-  - 手动压缩命令 `compact` → `session.compact(...)`：[agent-registry.ts:588-589](node-pi/server/src/services/agent-registry.ts#L588-L589)
+  - 手动压缩命令 `compact` → `session.compact(...)`：[agent-registry.ts:588-589](node-pi/server/src/services/agent/agent-registry.ts#L588-L589)
   - `compaction_start` / `compaction_end` SSE 事件 → 前端转圈/报错：[useAgentSession.ts:327-332](web/src/composables/useAgentSession.ts#L327-L332)
-  - 压缩策略随预设按会话覆盖（独立 SettingsManager 内存 `applyOverrides`，不写磁盘）：[agent-registry.ts:240-246](node-pi/server/src/services/agent-registry.ts#L240-L246)
+  - 压缩策略随预设按会话覆盖（独立 SettingsManager 内存 `applyOverrides`，不写磁盘）：[agent-registry.ts:240-246](node-pi/server/src/services/agent/agent-registry.ts#L240-L246)
 
 ---
 
@@ -134,7 +134,7 @@ this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 ### 5.1 会话 JSONL（短期记忆）
 
 - `SessionManager` 把每个会话写为 JSONL：`~/.pi/agent/sessions/<编码后cwd>/<sessionId>.jsonl`，含消息树、分支、压缩摘要，可 `open()` 完整恢复。
-- 本项目暴露为 Web「恢复会话」：`open()` / `listPersistedSessions()` [agent-registry.ts:265-309](node-pi/server/src/services/agent-registry.ts#L265-L309)。
+- 本项目暴露为 Web「恢复会话」：`open()` / `listPersistedSessions()` [agent-registry.ts:265-309](node-pi/server/src/services/agent/agent-registry.ts#L265-L309)。
 
 ### 5.2 AGENTS.md / SYSTEM.md（长期、项目绑定记忆）
 
@@ -143,7 +143,7 @@ this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 - `loadContextFileFromDir`（约 27-50）：候选文件名 `AGENTS.md` / `AGENTS.MD` / `CLAUDE.md` / `CLAUDE.MD`，找第一个存在的。
 - `loadProjectContextFiles`（约 81 起）：全局 `agentDir` 一份 + 从 cwd 逐级向上的项目各一份，去重（避免 worktree 影子重复加载）。
 - SYSTEM.md（约 809-824）：项目 `.pi/SYSTEM.md` 与全局 `~/.pi/agent/SYSTEM.md`；另有 `APPEND_SYSTEM.md`。
-- 本项目配合点：预设 `systemPrompt` **空串不传入 loader**（否则会跳过文件级提示词发现，破坏 AGENTS.md 记忆）：[agent-registry.ts:346-348](node-pi/server/src/services/agent-registry.ts#L346-L348)
+- 本项目配合点：预设 `systemPrompt` **空串不传入 loader**（否则会跳过文件级提示词发现，破坏 AGENTS.md 记忆）：[agent-registry.ts:346-348](node-pi/server/src/services/agent/agent-registry.ts#L346-L348)
 
 ---
 
@@ -151,9 +151,9 @@ this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 
 | Pi 内部机制 | 我的挂接 |
 |-------------|---------|
-| `beforeToolCall` / `tool_call` 事件 | 审批 [tool-approval.ts:234-251](node-pi/server/src/services/tool-approval.ts#L234-L251)、Plan [plan-mode-service.ts:334-343](node-pi/server/src/services/plan-mode-service.ts#L334-L343)、MCP 审批 [mcp-extension.ts:34-50](node-pi/server/src/services/mcp/mcp-extension.ts#L34-L50) |
+| `beforeToolCall` / `tool_call` 事件 | 审批 [tool-approval.ts:234-251](node-pi/server/src/services/agent/tool-approval.ts#L234-L251)、Plan [plan-mode-service.ts:334-343](node-pi/server/src/services/plan/plan-mode-service.ts#L334-L343)、MCP 审批 [mcp-extension.ts:34-50](node-pi/server/src/services/mcp/mcp-extension.ts#L34-L50) |
 | `registerTool` | MCP 工具批量注册 [mcp-extension.ts:29-33](node-pi/server/src/services/mcp/mcp-extension.ts#L29-L33) |
-| `createAgentSession` | 组装/创建/打开 [agent-registry.ts:222-309](node-pi/server/src/services/agent-registry.ts#L222-L309) |
-| `SettingsManager.applyOverrides` | 预设压缩覆盖 [agent-registry.ts:240-246](node-pi/server/src/services/agent-registry.ts#L240-L246) |
-| 事件订阅 `subscribe(listener)` | AgentRegistry 事件缓存 + SSE 回放 [agent-registry.ts:527-538](node-pi/server/src/services/agent-registry.ts#L527-L538) |
-| ResourceLoader 工具白名单 | `setActiveToolsByName` [agent-registry.ts:581-585](node-pi/server/src/services/agent-registry.ts#L581-L585) |
+| `createAgentSession` | 组装/创建/打开 [agent-registry.ts:222-309](node-pi/server/src/services/agent/agent-registry.ts#L222-L309) |
+| `SettingsManager.applyOverrides` | 预设压缩覆盖 [agent-registry.ts:240-246](node-pi/server/src/services/agent/agent-registry.ts#L240-L246) |
+| 事件订阅 `subscribe(listener)` | AgentRegistry 事件缓存 + SSE 回放 [agent-registry.ts:527-538](node-pi/server/src/services/agent/agent-registry.ts#L527-L538) |
+| ResourceLoader 工具白名单 | `setActiveToolsByName` [agent-registry.ts:581-585](node-pi/server/src/services/agent/agent-registry.ts#L581-L585) |

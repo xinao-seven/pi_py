@@ -14,9 +14,9 @@ import {
   SessionManager,
   DefaultResourceLoader,
 } from '@earendil-works/pi-coding-agent';
-import { AgentRegistry, dropInlineOwnedExtensions } from '../dist/services/agent-registry.js';
-import { PlanModeService } from '../dist/services/plan-mode-service.js';
-import { TaskService } from '../dist/services/task-service.js';
+import { AgentRegistry, dropInlineOwnedExtensions } from '../dist/services/agent/agent-registry.js';
+import { PlanModeService } from '../dist/services/plan/plan-mode-service.js';
+import { TaskService } from '../dist/services/task/task-service.js';
 import { MemoryTaskRepository } from '../dist/services/platform/task-repository.js';
 
 const root = mkdtempSync(join(tmpdir(), 'pi-spike-start-'));

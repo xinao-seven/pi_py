@@ -194,12 +194,12 @@ provider 层观测钩子（会话侧的采集扩展），不是账本本身。
 ## 10. 变更文件
 
 ```
-改  node-pi/server/src/services/agent-registry.ts
+改  node-pi/server/src/services/agent/agent-registry.ts
       · SessionExtensions / SessionCapabilities / sessionCapabilitiesOf
       · inlineCapabilities()（开关解析）· loader() 按开关注册 + noExtensions + 定向 drop
       · withInlineTools 按开关并入（含 subagent）· RegistryEntry.capabilities 广播过滤
 改  node-pi/server/src/routes/agent.ts        · extensions 透传 + 响应 capabilities + null 语义
-改  node-pi/server/src/services/preset-service.ts
+改  node-pi/server/src/services/models/preset-service.ts
       · capabilities / toolNames|null / compaction|null + 内置 minimal + 读时归一化
 新  node-pi/server/spike/08-preset-capabilities.mjs（接入 npm run spike）
 改  node-pi/server/{test/services/agent-registry-factory,agent-registry-extensions,preset-service}.test.ts
@@ -214,14 +214,14 @@ provider 层观测钩子（会话侧的采集扩展），不是账本本身。
 改  web/test/{components/PresetConfig,composables/useAgentSession}.test.ts
 
 会话预设配置持久化（2026-09-28，详见 §11）：
-新  node-pi/server/src/services/session-config.ts  落盘形状 / 归一化 / 防御式解析 / 倒序查找
-改  node-pi/server/src/services/agent-registry.ts  create() 写自定义条目 · open() 读回并重建（OpenedSession）
+新  node-pi/server/src/services/agent/session-config.ts  落盘形状 / 归一化 / 防御式解析 / 倒序查找
+改  node-pi/server/src/services/agent/agent-registry.ts  create() 写自定义条目 · open() 读回并重建（OpenedSession）
       · inlineToolNames() 共用 · openPersisted() 填 entry.capabilities
 改  node-pi/server/test/{app,services/agent-registry-extensions}.test.ts
 改  web/test/composables/useAgentSession.test.ts
 改  node-pi/server/src/routes/agent.ts             GET /api/agent/:id 返回 capabilities
 改  node-pi/server/spike/08-preset-capabilities.mjs ④⑤⑥ 重开不放大 / 自定义预设不丢 / 无条目仍全开
-新  node-pi/server/test/services/session-config.test.ts
+新  node-pi/server/test/services/agent/session-config.test.ts
 改  web/src/composables/useAgentSession.ts         watcher 不再清预设 · justCreatedSessionId · restorePresetForNewSession()
 改  web/src/types/index.ts                          AgentStateResponse.capabilities
 ```

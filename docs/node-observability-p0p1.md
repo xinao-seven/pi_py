@@ -146,7 +146,7 @@ ALTER TABLE run_rollups ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;
 
 - `RuntimeObserver`（原名 `ProviderObserver`，语义已扩到「运行期观测」，保留别名不破坏外部引用）：
   新增 `noteProviderPayload` / `noteContextMessages` / `noteModelSelect`。由 `SessionLedger` 实现。
-- `QuestionTraceSink`（`services/user-question.ts`）：`noteQuestionStart` / `noteQuestionDecision`，
+- `QuestionTraceSink`（`services/agent/user-question.ts`）：`noteQuestionStart` / `noteQuestionDecision`，
   与 `ApprovalTraceSink` 同形——接口留在提问中枢自己的文件里，账本按结构实现，不引入反向依赖；
   调用方用 `notify()` 包住，**观测抛错不影响提问链路**（有测试守门）。
 - `agent-registry.ts` 里把提问中枢也接上账本：`questions?.setTraceSink(ledger)`。
@@ -178,7 +178,7 @@ ALTER TABLE run_rollups ADD COLUMN wait_ms INTEGER NOT NULL DEFAULT 0;
 | `test/services/observability/observability-extension.test.ts`（新） | 5 个钩子全部注册、转发参数正确、`model_select` 归一化、拿不到 sessionId 时跳过且不抛错 |
 | `test/services/observability/session-ledger.test.ts` | 人机等待拆分（提问 / 审批）、P0 计数器落 meta 且 0 不写、中途换模型/思考级别、run 外事件被忽略、工具首字节耗时、请求形状与 `cacheHitRate`、工具集变化标记、注入去抖、垃圾输入不抛错 |
 | `test/services/platform/trace-store.test.ts` | 两个后端 `waitMs`/`activeMs` 往返、三个分位数样本与 `humanWaitMs` 聚合、v4 迁移幂等 |
-| `test/services/user-question.test.ts` | 提问挂起/结算上报、超时原因、sink 抛错不影响提问 |
+| `test/services/agent/user-question.test.ts` | 提问挂起/结算上报、超时原因、sink 抛错不影响提问 |
 | `test/services/observability/metrics.test.ts` | 新 totals 字段整形 |
 | `test/services/observability/ledger-e2e.test.ts` | 真实 SDK + `fauxProvider`：run 状态/turns/tokens、`waitMs=0` / `activeMs=durationMs`（注：faux 不经过 provider 的 `onPayload`，请求形状由 `spike/09` 守门） |
 | `web/test/components/ObservabilityPanel.test.ts` | 新 KPI 渲染、非工具步骤的标签来自 meta、请求形状/工具首字节的「详情」列、run.meta chips（只为有值的键渲染）、等人 vs 机器耗时拆分、老记录缺 waitMs 时的占位 |

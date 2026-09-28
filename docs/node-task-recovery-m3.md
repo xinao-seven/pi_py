@@ -12,10 +12,10 @@
 
 | 核心问题 | 机制 | 落地 |
 | --- | --- | --- |
-| 谁在跑？会不会双跑？ | 执行租约 | `services/task-lease.ts` + `TaskService` 的 acquire/renew/release |
-| 崩溃时那个动作落地了吗？ | 在飞动作 + 副作用分级 | `services/task-recovery-extension.ts` + `task-recovery.ts` 的 `classifySideEffect` |
+| 谁在跑？会不会双跑？ | 执行租约 | `services/task/task-lease.ts` + `TaskService` 的 acquire/renew/release |
+| 崩溃时那个动作落地了吗？ | 在飞动作 + 副作用分级 | `services/task/task-recovery-extension.ts` + `task-recovery.ts` 的 `classifySideEffect` |
 | 现在该怎么恢复？ | 恢复清单（只列不跑） | `TaskRecoveryService.scan()` + `GET /api/tasks/recovery` |
-| 怎么安全地继续？ | 恢复上下文注入 + 续跑执行器 | `services/task-runner.ts` + `POST /api/tasks/:id/resume` |
+| 怎么安全地继续？ | 恢复上下文注入 + 续跑执行器 | `services/task/task-runner.ts` + `POST /api/tasks/:id/resume` |
 
 **不在 M3**：`replan`（进入 Plan 重构路径）属于 **M4**，接口显式返回 `409 replan_unavailable`；
 `verification.kind='command'` 的**执行**属于 **M4** 的完成工具（M3 只做只读的文件存在性校验）。
@@ -163,9 +163,9 @@ SSE 新增：`{ type: 'task_recovery_required', tasks: TaskRecoveryItem[] }`。
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `test/services/task-recovery.test.ts` | 副作用分级（含 bash 走审批规则、未知工具 → unknown）、清单筛选与活跃租约、写副作用需确认、`lastSideEffect` 的失效规则、文件产物验证、`assertResumable` 各分支、`markInterrupted` |
-| `test/services/task-recovery-extension.test.ts` | 四个钩子的 in-flight 行为、一次性隐藏注入、上下文去重、写失败不冒泡 |
-| `test/services/task-runner.test.ts` | **重启后恢复**（真实 SQLite：关库 → 重开 → 扫描 → 续跑）、租约防双跑、产物缺失 → blocked 且 `retry_step` 是逃生门、产物存在 → 补记完成不重跑、`unknown` 需确认、会话缺失 → blocked、优雅关闭释放租约、`dispose` 后不再续期 |
+| `test/services/task/task-recovery.test.ts` | 副作用分级（含 bash 走审批规则、未知工具 → unknown）、清单筛选与活跃租约、写副作用需确认、`lastSideEffect` 的失效规则、文件产物验证、`assertResumable` 各分支、`markInterrupted` |
+| `test/services/task/task-recovery-extension.test.ts` | 四个钩子的 in-flight 行为、一次性隐藏注入、上下文去重、写失败不冒泡 |
+| `test/services/task/task-runner.test.ts` | **重启后恢复**（真实 SQLite：关库 → 重开 → 扫描 → 续跑）、租约防双跑、产物缺失 → blocked 且 `retry_step` 是逃生门、产物存在 → 补记完成不重跑、`unknown` 需确认、会话缺失 → blocked、优雅关闭释放租约、`dispose` 后不再续期 |
 | `test/routes/tasks-routes.test.ts` | recovery/resume 路由、202 语义、确认门、`replan_unavailable`、首个 SSE 连接补推且不重复 |
 | `web/test/components/TaskPanel.test.ts` | 中断块渲染与两种 mode 的 emits、副作用确认与产物展示、阻塞任务入口、其它任务/会话的条目忽略 |
 | `web/test/lib/api.test.ts` / `agent-events.test.ts` | recovery/resume 封装与 409 解析、`task_recovery_required` 不影响流式状态 |

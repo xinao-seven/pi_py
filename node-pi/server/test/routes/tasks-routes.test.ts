@@ -9,11 +9,11 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../../src/services/agent-registry.js';
+} from '../../src/services/agent/agent-registry.js';
 import { SessionLedger } from '../../src/services/observability/session-ledger.js';
-import { QuestionBroker } from '../../src/services/user-question.js';
+import { QuestionBroker } from '../../src/services/agent/user-question.js';
 import { openPlatformStore, type PlatformStore } from '../../src/services/platform/store.js';
-import type { StreamEvent } from '../../src/services/agent-registry.js';
+import type { StreamEvent } from '../../src/services/agent/agent-registry.js';
 
 const stores: PlatformStore[] = [];
 const apps: ReturnType<typeof createApp>[] = [];

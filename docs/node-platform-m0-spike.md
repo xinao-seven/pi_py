@@ -244,7 +244,7 @@ Web 与 CLI **共享会话与配置**，扩展与 trace **各自独立**。因�
 
 ### 3.3 `models.json` 写入：合规，且实现正确
 
-核实 `services/model-config-service.ts`：
+核实 `services/models/model-config-service.ts`：
 
 ```ts
 // 写方向：spread 保留未知字段（不是白名单）

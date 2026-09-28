@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createApp } from '../src/app.js';
-import { SessionService } from '../src/services/session-service.js';
+import { SessionService } from '../src/services/agent/session-service.js';
 
 describe('访问密码锁', () => {
   const apps: ReturnType<typeof createApp>[] = [];

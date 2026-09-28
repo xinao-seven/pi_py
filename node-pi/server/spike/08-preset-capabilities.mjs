@@ -17,12 +17,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { AgentRegistry, OriginalPiSessionFactory } from '../dist/services/agent-registry.js';
-import { ToolApprovalBroker } from '../dist/services/tool-approval.js';
-import { PlanModeService } from '../dist/services/plan-mode-service.js';
-import { QuestionBroker } from '../dist/services/user-question.js';
-import { SubagentService } from '../dist/services/subagent-service.js';
-import { TaskService } from '../dist/services/task-service.js';
+import { AgentRegistry, OriginalPiSessionFactory } from '../dist/services/agent/agent-registry.js';
+import { ToolApprovalBroker } from '../dist/services/agent/tool-approval.js';
+import { PlanModeService } from '../dist/services/plan/plan-mode-service.js';
+import { QuestionBroker } from '../dist/services/agent/user-question.js';
+import { SubagentService } from '../dist/services/subagent/subagent-service.js';
+import { TaskService } from '../dist/services/task/task-service.js';
 import { MemoryTaskRepository } from '../dist/services/platform/task-repository.js';
 
 const failures = [];

@@ -24,5 +24,6 @@ secrets.env
 
 .idea/
 .vscode/
+.zcode/
 .DS_Store
 Thumbs.db

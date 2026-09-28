@@ -85,7 +85,7 @@ pi.on('session_start', (_event, ctx) => machine.attach(ctx as SessionContext));
 
 ### 3.1 修复 A：登记会话时派发 `session_start`
 
-`src/services/agent-registry.ts`
+`src/services/agent/agent-registry.ts`
 
 1. `PiSession` 门面补充可选能力（保持向后兼容，假会话可省略）：
 
@@ -116,7 +116,7 @@ return entry;
 
 ### 3.2 修复 B：抑制被内联实现接管的文件扩展
 
-`src/services/agent-registry.ts`
+`src/services/agent/agent-registry.ts`
 
 ```ts
 export const INLINE_OWNED_EXTENSION_DIRS = ['plan-mode'] as const;
@@ -157,7 +157,7 @@ extensionsOverride: (base) => {
 
 ### 3.3 修复 C：`context` 钩子清理陈旧 plan 上下文（D2）
 
-`src/services/plan-mode-service.ts`
+`src/services/plan/plan-mode-service.ts`
 
 `before_agent_start` 返回的 message 会以 `role: "custom"` 进入本轮消息，并在 `message_end`
 时**持久化写入会话 JSONL**。因此：
@@ -223,8 +223,8 @@ extensionsOverride: (base) => {
 
 | 文件 | 新增用例 | 覆盖 |
 | --- | --- | --- |
-| `test/services/agent-registry-extensions.test.ts`（新） | 7 | `create()`/`open()` 均派发 `session_start`；`bindExtensions` 抛错不阻断登记且只记 warn；过滤用户级+工作区级 `plan-mode`；Windows 路径；相似名不受影响；过滤时记 info 日志 |
-| `test/services/plan-mode.test.ts` | +5 | 三种模式下 `context` 的保留/丢弃；同类型只留最后一条；无需清理时返回 `undefined`；反复切换后不累积 |
+| `test/services/agent/agent-registry-extensions.test.ts`（新） | 7 | `create()`/`open()` 均派发 `session_start`；`bindExtensions` 抛错不阻断登记且只记 warn；过滤用户级+工作区级 `plan-mode`；Windows 路径；相似名不受影响；过滤时记 info 日志 |
+| `test/services/plan/plan-mode.test.ts` | +5 | 三种模式下 `context` 的保留/丢弃；同类型只留最后一条；无需清理时返回 `undefined`；反复切换后不累积 |
 
 合计 Node 后端测试 **71 → 84**。
 
@@ -249,15 +249,15 @@ extensionsOverride: (base) => {
 ## 6. 变更文件
 
 ```
-改  node-pi/server/src/services/agent-registry.ts
+改  node-pi/server/src/services/agent/agent-registry.ts
       · PiSession.bindExtensions 门面   · register() 派发 session_start
       · INLINE_OWNED_EXTENSION_DIRS / dropInlineOwnedExtensions
       · loader() 接入 extensionsOverride   · 新增可选 logger 参数
-改  node-pi/server/src/services/plan-mode-service.ts
+改  node-pi/server/src/services/plan/plan-mode-service.ts
       · 新增 context 钩子（按模式清理 + 同类型只留最后一条）
 改  node-pi/server/src/app.ts                  · 传入 app.log
-新  node-pi/server/test/services/agent-registry-extensions.test.ts
-改  node-pi/server/test/services/plan-mode.test.ts
+新  node-pi/server/test/services/agent/agent-registry-extensions.test.ts
+改  node-pi/server/test/services/plan/plan-mode.test.ts
 新  node-pi/server/spike/06-plan-session-start.mjs（替换 06-plan-context-leak.mjs）
 改  node-pi/server/spike/05-extension-conflict.mjs（接入真实过滤函数）
 改  node-pi/server/package.json                · spike 脚本链

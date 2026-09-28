@@ -5,7 +5,7 @@ import {
   AgentRegistry,
   type PiSession,
   type PiSessionFactory,
-} from '../../src/services/agent-registry.js';
+} from '../../src/services/agent/agent-registry.js';
 
 /** 造一条 count 层深的会话树（迭代构造，模拟"一条消息一个节点"的长会话）。 */
 function deepTree(count: number): unknown[] {
