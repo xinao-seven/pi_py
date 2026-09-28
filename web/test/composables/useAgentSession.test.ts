@@ -45,6 +45,31 @@ vi.mock('@/lib/session', () => ({ fireUnauthorized: api.fireUnauthorized }));
 
 const SESSION_ID = 'session-1';
 
+/** 内置「极简（原版 pi）」预设（与后端 /api/presets 返回的形状一致）。 */
+function minimalPreset(): SessionPreset {
+  return {
+    id: 'minimal',
+    name: '极简（原版 pi）',
+    builtin: true,
+    systemPrompt: '',
+    toolNames: null,
+    compaction: null,
+    capabilities: {
+      plan: false,
+      approval: false,
+      questions: false,
+      subagent: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+    },
+    provider: '',
+    modelId: '',
+    thinkingLevel: '',
+    mcpServers: [],
+  };
+}
+
 /** 可控 SSE 流：测试自己决定什么时候推哪一帧。 */
 function controllableStream(): {
   stream: ReadableStream<Uint8Array>;
@@ -257,27 +282,7 @@ describe('useAgentSession 的预设能力透传', () => {
     const { session } = mountHost(null);
     await flushPromises();
 
-    const minimal: SessionPreset = {
-      id: 'minimal',
-      name: '极简（原版 pi）',
-      builtin: true,
-      systemPrompt: '',
-      toolNames: null,
-      compaction: null,
-      capabilities: {
-        plan: false,
-        approval: false,
-        questions: false,
-        subagent: false,
-        tasks: false,
-        observability: false,
-        fileExtensions: false,
-      },
-      provider: '',
-      modelId: '',
-      thinkingLevel: '',
-      mcpServers: [],
-    };
+    const minimal: SessionPreset = minimalPreset();
     session.applyPreset(minimal);
 
     await session.send('你好');
@@ -317,5 +322,149 @@ describe('useAgentSession 的预设能力透传', () => {
       fileExtensions: true,
     });
     expect(payload.toolNames).toEqual(['read', 'bash', 'edit', 'write']);
+  });
+});
+
+/**
+ * 预设状态是**用户级意图**，不能被「会话 id 变了」这件事清掉。
+ *
+ * 中文说明：缺陷现场是发完第一条消息后预设被重置（下拉框自己跳回 Coding Agent（默认）、
+ * capabilities/mcpServers 回默认），下一条新会话就静默变成全开。这里用与 App.vue 同构的
+ * 接线（`onSessionCreated` 把 id 写回 store）复现，断言预设活过创建那一刻。
+ */
+describe('useAgentSession 的预设状态不被会话切换清掉', () => {
+  /** 与 App.vue 同构：创建成功后把 sessionId 写回（store.selectSession）→ 触发 watcher。 */
+  function mountWired(initial: string | null = null) {
+    const sessionId = ref<string | null>(initial);
+    let session: ReturnType<typeof useAgentSession> | undefined;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          session = useAgentSession({
+            sessionId,
+            newSessionCwd: ref('/tmp/workspace'),
+            onSessionCreated: (id) => {
+              sessionId.value = id;
+            },
+          });
+          return () => null;
+        },
+      }),
+    );
+    return { wrapper, session: session!, sessionId };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApiDefaults();
+    // 预设列表是真实 UI 的前置条件（restorePresetForNewSession 按选中预设重建）。
+    api.getPresets.mockResolvedValue([minimalPreset()]);
+    // running + isStreaming：loadSession 不会用状态快照覆盖 activeTools（保持预设给的值）。
+    api.getAgentState.mockResolvedValue({ running: true, state: { isStreaming: true } });
+    const sse = controllableStream();
+    api.fetchAgentEvents.mockResolvedValue({ ok: true, body: sse.stream });
+    api.createAgent.mockResolvedValue({
+      sessionId: SESSION_ID,
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+        mcp: false,
+      },
+    });
+  });
+
+  it('创建会话后预设仍是用户选的那个（不再跳回 coding-agent）', async () => {
+    const { wrapper, session } = mountWired();
+    await flushPromises();
+
+    session.applyPreset(minimalPreset());
+    await session.send('你好');
+    await flushPromises();
+
+    expect(session.selectedPreset.value).toBe('minimal');
+    expect(session.activeTools.value).toBeNull();
+    expect(session.sessionCapabilities.value).toMatchObject({ tasks: false, mcp: false });
+    wrapper.unmount();
+  });
+
+  it('紧接着新建下一条会话仍沿用极简预设（extensions 全 false + mcpServers: []）', async () => {
+    const { wrapper, session, sessionId } = mountWired();
+    await flushPromises();
+
+    session.applyPreset(minimalPreset());
+    await session.send('第一条');
+    await flushPromises();
+
+    // 点「新建会话」：回到新会话模式（sessionId 变 null）→ watcher 触发，但预设不能被清。
+    sessionId.value = null;
+    await flushPromises();
+    expect(session.selectedPreset.value).toBe('minimal');
+
+    await session.send('第二条');
+    await flushPromises();
+
+    const payload = api.createAgent.mock.calls[1]?.[0] as Record<string, unknown>;
+    expect(payload.extensions).toEqual({
+      planMode: false,
+      approval: false,
+      questions: false,
+      subagents: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+    });
+    expect(payload.mcpServers).toEqual([]);
+    // 极简预设 = 不限制工具白名单，不能因为切换会话而变成四个内置工具的显式白名单。
+    expect(payload).not.toHaveProperty('toolNames');
+    wrapper.unmount();
+  });
+
+  it('切到别的历史会话时仍然清掉会话级状态（activeTools / sessionCapabilities）', async () => {
+    const { wrapper, session, sessionId } = mountWired(SESSION_ID);
+    await flushPromises();
+    expect(session.sessionCapabilities.value).toBeNull();
+
+    sessionId.value = 'session-2';
+    await flushPromises();
+
+    expect(session.activeTools.value).toEqual(['read', 'bash', 'edit', 'write']);
+    expect(session.sessionCapabilities.value).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('从状态接口读回能力位（刷新页面后仍知道这是极简会话）', async () => {
+    api.getAgentState.mockResolvedValue({
+      running: false,
+      state: { isStreaming: false },
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+        mcp: false,
+      },
+    });
+    const { wrapper, session } = mountWired(SESSION_ID);
+    await flushPromises();
+
+    expect(session.sessionCapabilities.value).toEqual({
+      plan: false,
+      approval: false,
+      questions: false,
+      subagent: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+      mcp: false,
+    });
+    wrapper.unmount();
   });
 });

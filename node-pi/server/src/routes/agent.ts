@@ -347,10 +347,18 @@ export const agentRoutes: FastifyPluginAsync<AgentRouteOptions> = async (app, op
   });
 
   // GET /api/agent/:sessionId —— 打开会话（若未活跃则从磁盘恢复）并返回当前状态。
+  //
+  // 中文说明：响应里的 `capabilities` 是**该会话自己的**能力位（创建时落盘、重开时读回），
+  // 前端刷新页面后据此决定计划/任务入口与「极简」提示，不再只能靠创建响应那一次。
   app.get<{ Params: { sessionId: string } }>('/:sessionId', async (request) => {
-    await options.registry.open(request.params.sessionId);
+    const entry = await options.registry.open(request.params.sessionId);
     const state = options.registry.state(request.params.sessionId);
-    return { running: true, state };
+    return {
+      running: true,
+      state,
+      // 取不到（假会话 / 极老的条目）时按缺省全开报，与改动前的前端行为一致。
+      capabilities: entry.capabilities ?? sessionCapabilitiesOf({}),
+    };
   });
 
   app.get<{ Params: { sessionId: string } }>('/:sessionId/plan', async (request) => {

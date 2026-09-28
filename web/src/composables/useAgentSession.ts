@@ -92,6 +92,13 @@ export function useAgentSession(options: AgentSessionOptions) {
   const presetCapabilities = ref<PresetCapabilities>({ ...DEFAULT_CAPABILITIES });
   // 当前会话的能力位（创建响应返回）：历史会话/刷新后未知，按「显示」处理。
   const sessionCapabilities = ref<SessionCapabilities | null>(null);
+  /**
+   * 本端刚创建的会话 id。
+   * 中文说明：`sessionId` 变化有两种截然不同的原因——「切到别的会话」（要清掉上一个
+   * 会话的会话级状态）与「刚刚建好了一个会话」（刚用预设配置建出来的，不能把刚应用的
+   * 预设又清回默认）。watch 里只看得到 id，所以在这里记一笔来区分。
+   */
+  let justCreatedSessionId: string | null = null;
   // 思考等级是否被显式选择过（用户改下拉或预设指定）：为 true 才随创建请求发送，
   // 避免默认的 'off' 占位值把新会话的思考意外关掉（后端现在会把 'off' 透传给 SDK）。
   const thinkingExplicit = ref(false);
@@ -188,6 +195,9 @@ export function useAgentSession(options: AgentSessionOptions) {
       // 否则模型会一直等着一个用户看不到的问题（后端挂起队列是唯一真相源）。
       stream.pendingQuestion = normalizeQuestion(state.state?.pendingQuestion) ?? null;
       thinkingLevel.value = state.state?.thinkingLevel ?? nextDetail.context.thinkingLevel;
+      // 能力位随状态返回：刷新后 / 切回历史会话也按本会话的开关显示。
+      // 只在后端真的给了值时才覆盖——否则会把创建响应的那份清成「未知」（旧后端 / 假会话）。
+      if (state.capabilities !== undefined) sessionCapabilities.value = state.capabilities;
       if (state.state?.activeTools) activeTools.value = state.state.activeTools;
       applyPendingToolCall(state.state?.pendingToolCall);
       if (state.running && state.state?.isStreaming) {
@@ -502,6 +512,9 @@ export function useAgentSession(options: AgentSessionOptions) {
         });
         activeSessionId.value = created.sessionId;
         sessionCapabilities.value = created.capabilities;
+        // 先记下 id 再回调：父组件会把 sessionId 写回 store，watcher 随即触发，
+        // 它要靠这个标记区分「刚建好的会话」与「切到别的会话」。
+        justCreatedSessionId = created.sessionId;
         options.onSessionCreated?.(created.sessionId);
         await loadSession(created.sessionId);
         connectEvents(created.sessionId);
@@ -708,9 +721,40 @@ export function useAgentSession(options: AgentSessionOptions) {
     if (activeSessionId.value) await loadSession(activeSessionId.value);
   }
 
+  /**
+   * 把「新会话参数」恢复成**当前选中预设**的样子。
+   *
+   * 中文说明：预设是用户级意图（下一条新会话用哪套配置）。进入新会话边界时，以前这里是
+   * 无脑清回默认，于是「发完第一条消息后预设下拉框自己跳回 Coding Agent（默认）、
+   * capabilities/mcpServers 回默认」，下一条新会话就静默变成全开。现在按选中预设重建；
+   * 预设列表还没加载 / 预设已被删除时退回缺省（与改动前行为一致）。
+   * 模型与思考等级不在其中：它们各自有自己的粘性语义（模型控件不随会话切换重置，
+   * 思考等级由 loadSession 按当前会话回填）。
+   */
+  function restorePresetForNewSession(): void {
+    const preset = presets.value.find((item) => item.id === selectedPreset.value);
+    if (preset === undefined) {
+      selectedPreset.value = BUILTIN_PRESET_ID;
+      activeTools.value = [...DEFAULT_TOOLS];
+      presetSystemPrompt.value = '';
+      presetCompaction.value = null;
+      presetMcpServers.value = null;
+      presetCapabilities.value = { ...DEFAULT_CAPABILITIES };
+      return;
+    }
+    // null = 不限制白名单（SDK 自己发现工具），不能退化成「四个内置工具的白名单」。
+    activeTools.value = preset.toolNames === null ? null : [...preset.toolNames];
+    presetSystemPrompt.value = preset.systemPrompt;
+    presetCompaction.value = preset.compaction === null ? null : { ...preset.compaction };
+    presetMcpServers.value = preset.mcpServers ?? null;
+    presetCapabilities.value = { ...preset.capabilities };
+  }
+
   watch(
     options.sessionId,
     (sessionId) => {
+      const createdHere = sessionId !== null && sessionId === justCreatedSessionId;
+      if (createdHere) justCreatedSessionId = null;
       activeSessionId.value = sessionId;
       closeEvents();
       lastEventId = 0; // 新会话从头接收，重放其缓存中的全部事件
@@ -722,13 +766,13 @@ export function useAgentSession(options: AgentSessionOptions) {
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = 'off';
-      activeTools.value = [...DEFAULT_TOOLS];
-      selectedPreset.value = BUILTIN_PRESET_ID;
-      presetSystemPrompt.value = '';
-      presetCompaction.value = null;
-      presetMcpServers.value = null;
-      presetCapabilities.value = { ...DEFAULT_CAPABILITIES };
-      sessionCapabilities.value = null;
+      // 刚建好的会话：工具集与能力位都已经定下来了（预设刚发出去），不要在这里清——
+      // 清了会让「最后设置的预设」下一会话悄悄退回全开；
+      // 其余情况（切到别的会话 / 回到新会话模式）恢复成当前选中预设的参数。
+      if (!createdHere) {
+        sessionCapabilities.value = null;
+        restorePresetForNewSession();
+      }
       thinkingExplicit.value = false;
       retryInfo.value = null;
       compacting.value = false;
@@ -751,13 +795,8 @@ export function useAgentSession(options: AgentSessionOptions) {
       messages.value = [];
       entryIds.value = [];
       thinkingLevel.value = 'off';
-      activeTools.value = [...DEFAULT_TOOLS];
-      selectedPreset.value = BUILTIN_PRESET_ID;
-      presetSystemPrompt.value = '';
-      presetCompaction.value = null;
-      presetMcpServers.value = null;
-      presetCapabilities.value = { ...DEFAULT_CAPABILITIES };
       sessionCapabilities.value = null;
+      restorePresetForNewSession();
       thinkingExplicit.value = false;
       assignStream({ ...INITIAL_STREAM_STATE });
       error.value = null;

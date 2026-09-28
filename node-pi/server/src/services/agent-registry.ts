@@ -55,6 +55,12 @@ import type { TaskRecord } from './platform/task-model.js';
 import type { TaskRecoveryItem } from './task-recovery.js';
 import { resolveSubagentModel, type ResolvedSubagentModel } from './subagent-models.js';
 import type { SubagentService } from './subagent-service.js';
+import {
+  SESSION_CONFIG_CUSTOM_TYPE,
+  findSessionConfig,
+  sessionConfigOf,
+  type PersistedSessionConfig,
+} from './session-config.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
@@ -336,6 +342,12 @@ export interface PiSession {
   dispose(): void; // 释放资源（取消事件监听等）
 }
 
+/** 打开持久化会话的结果：会话本体 + 创建时落盘的预设配置（旧会话没有 = 缺省）。 */
+export interface OpenedSession {
+  session: PiSession;
+  config?: PersistedSessionConfig;
+}
+
 /**
  * 会话工厂接口：负责"创建新会话 / 列出持久化会话 / 打开持久化会话"。
  * 中文说明：抽象成接口后，测试可以注入假工厂，不依赖真实 Pi SDK 和磁盘。
@@ -343,7 +355,12 @@ export interface PiSession {
 export interface PiSessionFactory {
   create(input: CreateSessionInput): Promise<PiSession>;
   listPersistedSessions?(): Promise<PersistedSessionInfo[]>;
-  open?(input: OpenSessionInput): Promise<PiSession>;
+  /**
+   * 打开持久化会话。
+   * 中文说明：返回 `config` 是必需的——注册表要靠它填 `entry.capabilities`（plan/task 的
+   * 广播过滤、`/plan` 与面板能力位都读它）；不返回就等同「旧会话、缺省全开」。
+   */
+  open?(input: OpenSessionInput): Promise<OpenedSession>;
   reloadModelRuntime?(): void;
   /**
    * MCP 工具名 → server/tool（可选）。
@@ -512,14 +529,7 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     );
     const effectiveTools = input.subagent
       ? input.toolNames
-      : withInlineTools(input.toolNames, [
-          ...(inline.planMode ? PLAN_TOOL_NAMES : []),
-          ...(inline.questions ? [ASK_USER_TOOL_NAME] : []),
-          // 与内联扩展的注册条件保持一致：漏并 subagent 会让「带工具白名单的预设会话」
-          // 里该工具直接 "Tool subagent not found"（白名单是可用集，不是激活集）。
-          ...(inline.subagents ? SUBAGENT_TOOL_NAMES : []),
-          ...inline.mcpToolNames,
-        ]);
+      : withInlineTools(input.toolNames, this.inlineToolNames(inline));
     // 子会话落盘：落在服务层指定的目录（默认 ~/.pi/agent-node-server/subagents），
     // 并写 parentSession 链；**不落共享的 ~/.pi/agent/sessions**，否则 CLI 的会话列表
     // 会凭空多出一堆子会话。
@@ -544,8 +554,51 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       ...(effectiveTools === undefined ? {} : { tools: effectiveTools }),
       ...(settingsManager === undefined ? {} : { settingsManager }),
     });
+    // 预设配置随会话落盘："极简"这类开关只活在内存里的会话对象上，不写下来，
+    // 会话一离开注册表（重启 / 重新打开）就只能按"全开"重建。
+    this.persistSessionConfig(session.session, input);
     // createAgentSession 返回 { session, agent, ... }，这里只把 session 暴露出去。
     return session.session as unknown as PiSession;
+  }
+
+  /**
+   * 把本次创建使用的预设配置追加成会话 JSONL 的自定义条目。
+   *
+   * 中文说明：
+   * - **只增不改**：`appendCustomEntry` 只追加一行，不重写文件、不删条目；SDK 明确说
+   *   `custom` 条目不参与 `buildSessionContext()`，因此原版 CLI 读到它既不进上下文也不报错
+   *   （官方 plan-mode 扩展用同一机制存自己的状态）；
+   * - **子会话不写**：子会话只活在委派期间，永远不会被 `open()` 从磁盘恢复；
+   * - **空配置不写**：没指定任何预设字段（全缺省）时写一行 `{}` 是纯噪声，语义上
+   *   "没有条目" 与 "全缺省配置" 等价；
+   * - **失败只记警告**：配置是增量能力，写不进去不该让会话建不起来（同 trace 的降级原则）。
+   */
+  private persistSessionConfig(session: AgentSession, input: CreateSessionInput): void {
+    if (input.subagent !== undefined) return;
+    const config: PersistedSessionConfig = sessionConfigOf(input);
+    if (Object.keys(config).length === 0) return;
+    try {
+      session.sessionManager.appendCustomEntry(SESSION_CONFIG_CUSTOM_TYPE, config);
+    } catch (error) {
+      this.logger?.warn(
+        { sessionId: session.sessionId, error: messageOf(error) },
+        'session config persist failed',
+      );
+    }
+  }
+
+  /** 内联扩展注册的工具名（并入预设白名单用；与 loader() 的注册条件保持一致）。
+   *
+   * 中文说明：漏并会让「带工具白名单的预设会话」里该工具直接 "Tool xxx not found"
+   * （SDK 的 `tools` 是可用集，不是激活集）。create / open 共用一处，避免两边漂移。
+   */
+  private inlineToolNames(inline: InlineCapabilities): string[] {
+    return [
+      ...(inline.planMode ? PLAN_TOOL_NAMES : []),
+      ...(inline.questions ? [ASK_USER_TOOL_NAME] : []),
+      ...(inline.subagents ? SUBAGENT_TOOL_NAMES : []),
+      ...inline.mcpToolNames,
+    ];
   }
 
   /** 当前 cwd 下已连接的 MCP 工具名（预设白名单内；未启用 MCP 时为空）。 */
@@ -594,24 +647,58 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     return [...unique.values()].map((session) => this.persistedInfo(session));
   }
 
-  /** 从磁盘恢复一个持久化会话（打开它的 JSONL 文件）。 */
-  async open(input: OpenSessionInput): Promise<PiSession> {
+  /** 从磁盘恢复一个持久化会话（打开它的 JSONL 文件）。
+   *
+   * 中文说明：创建时落盘的预设配置（能力开关 / 工具白名单 / 系统提示词 / 压缩 / MCP 白名单）
+   * 在这里读回来并如实重建，否则「极简」会话一旦离开注册表就会被按「全开」重开
+   * （MCP 工具 + 用户文件扩展 + plan/subagent 全部回来）。没有配置条目（CLI 建的旧会话、
+   * 老版本 Web 建的会话）就按缺省全开——与改动前行为一致。
+   */
+  async open(input: OpenSessionInput): Promise<OpenedSession> {
     const runtime = await this.getRuntime();
     const sessionManager = SessionManager.open(input.path);
+    // 优先用文件里记录的 cwd；配置解析失败一律当「没有配置」（绝不阻断打开会话）。
+    const cwd = sessionManager.getCwd() || input.cwd;
+    const config = this.persistedConfig(sessionManager);
+    const inline = this.inlineCapabilities(cwd, config?.extensions, undefined, config?.mcpServers);
+    const effectiveTools = withInlineTools(config?.toolNames, this.inlineToolNames(inline));
+    // 预设压缩策略：与 create() 同一套做法（只在本会话的 SettingsManager 内存里覆盖）。
+    const settingsManager = config?.compaction
+      ? (() => {
+          const manager = SettingsManager.create(cwd, this.agentDir);
+          manager.applyOverrides({ compaction: config.compaction });
+          return manager;
+        })()
+      : undefined;
     const { session } = await createAgentSession({
-      cwd: sessionManager.getCwd() || input.cwd, // 优先用文件里记录的 cwd
+      cwd,
       agentDir: this.agentDir,
       modelRuntime: runtime,
       sessionManager, // 传入已有的 SessionManager，恢复该会话的完整上下文
-      resourceLoader: await this.loader(
-        sessionManager.getCwd() || input.cwd,
-        undefined,
-        // 恢复历史会话时能力开关未知（创建时的开关没有持久化）：按「全开」恢复，
-        // 与改动前行为一致；极简会话重开后也只是回到默认能力。
-        this.inlineCapabilities(sessionManager.getCwd() || input.cwd, undefined, undefined, null),
-      ),
+      resourceLoader: await this.loader(cwd, config?.systemPrompt, inline),
+      ...(effectiveTools === undefined ? {} : { tools: effectiveTools }),
+      ...(settingsManager === undefined ? {} : { settingsManager }),
     });
-    return session as unknown as PiSession;
+    return {
+      session: session as unknown as PiSession,
+      ...(config === undefined ? {} : { config }),
+    };
+  }
+
+  /**
+   * 读回创建时落盘的预设配置。
+   * 中文说明：`getEntries()` 由 SessionManager 提供（与 plan-mode-service 读自己状态同口径）；
+   * 文件损坏/无权限等异常一律降级为 undefined（按缺省全开恢复），不让读取影响打开会话。
+   */
+  private persistedConfig(sessionManager: {
+    getEntries?(): unknown[];
+  }): PersistedSessionConfig | undefined {
+    try {
+      return findSessionConfig(sessionManager.getEntries?.() ?? []);
+    } catch (error) {
+      this.logger?.warn({ error: messageOf(error) }, 'session config read failed');
+      return undefined;
+    }
   }
 
   /** 清空运行时缓存，下次 getRuntime() 时重新读取 auth/models 文件。 */
@@ -903,11 +990,19 @@ export class AgentRegistry {
     );
     if (info === undefined)
       throw new ApiError(404, 'session_not_found', `Session ${sessionId} was not found`);
-    const session = await this.sessionFactory.open!(info);
+    const opened = await this.sessionFactory.open!(info);
     // 打开过程中可能恰好已有别的请求登记了同一会话，避免重复登记。
-    const active = this.entries.get(session.sessionId);
+    const active = this.entries.get(opened.session.sessionId);
     if (active !== undefined) return active;
-    return this.register(session, info.cwd, info.created, info);
+    return this.register(
+      opened.session,
+      info.cwd,
+      info.created,
+      info,
+      undefined,
+      // 缺省（旧会话没有配置条目）= 全开，与改动前一致；有配置就按配置报能力位。
+      sessionCapabilitiesOf(opened.config ?? {}),
+    );
   }
 
   /**

@@ -177,6 +177,52 @@ describe('Fastify application', () => {
     });
   });
 
+  it('exposes the session capabilities through GET /api/agent/:sessionId', async () => {
+    // 刷新页面 / 切回历史会话时，前端靠这个字段知道「这是个极简会话」（否则计划与任务
+    // 入口会重新长出来，点开永远空着）。
+    const registry = new AgentRegistry(new FakePiSessionFactory());
+    const app = createApp({ registry });
+    apps.push(app);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/agent/new',
+      payload: {
+        cwd: process.cwd(),
+        message: 'hi',
+        mcpServers: [],
+        extensions: {
+          approval: false,
+          planMode: false,
+          questions: false,
+          subagents: false,
+          tasks: false,
+          observability: false,
+          fileExtensions: false,
+        },
+      },
+    });
+    expect(created.statusCode).toBe(202);
+
+    const state = await app.inject({ method: 'GET', url: '/api/agent/node-test-session' });
+
+    expect(state.statusCode).toBe(200);
+    expect(state.json()).toMatchObject({
+      running: true,
+      state: { sessionId: 'node-test-session' },
+      capabilities: {
+        plan: false,
+        approval: false,
+        questions: false,
+        subagent: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+        mcp: false,
+      },
+    });
+  });
+
   it('exposes the session Plan view through the agent API', async () => {
     // 用桩替换 PlanModeService：本测试只验证 HTTP 路由把计划视图透传出去，
     // 状态机与工具的完整行为在 plan-mode.test.ts / plan-tools.test.ts 覆盖。

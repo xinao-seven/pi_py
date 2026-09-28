@@ -27,9 +27,25 @@ vi.mock('@earendil-works/pi-coding-agent', () => mocks);
 import {
   AgentRegistry,
   OriginalPiSessionFactory,
+  type PersistedSessionInfo,
   type PiSession,
   type PiSessionFactory,
 } from '../../src/services/agent-registry.js';
+
+/** 一条磁盘会话元信息（open 路径的 listPersistedSessions 返回形状）。 */
+function persistedInfo(id: string): PersistedSessionInfo {
+  return {
+    id,
+    path: `/tmp/sessions/${id}.jsonl`,
+    cwd: '/tmp/ws',
+    name: undefined,
+    parentSessionPath: undefined,
+    created: new Date(0),
+    modified: new Date(0),
+    messageCount: 0,
+    firstMessage: '',
+  };
+}
 
 /** 可观测 bindExtensions 调用的假会话。 */
 class FakeSession implements PiSession {
@@ -114,26 +130,74 @@ describe('AgentRegistry 派发 session_start', () => {
     const session = new FakeSession('restored-session');
     const factory: PiSessionFactory = {
       create: async () => session,
-      listPersistedSessions: async () => [
-        {
-          id: 'restored-session',
-          path: '/tmp/sessions/restored.jsonl',
-          cwd: '/tmp/ws',
-          name: undefined,
-          parentSessionPath: undefined,
-          created: new Date(0),
-          modified: new Date(0),
-          messageCount: 0,
-          firstMessage: '',
-        },
-      ],
-      open: async () => session,
+      listPersistedSessions: async () => [persistedInfo('restored-session')],
+      open: async () => ({ session }),
     };
     const registry = new AgentRegistry(factory);
 
     await registry.open('restored-session');
 
     expect(session.bindExtensions).toHaveBeenCalledTimes(1);
+  });
+
+  it('从磁盘恢复时按落盘配置恢复能力位（极简会话重开后仍是极简）', async () => {
+    const session = new FakeSession('restored-minimal');
+    const factory: PiSessionFactory = {
+      create: async () => session,
+      listPersistedSessions: async () => [persistedInfo('restored-minimal')],
+      open: async () => ({
+        session,
+        config: {
+          extensions: {
+            approval: false,
+            planMode: false,
+            questions: false,
+            subagents: false,
+            tasks: false,
+            observability: false,
+            fileExtensions: false,
+          },
+          mcpServers: [],
+        },
+      }),
+    };
+    const registry = new AgentRegistry(factory);
+
+    const entry = await registry.open('restored-minimal');
+
+    expect(entry.capabilities).toEqual({
+      plan: false,
+      approval: false,
+      questions: false,
+      subagent: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+      mcp: false,
+    });
+  });
+
+  it('旧会话没有配置条目时能力位仍为全开（与改动前一致）', async () => {
+    const session = new FakeSession('legacy-session');
+    const factory: PiSessionFactory = {
+      create: async () => session,
+      listPersistedSessions: async () => [persistedInfo('legacy-session')],
+      open: async () => ({ session }),
+    };
+    const registry = new AgentRegistry(factory);
+
+    const entry = await registry.open('legacy-session');
+
+    expect(entry.capabilities).toEqual({
+      plan: true,
+      approval: true,
+      questions: true,
+      subagent: true,
+      tasks: true,
+      observability: true,
+      fileExtensions: true,
+      mcp: true,
+    });
   });
 });
 

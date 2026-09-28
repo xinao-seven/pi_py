@@ -134,6 +134,12 @@ export interface AgentState {
 export interface AgentStateResponse {
   running: boolean;
   state?: AgentState;
+  /**
+   * 该会话自己的能力位（创建时落盘、重开时读回）。
+   * 中文说明：刷新页面 / 切回历史会话时靠它知道「这是个极简会话」，否则计划与任务
+   * 入口会重新长出来（面板点开永远空着）。缺省 = 未知，前端按「显示」处理。
+   */
+  capabilities?: SessionCapabilities | null;
 }
 
 // ---- 会话信息面板（GET /api/agent/:sessionId/prompt）------------------------

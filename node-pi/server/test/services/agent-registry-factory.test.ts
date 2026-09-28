@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   createAgentSession: vi.fn(),
   DefaultResourceLoader: vi.fn(),
   ModelRuntime: { create: vi.fn() },
-  SessionManager: { listAll: vi.fn(), open: vi.fn() },
+  SessionManager: { listAll: vi.fn(), open: vi.fn(), create: vi.fn() },
   SettingsManager: { create: vi.fn() },
 }));
 
@@ -209,5 +209,275 @@ describe('OriginalPiSessionFactory', () => {
     // null/缺省 = 全部 MCP：扩展照旧注册。
     await factory.create({ cwd: '/tmp/workspace' });
     expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+  });
+});
+
+/**
+ * 预设配置落盘（只在 create 方向）：极简这类开关必须随会话写下来，否则重开只能按「全开」重建。
+ */
+describe('OriginalPiSessionFactory 把预设配置写进会话 JSONL', () => {
+  const agentDir = '/tmp/fake-pi-agent';
+  const MINIMAL = {
+    approval: false,
+    planMode: false,
+    questions: false,
+    subagents: false,
+    tasks: false,
+    observability: false,
+    fileExtensions: false,
+  } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.DefaultResourceLoader.mockImplementation(function (
+      this: unknown,
+      options: Record<string, unknown>,
+    ) {
+      return { reload: vi.fn().mockResolvedValue(undefined), options };
+    });
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getModel: (provider: string, modelId: string) => ({ provider, modelId }),
+    });
+  });
+
+  /** 让 createAgentSession 返回带 sessionManager 的假会话，并给出 appendCustomEntry 桩。 */
+  function sessionWith(appendCustomEntry: unknown): void {
+    mocks.createAgentSession.mockResolvedValue({
+      session: { sessionId: 'session-with-config', sessionManager: { appendCustomEntry } },
+    });
+  }
+
+  it('writes the preset config as a pi-web/session-config custom entry', async () => {
+    const appendCustomEntry = vi.fn();
+    sessionWith(appendCustomEntry);
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({
+      cwd: '/tmp/workspace',
+      extensions: { ...MINIMAL },
+      toolNames: [],
+      systemPrompt: 'You are terse.',
+      compaction: { enabled: true, keepRecentTokens: 8000, reserveTokens: 16384 },
+      mcpServers: [],
+    });
+
+    expect(appendCustomEntry).toHaveBeenCalledTimes(1);
+    expect(appendCustomEntry).toHaveBeenCalledWith('pi-web/session-config', {
+      extensions: { ...MINIMAL },
+      toolNames: [],
+      systemPrompt: 'You are terse.',
+      compaction: { enabled: true, keepRecentTokens: 8000, reserveTokens: 16384 },
+      mcpServers: [],
+    });
+  });
+
+  it('does not write anything when no preset field was given', async () => {
+    const appendCustomEntry = vi.fn();
+    sessionWith(appendCustomEntry);
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({ cwd: '/tmp/workspace' });
+
+    expect(appendCustomEntry).not.toHaveBeenCalled();
+  });
+
+  it('does not write for subagent sessions (they are never reopened from disk)', async () => {
+    const appendCustomEntry = vi.fn();
+    sessionWith(appendCustomEntry);
+    mocks.SessionManager.create.mockReturnValue({ getSessionFile: () => '/tmp/sub.jsonl' });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({
+      cwd: '/tmp/workspace',
+      extensions: { ...MINIMAL },
+      mcpServers: [],
+      subagent: {
+        parentSessionId: 'parent',
+        preset: 'scout',
+        depth: 1,
+        maxDepth: 2,
+        sessionDir: '/tmp/subagents',
+      },
+    });
+
+    expect(appendCustomEntry).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session usable when the append fails (warn only)', async () => {
+    const warn = vi.fn();
+    sessionWith(() => {
+      throw new Error('disk full');
+    });
+    const factory = new OriginalPiSessionFactory(agentDir, undefined, undefined, undefined, {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+    });
+
+    const session = await factory.create({ cwd: '/tmp/workspace', mcpServers: [] });
+
+    expect(session.sessionId).toBe('session-with-config');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('tolerates sessions without a sessionManager', async () => {
+    mocks.createAgentSession.mockResolvedValue({ session: { sessionId: 'no-manager' } });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await expect(factory.create({ cwd: '/tmp/workspace', mcpServers: [] })).resolves.toMatchObject({
+      sessionId: 'no-manager',
+    });
+  });
+});
+
+/**
+ * 从磁盘恢复：落盘配置必须被真的用来重建会话（这是「极简重开之后还是极简」的服务端一侧）。
+ */
+describe('OriginalPiSessionFactory.open 读回配置', () => {
+  const agentDir = '/tmp/fake-pi-agent';
+  const MINIMAL = {
+    approval: false,
+    planMode: false,
+    questions: false,
+    subagents: false,
+    tasks: false,
+    observability: false,
+    fileExtensions: false,
+  } as const;
+  const input = {
+    id: 'persisted-1',
+    path: '/tmp/sessions/persisted-1.jsonl',
+    cwd: '/tmp/ws',
+    created: new Date(0),
+    modified: new Date(0),
+    messageCount: 0,
+    firstMessage: '',
+  };
+  let loaderOptions: Record<string, unknown> | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loaderOptions = undefined;
+    mocks.DefaultResourceLoader.mockImplementation(function (
+      this: unknown,
+      options: Record<string, unknown>,
+    ) {
+      loaderOptions = options;
+      return { reload: vi.fn().mockResolvedValue(undefined) };
+    });
+    mocks.ModelRuntime.create.mockResolvedValue({ getModel: vi.fn() });
+    mocks.createAgentSession.mockResolvedValue({ session: { sessionId: 'persisted-1' } });
+    mocks.SessionManager.open.mockReturnValue({
+      getCwd: () => '/tmp/ws',
+      getEntries: () => [],
+    });
+  });
+
+  /** 让 SessionManager.open 返回带指定配置条目的会话文件。 */
+  function withConfig(data: unknown): void {
+    mocks.SessionManager.open.mockReturnValue({
+      getCwd: () => '/tmp/ws',
+      getEntries: () => [{ type: 'custom', customType: 'pi-web/session-config', data }],
+    });
+  }
+
+  it('极简会话重开：不加载用户扩展、不注册任何内联扩展、白名单不并入计划工具', async () => {
+    withConfig({ extensions: { ...MINIMAL }, toolNames: ['read'], mcpServers: [] });
+    const factory = new OriginalPiSessionFactory(
+      agentDir,
+      undefined,
+      new ToolApprovalBroker(),
+      new PlanModeService(),
+    );
+
+    const opened = await factory.open(input);
+
+    expect(opened.config).toEqual({
+      extensions: { ...MINIMAL },
+      toolNames: ['read'],
+      mcpServers: [],
+    });
+    expect(loaderOptions?.noExtensions).toBe(true);
+    expect(loaderOptions?.extensionFactories).toEqual([]);
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    expect(options.tools).toEqual(['read']);
+  });
+
+  it('重开时仍按配置并入内联工具（白名单是可用集，漏并就调不动）', async () => {
+    withConfig({ extensions: { ...MINIMAL, planMode: true, approval: true }, toolNames: ['read'] });
+    const factory = new OriginalPiSessionFactory(
+      agentDir,
+      undefined,
+      new ToolApprovalBroker(),
+      new PlanModeService(),
+    );
+
+    await factory.open(input);
+
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    expect(options.tools).toEqual([
+      'read',
+      'propose_plan',
+      'submit_plan',
+      'update_plan',
+      'complete_step',
+      'block_step',
+    ]);
+  });
+
+  it('重开时恢复系统提示词与压缩策略', async () => {
+    withConfig({
+      systemPrompt: 'You are terse.',
+      compaction: { enabled: false, keepRecentTokens: 8000, reserveTokens: 16384 },
+    });
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.open(input);
+
+    expect(loaderOptions?.systemPrompt).toBe('You are terse.');
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: false, keepRecentTokens: 8000, reserveTokens: 16384 },
+    });
+  });
+
+  it('旧会话（没有配置条目）保持改动前行为：不限制白名单、不传系统提示词、照常发现扩展', async () => {
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    const opened = await factory.open(input);
+
+    expect(opened.config).toBeUndefined();
+    expect(loaderOptions?.noExtensions).toBeUndefined();
+    expect(loaderOptions?.systemPrompt).toBeUndefined();
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    expect(options.tools).toBeUndefined();
+    expect(options.settingsManager).toBeUndefined();
+  });
+
+  it('配置条目坏掉时按「没有配置」恢复，不让打开会话失败', async () => {
+    withConfig({ extensions: 'broken' });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    const opened = await factory.open(input);
+
+    expect(opened.config).toBeUndefined();
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    expect(options.tools).toBeUndefined();
+  });
+
+  it('getEntries 抛错时降级为「没有配置」', async () => {
+    mocks.SessionManager.open.mockReturnValue({
+      getCwd: () => '/tmp/ws',
+      getEntries: () => {
+        throw new Error('corrupted file');
+      },
+    });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await expect(factory.open(input)).resolves.toMatchObject({
+      session: { sessionId: 'persisted-1' },
+    });
   });
 });
