@@ -86,10 +86,7 @@ describe('limitToolResultContent', () => {
   });
 
   it('still truncates oversized error results', () => {
-    const limited = limitToolResultContent(
-      [{ type: 'text', text: 'e'.repeat(30 * KB) }],
-      'bash',
-    );
+    const limited = limitToolResultContent([{ type: 'text', text: 'e'.repeat(30 * KB) }], 'bash');
     expect(limited).toBeDefined();
   });
 });

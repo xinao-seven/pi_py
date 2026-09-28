@@ -61,10 +61,7 @@ import {
   sessionConfigOf,
   type PersistedSessionConfig,
 } from './session-config.js';
-import {
-  PLATFORM_COMPACTION_DEFAULTS,
-  resolveCompactionSettings,
-} from './compaction-policy.js';
+import { PLATFORM_COMPACTION_DEFAULTS, resolveCompactionSettings } from './compaction-policy.js';
 import { buildToolOutputLimitExtension } from './tool-output-limit.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
@@ -820,7 +817,15 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       fileExtensions,
       // 「极简」判据：7 个能力全关。平台策略（压缩触发点 / 工具结果预算 / 并行调用提示）
       // 在极简会话上一律不生效——它的存在意义就是「只留 SDK 原生行为」。
-      stock: !(planMode || approval || questions || subagents || tasks || observability || fileExtensions),
+      stock: !(
+        planMode ||
+        approval ||
+        questions ||
+        subagents ||
+        tasks ||
+        observability ||
+        fileExtensions
+      ),
       subagentDepth: subagent?.depth ?? 0,
       mcpServers: allowed,
       mcpToolNames: mcpEnabled ? this.mcpToolNames(cwd, allowed) : [],
@@ -877,7 +882,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       // 用户已发现的 append 文件（override 只做「在现有基础上追加」）。极简会话不加。
       ...(inline.stock
         ? {}
-        : { appendSystemPromptOverride: (base: string[]) => [...base, PARALLEL_TOOL_CALL_GUIDANCE] }),
+        : {
+            appendSystemPromptOverride: (base: string[]) => [...base, PARALLEL_TOOL_CALL_GUIDANCE],
+          }),
       extensionFactories: factories,
       // 极简模式（fileExtensions=false）：连用户级/工作区级的文件扩展都不发现，
       // 会话里只剩 SDK 内置工具与上面显式装配的内联扩展。
@@ -922,9 +929,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
    * 文件里的 `model_change` 条目。取**最后一条**（模型可能中途切换过）；文件损坏 /
    * 模型目录里查不到 → undefined（触发点不做窗口换算，退化为防御性夹取）。
    */
-  private async modelContextWindowOf(
-    sessionManager: { getEntries(): unknown[] },
-  ): Promise<number | undefined> {
+  private async modelContextWindowOf(sessionManager: {
+    getEntries(): unknown[];
+  }): Promise<number | undefined> {
     let entries: unknown[];
     try {
       entries = sessionManager.getEntries();

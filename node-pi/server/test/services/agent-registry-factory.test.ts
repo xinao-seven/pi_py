@@ -151,8 +151,7 @@ describe('OriginalPiSessionFactory', () => {
     await factory.create({ cwd: '/tmp/workspace' });
 
     const override = loaderOptions?.appendSystemPromptOverride as
-      | ((base: string[]) => string[])
-      | undefined;
+      ((base: string[]) => string[]) | undefined;
     expect(override).toBeDefined();
     expect(override!(['user append file'])).toEqual([
       'user append file',
@@ -556,7 +555,11 @@ describe('OriginalPiSessionFactory.open 读回配置', () => {
       ],
     });
     mocks.ModelRuntime.create.mockResolvedValue({
-      getModel: (provider: string, modelId: string) => ({ provider, modelId, contextWindow: 1_000_000 }),
+      getModel: (provider: string, modelId: string) => ({
+        provider,
+        modelId,
+        contextWindow: 1_000_000,
+      }),
     });
     const applyOverrides = vi.fn();
     mocks.SettingsManager.create.mockReturnValue({ applyOverrides });

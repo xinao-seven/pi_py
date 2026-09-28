@@ -297,7 +297,11 @@ describe('计划上下文注入', () => {
 
     // ENDED 内容里带 revision，状态不变时去抖生效：同内容不再重复注入。
     const replay = sessionContext([
-      { type: 'custom_message', customType: 'web-plan-ended-context', content: ended!.message.content },
+      {
+        type: 'custom_message',
+        customType: 'web-plan-ended-context',
+        content: ended!.message.content,
+      },
     ]);
     expect(beforeAgentStart({ prompt: '继续' }, replay)).toBeUndefined();
   });
