@@ -126,8 +126,8 @@
   （`tasks: false` 时连入口都不出现，避免点开一个永远空着的面板）。
 - **历史会话 / 刷新页面后能力位未知（`null`）→ 按「显示」处理**：后端行为早已由创建时的
   开关决定，前端只决定要不要给入口；不为了 UI 去写共享会话文件（决策已冻结，见下）。
-- 能力位**不持久化**：它只在创建会话的那一刻决定「装配了哪些工具/扩展」，不需要额外存储；
-  前端的内存记忆只为少一个空面板，丢了也不影响任何会话行为。
+- 能力位**随会话持久化**（2026-09-28 起，见 §11）：创建时写进会话 JSONL 的自定义条目，
+  重开/刷新后 `GET /api/agent/:sessionId` 会把它一起返回，前端据此隐藏入口。
 
 ## 6. 与 CLI 的一致性：极简模式恰好是唯一的例外
 
@@ -182,11 +182,14 @@ provider 层观测钩子（会话侧的采集扩展），不是账本本身。
 ## 9. 已知限制
 
 1. **极简会话与 CLI 在扩展层不一致**（`fileExtensions: false`，见 §6）——这是用户明确选择的取舍。
-2. 能力位**不持久化**：刷新页面后前端不知道这个历史会话关掉了任务面板，入口会重新出现（空态）；
-   后端行为不受影响。若将来要持久化，应写成会话 JSONL 里的自定义条目（只增不改）。
+2. ~~能力位**不持久化**~~ → **已修复（见 §11）**。原文写「后端行为不受影响」是**错的**：
+   实测重开会话会把极简会话放大成全开（MCP 工具 + 用户文件扩展 + plan/subagent 工具
+   全都回来，模型也能真的调用它们），触发点包括打开会话信息面板、SSE 重连、服务重启。
 3. 已存在的会话**不能中途改能力位**：`set_tools` 一类命令只能改工具数组，没有「取消白名单」或
    「补装 Plan 扩展」的通道。要换能力就新建会话（与「工具集恒定」的缓存策略一致）。
 4. 观测钩子关掉后，该会话在「用量」面板里缺少 provider 层 HTTP 明细（run/token 记账仍在）。
+5. 重开恢复的是**创建时那份配置**：`thinkingLevel` 仍按会话文件里的 `thinking_level_change` 走
+   （中途改过思考等级就以最后一次为准），不跟着预设回滚。
 
 ## 10. 变更文件
 
@@ -209,4 +212,113 @@ provider 层观测钩子（会话侧的采集扩展），不是账本本身。
 改  web/src/components/ChatWindow.vue         · 面板入口按能力位隐藏
 新  web/test/lib/preset-capabilities.test.ts
 改  web/test/{components/PresetConfig,composables/useAgentSession}.test.ts
+
+会话预设配置持久化（2026-09-28，详见 §11）：
+新  node-pi/server/src/services/session-config.ts  落盘形状 / 归一化 / 防御式解析 / 倒序查找
+改  node-pi/server/src/services/agent-registry.ts  create() 写自定义条目 · open() 读回并重建（OpenedSession）
+      · inlineToolNames() 共用 · openPersisted() 填 entry.capabilities
+改  node-pi/server/test/{app,services/agent-registry-extensions}.test.ts
+改  web/test/composables/useAgentSession.test.ts
+改  node-pi/server/src/routes/agent.ts             GET /api/agent/:id 返回 capabilities
+改  node-pi/server/spike/08-preset-capabilities.mjs ④⑤⑥ 重开不放大 / 自定义预设不丢 / 无条目仍全开
+新  node-pi/server/test/services/session-config.test.ts
+改  web/src/composables/useAgentSession.ts         watcher 不再清预设 · justCreatedSessionId · restorePresetForNewSession()
+改  web/src/types/index.ts                          AgentStateResponse.capabilities
 ```
+
+## 11. 会话预设配置的持久化（2026-09-28）
+
+### 11.1 缺陷现场
+
+用户报告：「我创建会话时选的是极简预设，点会话信息也是极简该有的工具，但一轮会话结束之后
+就变成了完整的 coding agent 预设，会话信息里出现 MCP 工具和我自己加的扩展。也能用 subagent 和 plan。」
+
+分开核对后是三件事：
+
+| # | 结论 | 证据 |
+| --- | --- | --- |
+| ① 极简预设本身没坏 | 对运行中的 8001 实测：`POST /api/agent/new`（能力全关 + `mcpServers: []`）→ 面板读到 7 个工具/激活 4 个/MCP 0；跑完一轮再读，完全一样 | `GET /api/agent/:id/prompt` 两次对比 |
+| ② 会话一旦离开内存就被放大 | 真实 SDK + 临时目录：极简会话 `remove()` 后再 `open()`（磁盘恢复）→ 工具集变成 `read,bash,edit,write,demo_ext_tool,submit_plan,…,ask_user,subagent` | `open()` 里写死 `inlineCapabilities(cwd, undefined, undefined, null)`（= 全开） |
+| ③ 前端把预设清回了默认 | 真实接线（`onSessionCreated` 写回 sessionId）下，发完第一条消息后 `selectedPreset` 从 `minimal` 变回 `coding-agent`、`activeTools` 变回四件套、capabilities/mcpServers 回默认 | 修复前的临时用例 |
+
+②③ 各修一处；① 说明修复前不需要动。
+
+### 11.2 落盘：会话 JSONL 里的自定义条目
+
+创建会话时把「这次用的预设配置」追加成一条 `type: "custom"` 条目：
+
+```jsonc
+{ "type": "custom", "customType": "pi-web/session-config",
+  "data": { "extensions": { "planMode": false /* … */ },
+            "toolNames": ["read"], "systemPrompt": "…",
+            "compaction": { "enabled": true },
+            "mcpServers": [] } }
+```
+
+- **机制是 SDK 给扩展准备的**：`SessionManager.appendCustomEntry(customType, data)`，SDK 明确说
+  `custom` 条目不参与 `buildSessionContext()`；官方 plan-mode 扩展也用同一机制写自己的状态，
+  所以原版 CLI 读到它既不进上下文也不报错。
+- **只增不改**：只追加一行，不重写文件、不删条目、不动别人的字段（与共享态红线一致）。
+- **缺省不写**：没指定任何预设字段时连条目都不写（`{}` 是纯噪声），读回来同样是「缺省」。
+- **子会话不写**：子会话只活在委派期间，永远不会被 `open()` 恢复。
+- **读侧防御**：`parseSessionConfig()` 认不出形状就当「没有配置」（回退全开，与改动前一致），
+  未知键忽略、已知键类型不对就整份作废；`getEntries()` 抛错也降级。**任何情况都不阻断打开会话。**
+
+### 11.3 恢复：`open()` 按配置重建会话
+
+`OriginalPiSessionFactory.open()` 读回配置后驱动同一个装配流程：
+
+| 配置字段 | 落点 |
+| --- | --- |
+| `extensions` | `inlineCapabilities(cwd, config.extensions, undefined, config.mcpServers)` → 决定注册哪些内联扩展 + `noExtensions` |
+| `toolNames` | `withInlineTools(config.toolNames, inlineToolNames(inline))` → `createAgentSession({ tools })` |
+| `systemPrompt` | `loader(cwd, config.systemPrompt, inline)`（空串仍走 SDK 默认发现） |
+| `compaction` | 本会话的 `SettingsManager.applyOverrides()`（不写 `settings.json`） |
+| `mcpServers` | `[]` 连 MCP 扩展都不注册；`null`/缺省 = 全部 server |
+
+内联工具名的拼装抽成 `inlineToolNames()`，`create()` 与 `open()` 共用一份，避免两边漂移
+（漏并会让带白名单的会话里该工具直接 `Tool xxx not found`）。
+
+工厂的 `open()` 现在返回 `{ session, config? }`（`OpenedSession`）：注册表要用它填
+`RegistryEntry.capabilities`（否则 `/plan`、`announceTask` 的广播过滤、前端能力位都是错的），
+并让 `GET /api/agent/:sessionId` 把它一起返回——刷新页面后前端仍知道这是极简会话。
+
+**触发点**（以前每一个都会把会话放大）：`GET /api/agent/:id`、`/plan`、**`/prompt`（会话信息面板）**、
+`/events`（SSE 重连）、任务续跑的 `task-runner`，以及任何一次服务重启后的首次触碰。
+
+### 11.4 前端：预设是用户级意图，不被「会话 id 变了」清掉
+
+`useAgentSession` 里监听 `sessionId` 的 watcher 原来会把 `selectedPreset` / `presetCapabilities` /
+`presetMcpServers` / `activeTools` 一起清回默认；而 `App.vue` 的 `sessionCreated`
+（`store.selectSession`）正好会触发它 → 发完第一条消息后预设下拉框自己跳回「Coding Agent（默认）」，
+**下一条新会话就静默全开**。现在：
+
+- 预设相关的字段（选中项 / 能力 / MCP / 系统提示词 / 压缩）**不再被 watcher 清空**（用户级意图）；
+- 用 `justCreatedSessionId` 区分「刚建好的那个会话」与「切到别的会话」：前者不清工具集与能力位
+  （预设刚发出去），后者照旧清会话级状态；
+- 进入新会话边界时用 `restorePresetForNewSession()` 按**当前选中预设**重建参数（预设列表未加载 /
+  预设已删除时退回缺省，与改动前一致）；
+- `loadSession()` 把状态接口返回的 `capabilities` 回填到 `sessionCapabilities`（只在服务端真给了值时才覆盖）。
+
+### 11.5 验证证据
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm --prefix node-pi/server run typecheck` / `test` | exit 0；**472** 用例全绿 |
+| `npm --prefix node-pi/server run build` / `spike` | exit 0；spike **80 项断言**全绿，`spike/08-preset-capabilities.mjs` 从 15 增至 **30 项** |
+| `npm --prefix web run typecheck` / `test` | exit 0；**178** 用例全绿 |
+
+关键断言：
+
+- `spike/08-preset-capabilities.mjs` ④：极简会话跑完一轮 → `remove()` → `open()` 后仍只有
+  `read,bash,edit,write`、仍不加载用户文件扩展、能力位仍全关、仍是同一个 session id；
+  ⑤ 自定义预设（`toolNames` + `systemPrompt`）重开后白名单没放开、提示词仍在；
+  ⑥ 没有配置条目的会话仍按全开恢复（CLI 建的旧会话不受影响）。
+- 后端 `session-config.test.ts`：形状 round-trip + 12 种坏数据全部回退「没有配置」。
+- 后端 `agent-registry-factory.test.ts`：`create()` 写入的载荷；`open()` 读回后
+  `noExtensions`/`tools`/`systemPrompt`/`settingsManager` 与配置一致。
+- 前端 `useAgentSession.test.ts`：创建后预设仍是 `minimal`、紧接着的新会话仍带全 false
+  `extensions` + `mcpServers: []`、切到别的会话仍清会话级状态、状态接口能读回能力位。
+
+> 顺带查实：SDK 的会话文件在**第一条消息**落盘时才真正写盘（`model_change` / `custom` 条目先在内存），
+> 所以 spike 里每个待重开的会话都先跑一轮——真实 Web 会话本来就是「创建即带一条 prompt」。

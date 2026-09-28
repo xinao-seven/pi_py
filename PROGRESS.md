@@ -8,7 +8,7 @@
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
 | 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **441** / Web **173**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` 15 项、`spike/09-observability-hooks.mjs` 15 项断言） |
+| 测试基线   | Node 后端 **472** / Web **178**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` **30** 项、`spike/09-observability-hooks.mjs` 15 项断言，全库 80 项） |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -702,11 +702,11 @@ skill 描述 3 行封顶 + 内部滚动（不做省略号，因为描述就是�
 ```powershell
 # Node 后端（工作目录 node-pi/server）
 npm run format:check && npm run typecheck && npm test && npm run build && npm run spike
-#   → 期望：format OK / 无类型错误 / 368 passed / 构建成功 / spike 全过 / eval 门禁全过
+#   → 期望：format OK / 无类型错误 / 472 passed / 构建成功 / spike 全过 / eval 门禁全过
 
 # 前端（工作目录 web）
 npm run typecheck && npm run lint && npm test && npm run build
-#   → 期望：无类型错误 / 0 error / 124 passed / 构建成功
+#   → 期望：无类型错误 / 0 error / 178 passed / 构建成功
 
 # 起服务
 cd node-pi/server && npm run dev      # http://127.0.0.1:8001
@@ -1001,6 +1001,27 @@ docs/node-preset-capabilities.md               契约 / 极简模式定义 / 与
 
 ---
 
+### 会话预设配置持久化（2026-09-28）
+
+```
+node-pi/server/src/services/session-config.ts    落盘形状 / 归一化 / 防御式解析 / 倒序查找（customType = pi-web/session-config）
+node-pi/server/src/services/agent-registry.ts    create() 追加自定义条目 · open() 读回并重建（OpenedSession）
+                                                  · inlineToolNames() 共用 · openPersisted() 填 entry.capabilities
+node-pi/server/src/routes/agent.ts               GET /api/agent/:id 一并返回 capabilities
+node-pi/server/spike/08-preset-capabilities.mjs  ④⑤⑥ 重开不放大 / 自定义预设不丢 / 无条目仍全开
+node-pi/server/test/services/session-config.test.ts
+web/src/composables/useAgentSession.ts           watcher 不再清预设 · justCreatedSessionId · restorePresetForNewSession()
+web/src/types/index.ts                           AgentStateResponse.capabilities
+web/test/composables/useAgentSession.test.ts     5 条回归
+
+**缺陷现场**：极简会话在内存里是好的，但一旦被 `open()` 从磁盘重新打开（服务重启 / 打开会话信息面板 /
+SSE 重连 / 任务续跑）就按「全开」重建——面板里凭空出现 MCP 工具 + 用户自加扩展 + plan/subagent，
+模型也能真的调它们；前端另外还会把预设选择清回默认（发完第一条消息后下拉框自己跳回 coding-agent，
+下一条新会话静默全开）。细节与证据：`docs/node-preset-capabilities.md` §11。
+```
+
+---
+
 ### 移动端适配（2026-08-22）
 
 ```
@@ -1051,3 +1072,4 @@ docs/web-mobile-adaptation.md                  三条规则 / 高度预算表 / 
 | Plan 模式仍拦 MCP 工具 | 规划期无法用 context7/搜索类 server 查资料；可给 `PlanPolicy` 加只读 MCP 白名单 | 可选 |
 | 租约 TTL 写死 30s/10s | 暂不需要配置项；若将来要调，走 `PI_NODE_*` 并补文档 | 可选 |
 | Python 后端仍返回嵌套会话树 | `session_detail()` 的 `tree` 是嵌套结构，`json.dumps` 在约千条消息的会话上 `RecursionError`；`pi-python` 已冻结，仅由前端归一化兜底（生产走 Node） | 冻结 |
+| ~~会话预设能力位不持久化（重开被放大成全开）~~ | ✅ 2026-09-28 已修：预设配置写入会话 JSONL 自定义条目（`pi-web/session-config`），`open()` 读回并重建；前端不再把预设清回默认。见 `docs/node-preset-capabilities.md` §11 | 已完成 |

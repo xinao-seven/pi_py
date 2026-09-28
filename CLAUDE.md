@@ -135,6 +135,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 
 - 仓库内的工具审批、Plan 模式与 MCP 工具都是**内联扩展**：各服务类（`ToolApprovalBroker` / `PlanModeService` / `buildMcpExtension`）提供 `buildExtension(): InlineExtension`，由 `OriginalPiSessionFactory.loader()` 的 `extensionFactories` 注入每个会话（闭包直连服务单例，无事件总线桥接）。
 - 按预设开关动态启用/关闭：`CreateSessionInput.extensions` 的 7 个键（`approval` / `planMode` / `questions` / `subagents` / `tasks` / `observability` / `fileExtensions`），默认开启（未指定 = 开启，旧预设零迁移）；`loader()` 里按 `plan → approval → mcp` 顺序注册（规划期先拦，避免先弹审批框）。预设把这一组以 `capabilities` 存盘（用户概念字段名），前端 `web/src/lib/preset-capabilities.ts` 负责映射；内置「极简（原版 pi）」预设能力全关 + `noExtensions`（什么都不加），见 `docs/node-preset-capabilities.md`。同名文件扩展的过滤只针对**本次真的注册了内联实现**的目录名，不能一律 drop。
+- **预设配置随会话落盘**：创建会话时把影响装配的预设字段（`extensions` / `toolNames` / `systemPrompt` / `compaction` / `mcpServers`）写成会话 JSONL 里的自定义条目（`customType = 'pi-web/session-config'`，只增不改，CLI 忽略），`OriginalPiSessionFactory.open()` 读回并据此重建——否则会话一离开内存（重启 / 打开会话信息面板 / SSE 重连）就会被按「全开」重开（极简会话凭空长出 MCP + 用户扩展 + plan/subagent）。逻辑在 `services/session-config.ts`，不要在别处再存一份；`GET /api/agent/:id` 返回能力位供前端刷新后显示。见 `docs/node-preset-capabilities.md` §11。
 - 用户级 `~/.pi/agent/extensions/` 与工作区 `.pi/extensions/` 的文件扩展仍由 SDK 自动发现（jiti 隔离，协作需走 `pi.events`）；仓库不再随服务发布文件扩展。
 
 ## 代码规范
@@ -179,7 +180,7 @@ npm run typecheck && npm run lint && npm run test && npm run build
 | `docs/node-web-plan-mode.md` | **Plan 模式对外契约**（M4 起：PlanView、五个计划工具、命令表、规划期权限） |
 | `docs/node-plan-mode-m4.md` | **M4 实现说明**：8 个缺陷的修法、已冻结决策、spike/eval 验证证据、已知限制 |
 | `docs/node-plan-cache-stability.md` | **Plan 缓存稳定性 + `propose_plan`**：为什么不再增删工具、注入去抖、模型提议的边界 |
-| `docs/node-preset-capabilities.md` | **预设能力清单 + 「极简（原版 pi）」模式**：7 个能力开关、预设/会话契约、与 CLI 的一致性边界 |
+| `docs/node-preset-capabilities.md` | **预设能力清单 + 「极简（原版 pi）」模式**：7 个能力开关、预设/会话契约、与 CLI 的一致性边界、预设配置的持久化（重开不被放大） |
 | `docs/node-question-channel.md` | **向用户提问通道**（`ask_user`）：工具契约、弹窗、SSE/命令、行为取舍 |
 | `docs/node-plan-extension-ownership.md` | Plan 扩展归属决策 + `session_start` 修复（M4 前置项） |
 | `docs/node-session-tree-flat.md` | 长会话读取崩溃修复：`GET /api/sessions/:id` 分支树扁平化契约与前端归一化 |
