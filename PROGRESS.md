@@ -6,9 +6,9 @@
 |            |                                                                 |
 | ---------- | --------------------------------------------------------------- |
 | 当前里程碑 | **M4（含 4.1 提问通道）已完成** → 下一步 **M5 Subagent**           |
-| 上一提交   | `e47ed1f fix: 长会话读取不再爆栈——分支树改为扁平节点 + depth`      |
+| 上一提交   | `41b9b07 docs: token 消耗优化的诊断与四项修复说明`                 |
 | 运行时     | Node **v24.18.0**（`node:sqlite` 可用）                          |
-| 测试基线   | Node 后端 **472** / Web **178**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` **30** 项、`spike/09-observability-hooks.mjs` 15 项断言，全库 80 项） |
+| 测试基线   | Node 后端 **495** / Web **178**，全绿；spike 全绿（含 `spike/08-preset-capabilities.mjs` **30** 项、`spike/09-observability-hooks.mjs` 15 项断言，全库 80 项）；eval pass@1 100% |
 | 工作分支   | `master`                                                        |
 
 ---
@@ -625,6 +625,29 @@ skill 描述 3 行封顶 + 内部滚动（不做省略号，因为描述就是�
 遮罩可滚 18px；小弹窗仍水平/垂直居中）——方法与数据见文档 §2–§3。
 新增 `web/test/components/modal-layout-contracts.test.ts`（4 条布局契约 + 反向验证）。
 基线：Web **169 → 173**。
+
+### 3.13 Token 消耗优化（已完成，`docs/node-token-budget.md`）
+
+**诊断**（解析真实会话 JSONL 的 usage）：单会话累计 prompt 4300 万～1.09 亿 token、99%+ 缓存命中；
+根因不是单轮工具多，而是「轮数 × 只增不减的上下文」——229/482 轮、90% 轮次只带 1 个工具调用、
+上下文滚到 30-40 万 token（1M 标称窗口下 SDK 缺省压缩点 ≈ 98 万，实际永不触发）、
+计划完成时剥离历史中部注入引发一次性 12 万 token 全价重读。
+
+**修复**（四项，全部带测试）：
+
+1. 压缩触发点按模型窗口换算：`services/compaction-policy.ts`（触发点 ≤200K、keepRecent 缺省 48K、
+   `enabled:false` 放行、病态 keepRecent 夹取）；`create()/open()` 接线并把解析值落盘，
+   旧会话从 `model_change` 条目恢复模型窗口；内置默认预设 keepRecent 提到 48K。
+2. 工具结果预算：`services/tool-output-limit.ts` 挂 `tool_result` 钩子，文本 12KB 封顶
+   （bash 保尾部、其余保头部、图片保留、UTF-8 边界对齐）。
+3. 系统提示词追加并行工具调用引导（`loader()` 的 `appendSystemPromptOverride`，只追加不覆盖）。
+4. 计划结束态（completed/abandoned/paused）不再从历史中部剥离注入，改注入末尾
+   `web-plan-ended-context` 收尾说明（尾部追加不动前缀；内容带 revision，去抖生效）。
+
+**豁免**：7 能力全关的「极简」会话三件平台策略全不生效（`InlineCapabilities.stock`）；
+`compaction.enabled:false` 尊重；CLI 与前端契约零影响（无新 REST/SSE/类型）。
+**验证**：typecheck + Node 后端 **495** 用例全绿（新增 compaction-policy / tool-output-limit
+两个测试文件、plan-mode 3 例、factory 接线 4 例）+ build + spike + eval（pass@1 100%）。
 
 ---
 

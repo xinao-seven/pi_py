@@ -241,6 +241,7 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)，三个 job：`no
 | [`docs/node-plan-cache-stability.md`](docs/node-plan-cache-stability.md) | **Plan 缓存稳定性 + `propose_plan`**：为什么不再增删工具、注入去抖、模型提议的边界 |
 | [`docs/node-question-channel.md`](docs/node-question-channel.md) | **向用户提问的交互通道**：ask_user 工具契约、弹窗行为、SSE/命令、测试 |
 | [`docs/node-subagent-m5.md`](docs/node-subagent-m5.md) | **M5 子任务委派**：为什么内联替换官方扩展、预算/审批继承/trace 树、决策与验证 |
+| [`docs/node-token-budget.md`](docs/node-token-budget.md) | **Token 消耗优化**：压缩触发点按模型窗口换算（≤200K）、工具结果预算 12KB、并行调用提示、计划结束不剥离注入（含实测诊断与豁免边界） |
 | [`docs/node-plan-extension-ownership.md`](docs/node-plan-extension-ownership.md) | Plan 扩展归属决策与 `session_start` 修复 |
 | [`docs/node-session-tree-flat.md`](docs/node-session-tree-flat.md) | **长会话读取崩溃修复**：分支树扁平化（`tree` 契约、前端归一化、回归测试） |
 | [`docs/sse-streaming-render-pipeline.md`](docs/sse-streaming-render-pipeline.md) | **SSE 流式渲染全链路**：核心发事件 → 后端 SSE 转发 → 前端规约 → 虚拟列表 → Markdown 上屏 |
