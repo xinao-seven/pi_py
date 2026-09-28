@@ -61,9 +61,26 @@ import {
   sessionConfigOf,
   type PersistedSessionConfig,
 } from './session-config.js';
+import {
+  PLATFORM_COMPACTION_DEFAULTS,
+  resolveCompactionSettings,
+} from './compaction-policy.js';
+import { buildToolOutputLimitExtension } from './tool-output-limit.js';
 
 /** 每个会话内存中最多缓存的 SSE 事件条数（超出后丢弃最旧的）。 */
 const MAX_REPLAY_EVENTS = 256;
+
+/**
+ * 系统提示词追加段：鼓励并行工具调用。
+ * 中文说明：实测会话里 ~90% 的轮次只带 1 个工具调用——轮数是 token 消耗的第一因子
+ * （每轮都把全部上下文重发一遍）。在提示词里明确「无依赖调用合并到同一轮」，
+ * 模型支持一轮多个 toolCall（SDK 原生能力），有依赖/写操作的例外写清楚。
+ */
+export const PARALLEL_TOOL_CALL_GUIDANCE = [
+  '## 工具调用效率',
+  '- 相互独立的工具调用尽量合并在同一轮并行发出：同时读多个文件、并行跑多个互不依赖的命令或搜索。一轮多个调用与多轮单个调用拿到的信息一样，但往返轮数少得多。',
+  '- 有依赖的调用必须等前一个结果再决定下一步；写操作（edit/write）与它要读取的目标不要在同一轮并行，避免相互踩踏。',
+].join('\n');
 
 /**
  * 事件载荷是不是 SDK 的流式增量。
@@ -454,6 +471,8 @@ interface InlineCapabilities {
   tasks: boolean;
   observability: boolean;
   fileExtensions: boolean;
+  /** 全能力关闭（「极简（原版 pi）」一类）：平台策略不生效，会话保持原版行为。 */
+  stock: boolean;
   /** 子会话深度（父会话 0）：只在注册 subagent 扩展时用。 */
   subagentDepth: number;
   /** MCP 白名单（null = 全部）；空数组 = 禁用，此时连扩展都不注册。 */
@@ -505,15 +524,6 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
         `Unknown Pi model: ${input.provider}/${input.modelId}`,
       );
     }
-    // 预设压缩策略：每个会话独立的 SettingsManager，仅在内存里 applyOverrides
-    // （不标记 modified、不写 settings.json），默认模型/思考等级仍从设置文件解析。
-    const settingsManager = input.compaction
-      ? (() => {
-          const manager = SettingsManager.create(input.cwd, this.agentDir);
-          manager.applyOverrides({ compaction: input.compaction });
-          return manager;
-        })()
-      : undefined;
     // 预设若指定了工具子集，SDK 的 `tools` 选项会把它当成**可用工具白名单**——
     // 不在名单里的工具连调用都会失败（"Tool xxx not found"）。因此这里必须并入
     // 内联扩展注册的工具（计划工具 / MCP 工具），否则「带预设的会话」里
@@ -527,6 +537,26 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       input.subagent,
       input.mcpServers,
     );
+    // 压缩策略：预设显式配置优先；预设/设置都没给时用平台默认（自动压缩 + 触发点 ≤200K）。
+    // 中文说明：SDK 缺省触发点是「标称窗口 - 16K」，对 1M 窗口的模型等于永不压缩
+    // （实测会话滚到 30-40 万 token）。resolveCompactionSettings 按模型真实窗口把触发点
+    // 压到 200K。「极简」会话不做平台加成：显式配置原样透传，未配置就完全不设置
+    // （跟随 settings.json / SDK 缺省），保持原版行为。解析结果同时落盘，重开时如实重建。
+    const resolvedCompaction = inline.stock
+      ? input.compaction
+      : resolveCompactionSettings(
+          input.compaction ?? PLATFORM_COMPACTION_DEFAULTS,
+          model?.contextWindow,
+        );
+    // 预设压缩策略：每个会话独立的 SettingsManager，仅在内存里 applyOverrides
+    // （不标记 modified、不写 settings.json），默认模型/思考等级仍从设置文件解析。
+    const settingsManager = resolvedCompaction
+      ? (() => {
+          const manager = SettingsManager.create(input.cwd, this.agentDir);
+          manager.applyOverrides({ compaction: resolvedCompaction });
+          return manager;
+        })()
+      : undefined;
     const effectiveTools = input.subagent
       ? input.toolNames
       : withInlineTools(input.toolNames, this.inlineToolNames(inline));
@@ -556,7 +586,11 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     });
     // 预设配置随会话落盘："极简"这类开关只活在内存里的会话对象上，不写下来，
     // 会话一离开注册表（重启 / 重新打开）就只能按"全开"重建。
-    this.persistSessionConfig(session.session, input);
+    // 压缩策略写**解析后的值**（含按模型窗口算出的触发点），重开时不再需要模型目录也能复现。
+    this.persistSessionConfig(session.session, {
+      ...input,
+      ...(resolvedCompaction === undefined ? {} : { compaction: resolvedCompaction }),
+    });
     // createAgentSession 返回 { session, agent, ... }，这里只把 session 暴露出去。
     return session.session as unknown as PiSession;
   }
@@ -662,11 +696,20 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     const config = this.persistedConfig(sessionManager);
     const inline = this.inlineCapabilities(cwd, config?.extensions, undefined, config?.mcpServers);
     const effectiveTools = withInlineTools(config?.toolNames, this.inlineToolNames(inline));
+    // 压缩策略：与 create() 同一套解析（会话 JSONL 里落的是解析后的值，原样透传即可；
+    // 旧会话没有 compaction 字段时补平台默认，模型窗口从 JSONL 的 model_change 条目恢复）。
+    // 「极简」不做平台加成：显式配置原样透传，未配置就不设置（跟随 settings.json / SDK 缺省）。
+    const resolvedCompaction = inline.stock
+      ? config?.compaction
+      : resolveCompactionSettings(
+          config?.compaction ?? PLATFORM_COMPACTION_DEFAULTS,
+          await this.modelContextWindowOf(sessionManager),
+        );
     // 预设压缩策略：与 create() 同一套做法（只在本会话的 SettingsManager 内存里覆盖）。
-    const settingsManager = config?.compaction
+    const settingsManager = resolvedCompaction
       ? (() => {
           const manager = SettingsManager.create(cwd, this.agentDir);
-          manager.applyOverrides({ compaction: config.compaction });
+          manager.applyOverrides({ compaction: resolvedCompaction });
           return manager;
         })()
       : undefined;
@@ -760,14 +803,24 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     const allowed = mcpServers ?? null;
     // 白名单为空数组 = 明确禁用 MCP：连扩展都不注册（不再产生空工具集）。
     const mcpEnabled = this.mcpService !== undefined && !(allowed !== null && allowed.length === 0);
+    const planMode = on(extensions?.planMode);
+    const approval = on(extensions?.approval);
+    const questions = on(extensions?.questions);
+    const subagents = on(extensions?.subagents);
+    const tasks = on(extensions?.tasks);
+    const observability = on(extensions?.observability);
+    const fileExtensions = on(extensions?.fileExtensions);
     return {
-      planMode: on(extensions?.planMode),
-      approval: on(extensions?.approval),
-      questions: on(extensions?.questions),
-      subagents: on(extensions?.subagents),
-      tasks: on(extensions?.tasks),
-      observability: on(extensions?.observability),
-      fileExtensions: on(extensions?.fileExtensions),
+      planMode,
+      approval,
+      questions,
+      subagents,
+      tasks,
+      observability,
+      fileExtensions,
+      // 「极简」判据：7 个能力全关。平台策略（压缩触发点 / 工具结果预算 / 并行调用提示）
+      // 在极简会话上一律不生效——它的存在意义就是「只留 SDK 原生行为」。
+      stock: !(planMode || approval || questions || subagents || tasks || observability || fileExtensions),
       subagentDepth: subagent?.depth ?? 0,
       mcpServers: allowed,
       mcpToolNames: mcpEnabled ? this.mcpToolNames(cwd, allowed) : [],
@@ -802,6 +855,9 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
     if (inline.questions && this.questions) factories.push(this.questions.buildExtension());
     if (registerSubagents && this.subagents)
       factories.push(this.subagents.buildExtension({ depth: inline.subagentDepth }));
+    // 工具结果预算（token 优化）：单次工具调用写入上下文的文本超过 12KB 就截断
+    // （bash 保尾部，其余保头部）。平台策略而非预设能力，但极简会话不注册（保持原版行为）。
+    if (!inline.stock) factories.push(buildToolOutputLimitExtension());
     // MCP 内联扩展：工厂按当前 cwd 注册已连接 server 的工具集（增删随 reload_resources 生效）；
     // mcpServers 白名单来自预设（null = 全部），只注册名单内 server 的工具。
     if (this.mcpService && !(inline.mcpServers !== null && inline.mcpServers.length === 0))
@@ -817,6 +873,11 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       // 预设系统提示词：非空才传（空串传进去会让 loader 跳过 SYSTEM.md/AGENTS.md 发现，
       // 使"默认预设"破坏用户已有的文件级提示词）。空串/未提供 → 走 SDK 默认发现。
       ...(systemPrompt ? { systemPrompt } : {}),
+      // 并行工具调用提示（token 优化）：追加在系统提示词末尾，不覆盖预设提示词与
+      // 用户已发现的 append 文件（override 只做「在现有基础上追加」）。极简会话不加。
+      ...(inline.stock
+        ? {}
+        : { appendSystemPromptOverride: (base: string[]) => [...base, PARALLEL_TOOL_CALL_GUIDANCE] }),
       extensionFactories: factories,
       // 极简模式（fileExtensions=false）：连用户级/工作区级的文件扩展都不发现，
       // 会话里只剩 SDK 内置工具与上面显式装配的内联扩展。
@@ -853,6 +914,35 @@ export class OriginalPiSessionFactory implements PiSessionFactory {
       messageCount: session.messageCount,
       firstMessage: session.firstMessage,
     };
+  }
+
+  /**
+   * 从会话 JSONL 里恢复「最后使用的模型」的上下文窗口（压缩触发点要按它换算）。
+   * 中文说明：open() 不像 create() 那样显式传 provider/modelId——恢复会话的模型来自
+   * 文件里的 `model_change` 条目。取**最后一条**（模型可能中途切换过）；文件损坏 /
+   * 模型目录里查不到 → undefined（触发点不做窗口换算，退化为防御性夹取）。
+   */
+  private async modelContextWindowOf(
+    sessionManager: { getEntries(): unknown[] },
+  ): Promise<number | undefined> {
+    let entries: unknown[];
+    try {
+      entries = sessionManager.getEntries();
+    } catch {
+      return undefined;
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index] as { type?: unknown; provider?: unknown; modelId?: unknown };
+      if (entry?.type !== 'model_change') continue;
+      if (typeof entry.provider !== 'string' || typeof entry.modelId !== 'string') return undefined;
+      try {
+        const runtime = await this.getRuntime();
+        return runtime.getModel(entry.provider, entry.modelId)?.contextWindow;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 }
 

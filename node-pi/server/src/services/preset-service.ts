@@ -23,6 +23,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { ApiError } from '../errors.js';
+import { PLATFORM_KEEP_RECENT_TOKENS } from './compaction-policy.js';
 
 /** 内置预设 id（保留 SDK 默认提示词与工具集，不可改删）。 */
 export const BUILTIN_PRESET_ID = 'coding-agent';
@@ -100,7 +101,10 @@ const BUILTIN_CODING_AGENT: SessionPreset = {
   builtin: true,
   systemPrompt: '',
   toolNames: ['read', 'bash', 'edit', 'write'],
-  compaction: { ...DEFAULT_COMPACTION_SETTINGS },
+  // 中文说明：keepRecentTokens 从 SDK 默认 20K 提到 48K（约 20-40 轮的逐字工作区，
+  // 压缩后模型仍能看到正在改的文件最近几版）；reserveTokens 保持 SDK 值，
+  // 实际触发点由 create/open 按模型 contextWindow 换算（≤200K，见 compaction-policy）。
+  compaction: { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: PLATFORM_KEEP_RECENT_TOKENS },
   capabilities: { ...DEFAULT_CAPABILITIES },
   provider: '',
   modelId: '',

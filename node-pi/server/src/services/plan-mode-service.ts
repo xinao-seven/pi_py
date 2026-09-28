@@ -55,9 +55,22 @@ const PLAN_REF_CUSTOM_TYPE = 'web-plan-ref';
 const LEGACY_SNAPSHOT_TYPE = 'web-plan-mode';
 const PLANNING_CONTEXT_TYPE = 'web-plan-context';
 const EXECUTING_CONTEXT_TYPE = 'web-plan-execution-context';
+/** 计划进入终态（completed/abandoned/paused）后、下一次 prompt 开始时注入的收尾说明。 */
+const ENDED_CONTEXT_TYPE = 'web-plan-ended-context';
 /** 需要清理的旧类型（M4 之前注入过，历史会话里可能还在）。 */
 const LEGACY_CONTEXT_TYPES = new Set(['web-plan-execute']);
 const EMPTY_TYPES: ReadonlySet<string> = new Set();
+/**
+ * 计划结束态（非规划、非执行，但计划还在）要保留的注入类型。
+ * 中文说明：终态时**不再剥离**历史中部的旧注入——剥离会让其后所有消息整体位移，
+ * 前缀缓存从注入位置起全部失效（实测一次计划完成引发 12 万 token 全价重读）。
+ * 旧注入的「进度/指令已失效」由最末尾的 ENDED 说明兑现（见 buildEndedContext）。
+ */
+const ENDED_KEEP_TYPES: ReadonlySet<string> = new Set([
+  PLANNING_CONTEXT_TYPE,
+  EXECUTING_CONTEXT_TYPE,
+  ENDED_CONTEXT_TYPE,
+]);
 
 const MCP_TOOL_PREFIX = 'mcp__';
 
@@ -310,13 +323,18 @@ class PlanSession {
    * context：清理过期的 plan 注入，并把当前模式注入压到**仅最后一条**。
    * 中文说明：`before_agent_start` 每轮都会注入一条，而消息会持久化进 JSONL，
    * 不清理会随轮数线性膨胀；同时历史里会残留与当前状态矛盾的指令。
+   * 缓存：计划进入结束态（completed/abandoned/paused）时**保留**旧注入（ENDED_KEEP_TYPES），
+   * 不再从历史中部剥离——剥离等于改写历史，缓存从注入位置起全部失效；
+   * 陈旧指令由下一次 prompt 开始时注入在**末尾**的 ENDED 说明对冲（尾部追加不动前缀）。
    */
   onContext(event: ContextEvent): { messages: ContextEvent['messages'] } | undefined {
     const keep: ReadonlySet<string> = this.isPlanning()
-      ? new Set([PLANNING_CONTEXT_TYPE])
+      ? new Set([PLANNING_CONTEXT_TYPE, ENDED_CONTEXT_TYPE])
       : this.isExecuting()
-        ? new Set([EXECUTING_CONTEXT_TYPE])
-        : EMPTY_TYPES;
+        ? new Set([EXECUTING_CONTEXT_TYPE, ENDED_CONTEXT_TYPE])
+        : this.current() !== undefined
+          ? ENDED_KEEP_TYPES
+          : EMPTY_TYPES;
     const lastIndex = new Map<string, number>();
     event.messages.forEach((message, index) => {
       const customType = customTypeOf(message);
@@ -339,6 +357,8 @@ class PlanSession {
    * 旧实现每轮都注入一条新的、再由 `onContext` 把旧的全删掉，等价于从「第一次注入的位置」
    * 往后每轮都改写历史——前缀缓存从那里开始就全部失效（plan 越久越贵）。
    * 现在只在内容真的变了（状态跃迁、rev 变化）时才写，其余轮次历史一字不动。
+   * 结束态（completed/abandoned/paused）注入 ENDED 说明：它只追加在**末尾**，
+   * 不改写前缀；对历史中部的旧注入做「以本条为准」的对冲。
    */
   beforeAgentStart(
     event?: { prompt?: string },
@@ -351,12 +371,13 @@ class PlanSession {
       ? PLANNING_CONTEXT_TYPE
       : this.isExecuting()
         ? EXECUTING_CONTEXT_TYPE
-        : undefined;
-    if (customType === undefined) return undefined;
+        : ENDED_CONTEXT_TYPE;
     const content =
       customType === PLANNING_CONTEXT_TYPE
         ? buildPlanningContext(task, this.service.policy)
-        : buildExecutingContext(task);
+        : customType === EXECUTING_CONTEXT_TYPE
+          ? buildExecutingContext(task)
+          : buildEndedContext(task);
     if (this.lastInjectedContent(ctx, customType) === content) return undefined;
     return { message: { customType, content, display: false } };
   }
@@ -563,6 +584,35 @@ export function buildExecutingContext(task: TaskRecord): string {
     '- 需要改计划 → `update_plan`（带当前 revision）。',
   );
   return lines.join('\n');
+}
+
+/**
+ * 计划结束态的收尾说明（completed/abandoned/paused）。
+ * 中文说明：结束态**不再剥离**历史中部的旧注入（剥离会改写历史、缓存全部失效），
+ * 改为在下一次 prompt 开始时把这条说明追加到**末尾**：明确旧注入的进度与指令已失效，
+ * 对冲「模型读到陈旧的 [PLAN EXECUTING] 指令」的风险。内容含 revision，状态不变时去抖
+ * 生效、不会重复注入。
+ */
+export function buildEndedContext(task: TaskRecord): string {
+  const view = toPlanView(task);
+  const done = view.steps.filter(
+    (step) => step.status === 'completed' || step.status === 'skipped',
+  ).length;
+  const label =
+    view.status === 'completed'
+      ? '已完成'
+      : view.status === 'abandoned'
+        ? '已放弃'
+        : '已暂停（等待用户恢复或处理）';
+  return [
+    '[PLAN ENDED]',
+    `计划：${view.title}（planId=${view.planId}，revision=${view.revision}）当前状态：${label}。`,
+    `进度：${done}/${view.steps.length} 步完成。`,
+    '历史里更早的 [PLAN MODE ACTIVE] / [PLAN EXECUTING] 注入描述的是当时的状态，其中的进度与推进指令已失效，以本条为准。',
+    view.status === 'paused'
+      ? '计划暂停期间不要自行推进步骤；等用户明确恢复（plan_resume）或给出新指示。'
+      : '按用户的新指示继续工作；除非用户要求，不要重启或继续推进这个计划。',
+  ].join('\n');
 }
 
 /** Web Plan 模式服务：按会话持有状态机，向注册表转发计划视图。 */

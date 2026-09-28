@@ -49,7 +49,7 @@ describe('PresetService', () => {
       name: 'Coding Agent（默认）',
       systemPrompt: '',
       toolNames: ['read', 'bash', 'edit', 'write'],
-      compaction: { enabled: true, keepRecentTokens: 20000, reserveTokens: 16384 },
+      compaction: { enabled: true, keepRecentTokens: 48000, reserveTokens: 16384 },
       capabilities: {
         plan: true,
         approval: true,
@@ -299,7 +299,7 @@ describe('PresetService', () => {
             name: '旧预设',
             systemPrompt: '',
             toolNames: ['read'],
-            compaction: { enabled: true, keepRecentTokens: 20000, reserveTokens: 16384 },
+            compaction: { enabled: true, keepRecentTokens: 48000, reserveTokens: 16384 },
             provider: '',
             modelId: '',
             thinkingLevel: '',

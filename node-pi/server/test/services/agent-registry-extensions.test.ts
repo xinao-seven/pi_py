@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@earendil-works/pi-coding-agent', () => mocks);
 
+// 非极简会话现在总是应用平台压缩策略（SettingsManager.applyOverrides）：
+// 给 mock 一个可用的管理器，个别用例仍可用自己的 applyOverrides spy 覆盖。
+mocks.SettingsManager.create.mockReturnValue({ applyOverrides: vi.fn() });
+
 import {
   AgentRegistry,
   OriginalPiSessionFactory,
@@ -317,14 +321,23 @@ describe('OriginalPiSessionFactory 过滤被内联接管的文件扩展', () => 
     expect(loaderOptions?.extensionsOverride).toBeUndefined();
   });
 
-  it('极简模式（fileExtensions=false）不发现任何文件扩展', async () => {
+  it('极简模式（7 个能力全关）不发现任何文件扩展、不注册平台策略扩展', async () => {
     const factory = new OriginalPiSessionFactory('/home/u/.pi/agent');
     await factory.create({
       cwd: '/tmp/ws',
-      extensions: { planMode: false, subagents: false, fileExtensions: false },
+      extensions: {
+        planMode: false,
+        subagents: false,
+        fileExtensions: false,
+        approval: false,
+        questions: false,
+        tasks: false,
+        observability: false,
+      },
     });
 
     expect(loaderOptions?.noExtensions).toBe(true);
+    // 全能力关闭 = 原版行为：工具结果预算这类平台策略扩展也不注册。
     expect(loaderOptions?.extensionFactories).toEqual([]);
   });
 });

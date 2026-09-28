@@ -78,7 +78,9 @@ describe('OriginalPiSessionFactory', () => {
     });
   });
 
-  it('keeps the default path unchanged when preset fields are absent', async () => {
+  it('applies platform compaction defaults when the preset gives none', async () => {
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
     const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({ cwd: '/tmp/workspace' });
@@ -87,8 +89,77 @@ describe('OriginalPiSessionFactory', () => {
     expect(loaderOptions?.systemPrompt).toBeUndefined(); // 空/未传 → 不覆盖 loader 提示词
     expect(options.tools).toBeUndefined(); // 未指定工具 → SDK 默认工具集
     expect(options.thinkingLevel).toBeUndefined();
+    // 平台默认压缩策略：无模型窗口时不做触发点换算，只换 keepRecent（SDK 缺省 20K → 48K）。
+    expect(options.settingsManager).toBeDefined();
+    expect(mocks.SettingsManager.create).toHaveBeenCalledWith('/tmp/workspace', agentDir);
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 48000 },
+    });
+  });
+
+  it('caps the compaction trigger point at 200K for a 1M-window model', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getModel: () => ({ provider: 'deepseek', modelId: 'flash', contextWindow: 1_000_000 }),
+    });
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({ cwd: '/tmp/workspace', provider: 'deepseek', modelId: 'flash' });
+
+    // 触发点 = 1M - reserveTokens = 200K。
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: true, reserveTokens: 800_000, keepRecentTokens: 48_000 },
+    });
+  });
+
+  it('keeps minimal (all-capabilities-off) sessions on stock SDK behavior', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getModel: () => ({ provider: 'deepseek', modelId: 'flash', contextWindow: 1_000_000 }),
+    });
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({
+      cwd: '/tmp/workspace',
+      provider: 'deepseek',
+      modelId: 'flash',
+      extensions: {
+        planMode: false,
+        approval: false,
+        questions: false,
+        subagents: false,
+        tasks: false,
+        observability: false,
+        fileExtensions: false,
+      },
+    });
+
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    // 极简 = 原版行为：压缩不做平台加成（跟随 settings.json / SDK 缺省）、
+    // 不注册工具结果预算扩展、系统提示词不追加并行调用提示。
     expect(options.settingsManager).toBeUndefined();
     expect(mocks.SettingsManager.create).not.toHaveBeenCalled();
+    expect(loaderOptions?.extensionFactories).toEqual([]);
+    expect(loaderOptions?.appendSystemPromptOverride).toBeUndefined();
+  });
+
+  it('appends parallel-tool-call guidance to the system prompt for non-stock sessions', async () => {
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.create({ cwd: '/tmp/workspace' });
+
+    const override = loaderOptions?.appendSystemPromptOverride as
+      | ((base: string[]) => string[])
+      | undefined;
+    expect(override).toBeDefined();
+    expect(override!(['user append file'])).toEqual([
+      'user append file',
+      expect.stringContaining('并行'),
+    ]);
+    // 追加不覆盖：预设提示词与用户 append 文件都还在。
+    expect(override!([])).toHaveLength(1);
   });
 
   it('does not pass an empty systemPrompt to the loader', async () => {
@@ -118,19 +189,19 @@ describe('OriginalPiSessionFactory', () => {
 
     await factory.create({ cwd: '/tmp/workspace' });
     const factories = (loaderOptions?.extensionFactories as unknown[] | undefined) ?? [];
-    expect(factories).toHaveLength(2); // plan + approval
+    expect(factories).toHaveLength(3); // plan + approval + 工具结果预算（平台策略）
 
     await factory.create({ cwd: '/tmp/workspace', extensions: { approval: false } });
-    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(2);
 
     await factory.create({ cwd: '/tmp/workspace', extensions: { planMode: false } });
-    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(2);
 
     await factory.create({
       cwd: '/tmp/workspace',
       extensions: { approval: false, planMode: false },
     });
-    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(0);
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
   });
 
   it('injects the question channel by default and can gate it off', async () => {
@@ -145,10 +216,10 @@ describe('OriginalPiSessionFactory', () => {
       new QuestionBroker(),
     );
     await factory.create({ cwd: '/tmp/workspace' });
-    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(1);
+    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(2);
 
     await factory.create({ cwd: '/tmp/workspace', extensions: { questions: false } });
-    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(0);
+    expect((loaderOptions?.extensionFactories as unknown[] | undefined)?.length).toBe(1);
   });
 
   it('gates each inline tool by its capability switch', async () => {
@@ -183,9 +254,19 @@ describe('OriginalPiSessionFactory', () => {
   });
 
   it('suppresses file extension discovery in minimal mode', async () => {
+    const MINIMAL = {
+      planMode: false,
+      approval: false,
+      questions: false,
+      subagents: false,
+      tasks: false,
+      observability: false,
+      fileExtensions: false,
+    };
     const factory = new OriginalPiSessionFactory(agentDir);
 
-    await factory.create({ cwd: '/tmp/workspace', extensions: { fileExtensions: false } });
+    // 全能力关闭（真·极简）：平台策略（工具结果预算）也不注册。
+    await factory.create({ cwd: '/tmp/workspace', extensions: { ...MINIMAL } });
     expect(loaderOptions?.noExtensions).toBe(true);
     expect(loaderOptions?.extensionFactories).toEqual([]);
 
@@ -203,12 +284,12 @@ describe('OriginalPiSessionFactory', () => {
     const factory = new OriginalPiSessionFactory(agentDir, mcpService as never);
 
     await factory.create({ cwd: '/tmp/workspace', mcpServers: [] });
-    expect(loaderOptions?.extensionFactories).toEqual([]);
+    expect(loaderOptions?.extensionFactories).toHaveLength(1); // 工具结果预算（MCP 被禁用，不注册）
     expect(mcpService.toolsFor).not.toHaveBeenCalled();
 
     // null/缺省 = 全部 MCP：扩展照旧注册。
     await factory.create({ cwd: '/tmp/workspace' });
-    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(1);
+    expect((loaderOptions?.extensionFactories as unknown[]).length).toBe(2);
   });
 });
 
@@ -271,14 +352,18 @@ describe('OriginalPiSessionFactory 把预设配置写进会话 JSONL', () => {
     });
   });
 
-  it('does not write anything when no preset field was given', async () => {
+  it('writes the resolved platform compaction when no preset field was given', async () => {
     const appendCustomEntry = vi.fn();
     sessionWith(appendCustomEntry);
     const factory = new OriginalPiSessionFactory(agentDir);
 
     await factory.create({ cwd: '/tmp/workspace' });
 
-    expect(appendCustomEntry).not.toHaveBeenCalled();
+    // 无预设字段的会话现在会落盘「解析后的压缩策略」——重开时不再依赖模型目录即可复现。
+    expect(appendCustomEntry).toHaveBeenCalledTimes(1);
+    expect(appendCustomEntry).toHaveBeenCalledWith('pi-web/session-config', {
+      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 48000 },
+    });
   });
 
   it('does not write for subagent sessions (they are never reopened from disk)', async () => {
@@ -443,7 +528,9 @@ describe('OriginalPiSessionFactory.open 读回配置', () => {
     });
   });
 
-  it('旧会话（没有配置条目）保持改动前行为：不限制白名单、不传系统提示词、照常发现扩展', async () => {
+  it('旧会话（没有配置条目）补平台默认压缩策略，其余保持改动前行为', async () => {
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
     const factory = new OriginalPiSessionFactory(agentDir);
 
     const opened = await factory.open(input);
@@ -451,9 +538,53 @@ describe('OriginalPiSessionFactory.open 读回配置', () => {
     expect(opened.config).toBeUndefined();
     expect(loaderOptions?.noExtensions).toBeUndefined();
     expect(loaderOptions?.systemPrompt).toBeUndefined();
-    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, unknown>;
+    const options = mocks.createAgentSession.mock.calls[0][0] as Record<string, undefined>;
     expect(options.tools).toBeUndefined();
-    expect(options.settingsManager).toBeUndefined();
+    // 旧会话没有 compaction 字段：按非极简（缺省全开）处理，补平台默认（无模型窗口时不换算触发点）。
+    expect(options.settingsManager).toBeDefined();
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 48000 },
+    });
+  });
+
+  it('旧会话按 model_change 条目恢复模型窗口并换算压缩触发点', async () => {
+    mocks.SessionManager.open.mockReturnValue({
+      getCwd: () => '/tmp/ws',
+      getEntries: () => [
+        { type: 'session', id: 's1' },
+        { type: 'model_change', provider: 'deepseek', modelId: 'flash' },
+      ],
+    });
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getModel: (provider: string, modelId: string) => ({ provider, modelId, contextWindow: 1_000_000 }),
+    });
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await factory.open(input);
+
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: true, reserveTokens: 800_000, keepRecentTokens: 48_000 },
+    });
+  });
+
+  it('model_change 指向模型目录里不存在的模型时降级：不换算触发点也不失败', async () => {
+    mocks.SessionManager.open.mockReturnValue({
+      getCwd: () => '/tmp/ws',
+      getEntries: () => [{ type: 'model_change', provider: 'ghost', modelId: 'gone' }],
+    });
+    mocks.ModelRuntime.create.mockResolvedValue({ getModel: () => undefined });
+    const applyOverrides = vi.fn();
+    mocks.SettingsManager.create.mockReturnValue({ applyOverrides });
+    const factory = new OriginalPiSessionFactory(agentDir);
+
+    await expect(factory.open(input)).resolves.toMatchObject({
+      session: { sessionId: 'persisted-1' },
+    });
+    expect(applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 48000 },
+    });
   });
 
   it('配置条目坏掉时按「没有配置」恢复，不让打开会话失败', async () => {

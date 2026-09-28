@@ -264,6 +264,73 @@ describe('计划上下文注入', () => {
     const second = beforeAgentStart({ prompt: '再看看' }, replay);
     expect(second?.message.content).not.toBe(injected);
   });
+
+  it('ends a completed plan without stripping mid-history injections (cache stays valid)', async () => {
+    const { service, pi } = makeHarness();
+    service.startPlanning('session-1', 'P');
+    await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
+    await service.command('session-1', 'execute');
+    await pi.callTool('complete_step', { stepId: 's1', evidence: { summary: '完成' } });
+    expect(service.view('session-1').status).toBe('completed');
+
+    const onContext = pi.handlers.get('context')! as (event: {
+      messages: unknown[];
+    }) => { messages: unknown[] } | undefined;
+    const history = [
+      { role: 'user', content: 'hi' },
+      { customType: 'web-plan-execution-context', content: '[PLAN EXECUTING] 0/1' },
+      { role: 'assistant', content: [] },
+    ];
+    // 结束态：旧注入**留在原地**（不再从历史中部剥离——剥离＝改写历史＝缓存从注入位置全失效）。
+    expect(onContext({ messages: history })).toBeUndefined();
+
+    // 下一次 prompt 开始：在**末尾**追加一条 ENDED 说明，对冲旧注入里过期的进度与指令。
+    const beforeAgentStart = pi.handlers.get('before_agent_start')! as (
+      event?: unknown,
+      ctx?: unknown,
+    ) => { message: { customType: string; content: string; display: boolean } } | undefined;
+    const ended = beforeAgentStart({ prompt: '下一个任务' }, sessionContext());
+    expect(ended?.message.customType).toBe('web-plan-ended-context');
+    expect(ended?.message.display).toBe(false);
+    expect(ended?.message.content).toContain('[PLAN ENDED]');
+    expect(ended?.message.content).toContain('已完成');
+
+    // ENDED 内容里带 revision，状态不变时去抖生效：同内容不再重复注入。
+    const replay = sessionContext([
+      { type: 'custom_message', customType: 'web-plan-ended-context', content: ended!.message.content },
+    ]);
+    expect(beforeAgentStart({ prompt: '继续' }, replay)).toBeUndefined();
+  });
+
+  it('keeps injections around for a paused plan too (same no-strip rule)', async () => {
+    const { service, pi } = makeHarness();
+    service.startPlanning('session-1', 'P');
+    await pi.callTool('submit_plan', { title: 'P', steps: [{ title: 'a' }] });
+    await service.command('session-1', 'execute');
+    await service.command('session-1', 'pause');
+    expect(service.view('session-1').status).toBe('paused');
+
+    const onContext = pi.handlers.get('context')! as (event: {
+      messages: unknown[];
+    }) => { messages: unknown[] } | undefined;
+    expect(
+      onContext({
+        messages: [{ customType: 'web-plan-execution-context', content: '[PLAN EXECUTING]' }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('strips everything again only when the plan is gone (no task bound)', () => {
+    const { service, pi } = makeHarness();
+    // 从未有过计划的会话：无注入要保留，也无从失效——保持空 keep（与旧行为一致）。
+    const onContext = pi.handlers.get('context')! as (event: {
+      messages: unknown[];
+    }) => { messages: unknown[] } | undefined;
+    const result = onContext({
+      messages: [{ customType: 'web-plan-execution-context', content: 'stale' }],
+    });
+    expect(result?.messages).toEqual([]);
+  });
 });
 
 describe('propose_plan（模型提议、用户拍板）', () => {
